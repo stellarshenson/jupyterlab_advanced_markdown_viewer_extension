@@ -1,0 +1,8 @@
+{
+  "jupyter.lab.shortcuts": [],
+  "title": "jupyterlab_advanced_markdown_viewer_extension",
+  "description": "jupyterlab_advanced_markdown_viewer_extension settings.",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

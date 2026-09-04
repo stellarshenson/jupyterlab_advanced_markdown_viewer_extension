@@ -1,0 +1,23 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v4.6.5
+_src_path: https://github.com/jupyterlab/extension-template
+advanced: false
+author_email: konrad.jelen+github@gmail.com
+author_name: Stellars Henson
+has_ai_rules: false
+has_binder: false
+has_settings: true
+kind: frontend-and-server
+labextension_name: jupyterlab_advanced_markdown_viewer_extension
+project_short_description: Jupyterlab extension that finally allows Markdown files
+    to receive live updates when underlying ai agentic tool is changing them. When
+    change was performed - the title of the markdown file will give visual cue and
+    the text in the markdown will be visibly removed (using pale red-ish bg colour)
+    and added (using greenish bg colour) with the calm fade in and fade out. This
+    will work in both view mode and edit mode - and will have the system manage, that
+    content in the markdown isn't garbled when user edits the file at the same time.
+    No more need to refresh the tab / view to see the latest changes
+python_name: jupyterlab_advanced_markdown_viewer_extension
+repository: ''
+test: true
+

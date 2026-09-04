@@ -1,0 +1,7 @@
+{
+  "ServerApp": {
+    "jpserver_extensions": {
+      "jupyterlab_advanced_markdown_viewer_extension": true
+    }
+  }
+}
