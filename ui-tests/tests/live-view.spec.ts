@@ -474,12 +474,14 @@ test.describe('the reader position', () => {
     await page.contents.uploadContent(LONG, 'text', path);
     await openPreview(page, path, 'Paragraph 1 of the long report');
 
-    // The table-of-contents fix scrolls to the heading in the URL hash 100 ms
-    // after every render. This lab's URL carries the reset query, which
-    // JupyterLab rewrites within seconds and the hash goes with it, so the
-    // trigger is stood in for here: the same 100 ms after the same signal,
-    // calling the fix's own patched setFragment. The reader then scrolls
-    // well away from the heading.
+    // The table-of-contents fix smooth-scrolls the rendered view to the
+    // heading in the URL hash 100 ms after every render. This lab's URL
+    // carries the reset query, which JupyterLab rewrites within seconds and
+    // the hash goes with it, so the trigger is stood in for here: the same
+    // motion, 100 ms after the same signal, on the same element. The scroll
+    // is made directly rather than through setFragment, whose stock version
+    // re-renders the document and would re-arm this trigger on every render.
+    // The reader then scrolls well away from the heading.
     await page.evaluate(() => {
       const w = window as any;
       const content = w.jupyterapp.shell.currentWidget.content;
@@ -487,7 +489,11 @@ test.describe('the reader position', () => {
       content.rendered.connect(() => {
         setTimeout(() => {
           w.__anchorScrolls += 1;
-          content.setFragment('#Report');
+          const root = document.querySelector('.jp-RenderedMarkdown');
+          const heading = root?.querySelector('#Report') as HTMLElement | null;
+          if (root && heading) {
+            root.scrollTo({ top: heading.offsetTop, behavior: 'smooth' });
+          }
         }, 100);
       });
     });
