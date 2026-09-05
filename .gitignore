@@ -128,3 +128,9 @@ dmypy.json
 .yarn/
 
 .nodeenv/
+
+# Test and tool artefacts
+junit.xml
+logs/*.log
+tmp/
+graphify-out/

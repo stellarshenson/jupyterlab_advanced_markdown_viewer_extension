@@ -8,7 +8,7 @@
 [![Brought To You By KOLOMOLO](https://img.shields.io/badge/Brought%20To%20You%20By-KOLOMOLO-00ffff?style=flat)](https://kolomolo.com)
 [![Donate PayPal](https://img.shields.io/badge/Donate-PayPal-blue?style=flat)](https://www.paypal.com/donate/?hosted_button_id=B4KPBJDLLXTSA)
 
-Keep open Markdown files live. When an AI agentic tool or any other process rewrites a Markdown file on disk, the open viewer and editor pick up the change on their own: the tab title signals it, removed text fades out on a pale red background, added text fades in on a pale green background. No more reloading the tab to see the latest content.
+Keep open Markdown files live. When an AI agentic tool or any other process rewrites a Markdown file on disk, the open rendered view picks up the change on its own: the tab title signals it, removed text is struck on a pale red background, added text stands on a pale green background, and both fade. No more reloading the tab to see the latest content.
 
 **Full disclosure:** the rest of your JupyterLab stays exactly as it was. This extension only makes sure that the Markdown file you are looking at is the one that is actually on disk.
 
@@ -17,8 +17,9 @@ Keep open Markdown files live. When an AI agentic tool or any other process rewr
 - **Live updates** - open Markdown documents refresh automatically when the file changes on disk
 - **Tab title cue** - the document tab signals that new content arrived
 - **Change highlighting** - removed text on a pale red background, added text on a pale green background, both fading out calmly
-- **View and edit mode** - works in the rendered Markdown view and in the editor
-- **Safe concurrent editing** - external changes merge without garbling text the user is typing at the same time
+- **Changes play out as typing** - added text appears letter by letter, very fast, on its green background, in every changed place at once; removed text first turns red, then is deleted from its last letter backwards. The reader follows a change as it happens and no text disappears without warning. The speed is the `animationSpeed` setting, in characters per second; 0 turns the animation off
+- **Rendered view** - live updates apply to the rendered Markdown view; an editor open on the same file keeps JupyterLab's own File Changed dialog for a save over unsaved edits
+- **Unsaved edits are never overwritten** - a change arriving while the document has unsaved edits is held, shown as a red tab marker, and applied once the document is clean again
 
 ## Requirements
 

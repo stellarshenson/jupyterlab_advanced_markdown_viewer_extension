@@ -1,15 +1,15 @@
 {
     "name": "jupyterlab_advanced_markdown_viewer_extension",
-    "version": "0.1.0",
+    "version": "0.6.8",
     "description": "Jupyterlab extension that finally allows Markdown files to receive live updates when underlying ai agentic tool is changing them. When change was performed - the title of the markdown file will give visual cue and the text in the markdown will be visibly removed (using pale red-ish bg colour) and added (using greenish bg colour) with the calm fade in and fade out. This will work in both view mode and edit mode - and will have the system manage, that content in the markdown isn't garbled when user edits the file at the same time. No more need to refresh the tab / view to see the latest changes",
     "keywords": [
         "jupyter",
         "jupyterlab",
         "jupyterlab-extension"
     ],
-    "homepage": "",
+    "homepage": "https://github.com/stellarshenson/jupyterlab_advanced_markdown_viewer_extension",
     "bugs": {
-        "url": "/issues"
+        "url": "https://github.com/stellarshenson/jupyterlab_advanced_markdown_viewer_extension/issues"
     },
     "license": "BSD-3-Clause",
     "author": {
@@ -27,7 +27,7 @@
     "style": "style/index.css",
     "repository": {
         "type": "git",
-        "url": ".git"
+        "url": "https://github.com/stellarshenson/jupyterlab_advanced_markdown_viewer_extension.git"
     },
     "scripts": {
         "build": "jlpm build:lib && jlpm build:labextension:dev",
@@ -59,8 +59,14 @@
     "dependencies": {
         "@jupyterlab/application": "^4.0.0",
         "@jupyterlab/coreutils": "^6.0.0",
+        "@jupyterlab/docregistry": "^4.0.0",
+        "@jupyterlab/markdownviewer": "^4.0.0",
         "@jupyterlab/services": "^7.0.0",
-        "@jupyterlab/settingregistry": "^4.0.0"
+        "@jupyterlab/settingregistry": "^4.0.0",
+        "@lumino/disposable": "^2.0.0",
+        "@lumino/polling": "^2.0.0",
+        "@lumino/signaling": "^2.0.0",
+        "@lumino/widgets": "^2.0.0"
     },
     "devDependencies": {
         "@eslint/js": "^9.0.0",
@@ -144,7 +150,9 @@
             "property-no-vendor-prefix": null,
             "selector-class-pattern": "^([a-z][A-z\\d]*)(-[A-z\\d]+)*$",
             "selector-no-vendor-prefix": null,
-            "value-no-vendor-prefix": null
+            "value-no-vendor-prefix": null,
+            "custom-property-pattern": null,
+            "keyframes-name-pattern": null
         }
     }
 }

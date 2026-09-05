@@ -56,12 +56,12 @@ defects in `docs/defects.md`, both written and read only through `pm-tools`.
 The project Makefile owns the entire build lifecycle. Never run `pip`, `jlpm`, `yarn`, `npm`,
 `python -m build`, `jupyter labextension` or any build, publish or clean command directly.
 
-| Action | Command |
-|---|---|
-| Build and install the extension | `make install` |
-| Release to the registries | `make publish` (explicit approval required, see Mandatory Bans) |
-| Remove build artefacts | `make clean` |
-| Remove all build and venv artefacts, including `.nodeenv/` | `make mrproper` |
+| Action                                                     | Command                                                         |
+| ---------------------------------------------------------- | --------------------------------------------------------------- |
+| Build and install the extension                            | `make install`                                                  |
+| Release to the registries                                  | `make publish` (explicit approval required, see Mandatory Bans) |
+| Remove build artefacts                                     | `make clean`                                                    |
+| Remove all build and venv artefacts, including `.nodeenv/` | `make mrproper`                                                 |
 
 - **Makefile version check** - before any build work, compare the local `Makefile` version line with
   `/home/lab/workspace/private/jupyterlab/@utils/jupyterlab-extensions/Makefile`. When the reference

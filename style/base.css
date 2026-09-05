@@ -1,5 +1,134 @@
 /*
-    See the JupyterLab Developer Guide for useful CSS Patterns:
+ | Decorations for text an external change added or removed, and the marker on
+ | the document tab.
+ |
+ | Only background colour and opacity are animated. Text colour is left alone
+ | so syntax highlighting inside fenced code blocks still shows through, and no
+ | box model property is set on a decoration so the spacing other extensions
+ | rely on is intact.
+ */
 
-    https://jupyterlab.readthedocs.io/en/stable/developer/css.html
-*/
+:root {
+  --jp-AdvancedMd-added-bg: rgb(46 160 67 / 30%);
+  --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 26%);
+  --jp-AdvancedMd-cue: rgb(46 160 67);
+  --jp-AdvancedMd-cue-blocked: rgb(218 54 51);
+  --jp-AdvancedMd-fade-duration: 4000ms;
+  --jp-AdvancedMd-fade-in: 300ms;
+}
+
+body[data-jp-theme-light='false'] {
+  --jp-AdvancedMd-added-bg: rgb(63 185 80 / 26%);
+  --jp-AdvancedMd-removed-bg: rgb(248 81 73 / 24%);
+  --jp-AdvancedMd-cue: rgb(63 185 80);
+  --jp-AdvancedMd-cue-blocked: rgb(248 81 73);
+}
+
+.jp-AdvancedMd-decoration {
+  border-radius: 2px;
+  animation:
+    jp-AdvancedMd-fade-in var(--jp-AdvancedMd-fade-in) ease-out,
+    jp-AdvancedMd-fade-out var(--jp-AdvancedMd-fade-duration) ease-in
+      var(--jp-AdvancedMd-fade-in) forwards;
+}
+
+.jp-AdvancedMd-added {
+  background-color: var(--jp-AdvancedMd-added-bg);
+}
+
+/*
+ | Removed text is not part of the document, so its ghost fades to invisible
+ | before it is taken out; the reflow at removal then happens on an element
+ | nobody can see.
+ */
+.jp-AdvancedMd-removed {
+  background-color: var(--jp-AdvancedMd-removed-bg);
+  text-decoration: line-through;
+  animation-name: jp-AdvancedMd-fade-in, jp-AdvancedMd-ghost-out;
+}
+
+/*
+ | A struck word directly in front of its replacement reads as one token, so
+ | such a ghost carries a gap after it. The gap is a pseudo-element inside the
+ | ghost, so it comes and goes with the ghost and is invisible to the text of
+ | the document; inline-block keeps the strike from running across it.
+ */
+.jp-AdvancedMd-gap::after {
+  content: '\00a0';
+  display: inline-block;
+}
+
+@keyframes jp-AdvancedMd-fade-in {
+  from {
+    background-color: transparent;
+  }
+}
+
+@keyframes jp-AdvancedMd-fade-out {
+  to {
+    background-color: transparent;
+  }
+}
+
+@keyframes jp-AdvancedMd-ghost-out {
+  to {
+    background-color: transparent;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jp-AdvancedMd-decoration {
+    animation: none;
+  }
+}
+
+/*
+ | Tab marker. A dot before the label, so the tab's own colour and title stay
+ | as whatever set them.
+ */
+
+.lm-TabBar-tab.jp-AdvancedMd-tabUpdated .lm-TabBar-tabLabel::before,
+.lm-TabBar-tab.jp-AdvancedMd-tabBlocked .lm-TabBar-tabLabel::before {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  vertical-align: middle;
+  border-radius: 50%;
+  content: '';
+}
+
+.lm-TabBar-tab.jp-AdvancedMd-tabUpdated .lm-TabBar-tabLabel::before {
+  background-color: var(--jp-AdvancedMd-cue);
+}
+
+.lm-TabBar-tab.jp-AdvancedMd-tabBlocked .lm-TabBar-tabLabel::before {
+  background-color: var(--jp-AdvancedMd-cue-blocked);
+}
+
+/*
+ | While changes keep arriving, the tab icon pulses. It settles once the writer
+ | goes quiet, leaving the static marker until the reader looks at the document.
+ */
+
+.lm-TabBar-tab.jp-AdvancedMd-tabActive .lm-TabBar-tabIcon {
+  animation: jp-AdvancedMd-tab-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes jp-AdvancedMd-tab-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lm-TabBar-tab.jp-AdvancedMd-tabActive .lm-TabBar-tabIcon {
+    animation: none;
+  }
+}

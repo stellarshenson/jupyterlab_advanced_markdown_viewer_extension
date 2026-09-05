@@ -1,8 +1,41 @@
 {
   "jupyter.lab.shortcuts": [],
-  "title": "jupyterlab_advanced_markdown_viewer_extension",
-  "description": "jupyterlab_advanced_markdown_viewer_extension settings.",
+  "title": "Advanced Markdown Viewer",
+  "description": "Live updates for open Markdown previews when a file changes on disk.",
   "type": "object",
-  "properties": {},
+  "properties": {
+    "enabled": {
+      "title": "Enabled",
+      "description": "Watch open Markdown previews for changes made outside JupyterLab.",
+      "type": "boolean",
+      "default": true
+    },
+    "pollInterval": {
+      "title": "Poll interval (seconds)",
+      "description": "How often an open preview checks its file for changes.",
+      "type": "number",
+      "minimum": 1,
+      "default": 2
+    },
+    "fadeDuration": {
+      "title": "Highlight duration (milliseconds)",
+      "description": "How long the highlight on changed text takes to fade away.",
+      "type": "number",
+      "minimum": 0,
+      "default": 4000
+    },
+    "highlight": {
+      "title": "Highlight changes",
+      "description": "Show added text on a green background and removed text on a red one.",
+      "type": "boolean",
+      "default": true
+    },
+    "tabCue": {
+      "title": "Mark the document tab",
+      "description": "Put a dot on the tab of a document that received a change.",
+      "type": "boolean",
+      "default": true
+    }
+  },
   "additionalProperties": false
 }
