@@ -160,6 +160,66 @@ export function diffWords(before: string, after: string): IDiffOp[] {
 }
 
 /**
+ * Offsets carried between the two strings an edit script relates.
+ */
+export interface IOffsetMap {
+  /** The offset in the earlier string of an offset in the later string. */
+  toEarlier(later: number): number;
+  /** The offset in the later string of an offset in the earlier string. */
+  toLater(earlier: number): number;
+}
+
+/**
+ * Build the mapping between offsets in the two strings of an edit script.
+ *
+ * An offset in unchanged text maps to the same character on the other side.
+ * An offset inside text that exists on one side only maps to the point on the
+ * other side where that text was inserted or deleted, so the two ends of such
+ * a run map to the same point.
+ *
+ * @param ops - operations from {@link diffWords}
+ */
+export function mapOffsets(ops: IDiffOp[]): IOffsetMap {
+  const segments: Array<{
+    kind: DiffOpKind;
+    earlier: number;
+    later: number;
+    length: number;
+  }> = [];
+  let earlier = 0;
+  let later = 0;
+  for (const op of ops) {
+    segments.push({ kind: op.kind, earlier, later, length: op.text.length });
+    if (op.kind !== 'insert') {
+      earlier += op.text.length;
+    }
+    if (op.kind !== 'delete') {
+      later += op.text.length;
+    }
+  }
+  const map = (offset: number, from: 'earlier' | 'later'): number => {
+    const to = from === 'earlier' ? 'later' : 'earlier';
+    const absent = from === 'earlier' ? 'insert' : 'delete';
+    for (const segment of segments) {
+      if (segment.kind === absent) {
+        continue;
+      }
+      const end = segment[from] + segment.length;
+      if (offset < end || (offset === end && segment.kind === 'equal')) {
+        return segment.kind === 'equal'
+          ? segment[to] + offset - segment[from]
+          : segment[to];
+      }
+    }
+    return from === 'earlier' ? later : earlier;
+  };
+  return {
+    toEarlier: offset => map(offset, 'later'),
+    toLater: offset => map(offset, 'earlier')
+  };
+}
+
+/**
  * A run of added text, as a range in the later string.
  */
 export interface IAddedRange {

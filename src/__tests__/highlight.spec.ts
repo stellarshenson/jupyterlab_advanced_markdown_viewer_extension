@@ -6,7 +6,8 @@ import {
   GAP_CLASS,
   hasVisibleChange,
   REMOVED_CLASS,
-  undecorate
+  undecorate,
+  wasShownBefore
 } from '../highlight';
 
 /**
@@ -177,6 +178,15 @@ describe('decorate', () => {
     ]);
   });
 
+  it('tells a decoration an earlier render already showed from a fresh one', () => {
+    const root = render('<p>alpha beta gamma</p>');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('alpha', snapshot.text));
+    const fresh = changeRanges(diffWords('alpha beta', snapshot.text));
+    const created = decorate(root, snapshot, ranges, 1000, fresh);
+    expect(created.map(wasShownBefore)).toEqual([true, false]);
+  });
+
   it('holds a ghost an earlier render already showed', () => {
     const root = render('<p>alpha gamma</p>');
     const snapshot = captureText(root);
@@ -185,6 +195,154 @@ describe('decorate', () => {
     const [ghost] = decorate(root, snapshot, ranges, 1000, fresh);
     expect(ghost.classList.contains(REMOVED_CLASS)).toBe(true);
     expect(ghost.style.getPropertyValue('--jp-AdvancedMd-fade-in')).toBe('0ms');
+  });
+
+  it('shows a merged removal as one held ghost when an earlier render showed part of it', () => {
+    const root = render('<p>alpha epsilon</p>');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(
+      diffWords('alpha beta gamma delta epsilon', snapshot.text)
+    );
+    const fresh = changeRanges(diffWords('alpha gamma epsilon', snapshot.text));
+    const ghosts = decorate(root, snapshot, ranges, 1000, fresh);
+    expect(ghosts.map(ghost => ghost.textContent)).toEqual([
+      'beta gamma delta '
+    ]);
+    expect(ghosts.map(wasShownBefore)).toEqual([true]);
+    expect(root.textContent).toBe('alpha beta gamma delta epsilon');
+  });
+
+  it('holds a ghost already on screen when the word at its offset is replaced again', () => {
+    const root = render('<p>mentions pears.</p>');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('mentions apples.', snapshot.text));
+    const fresh = changeRanges(diffWords('mentions oranges.', snapshot.text));
+    const ghosts = decorate(root, snapshot, ranges, 1000, fresh).filter(
+      element => element.classList.contains(REMOVED_CLASS)
+    );
+    expect(ghosts.map(ghost => ghost.textContent)).toEqual(['apples.']);
+    expect(ghosts.map(wasShownBefore)).toEqual([true]);
+  });
+
+  it('fades in a ghost of text this render removed', () => {
+    const root = render('<p>mentions pears.</p>');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('mentions apples.', snapshot.text));
+    const ghosts = decorate(root, snapshot, ranges, 1000, ranges).filter(
+      element => element.classList.contains(REMOVED_CLASS)
+    );
+    expect(ghosts.map(ghost => ghost.textContent)).toEqual(['apples.']);
+    expect(ghosts.map(wasShownBefore)).toEqual([false]);
+  });
+
+  it('places the ghosts it is given at their offsets, in their order', () => {
+    const root = render('<p>alpha delta</p>');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(
+      diffWords('alpha beta gamma delta', snapshot.text)
+    );
+    const fresh = changeRanges(diffWords('alpha gamma delta', snapshot.text));
+    const ghosts = decorate(root, snapshot, ranges, 1000, fresh, undefined, [
+      { at: 6, text: 'beta ', fresh: false },
+      { at: 6, text: 'gamma ', fresh: true }
+    ]);
+    expect(ghosts.map(ghost => ghost.textContent)).toEqual(['beta ', 'gamma ']);
+    expect(ghosts.map(wasShownBefore)).toEqual([true, false]);
+    expect(root.textContent).toBe('alpha beta gamma delta');
+  });
+
+  it('places a given ghost where this render removed the text, not where the baseline puts it', () => {
+    const inserted = `${Array.from({ length: 20 }, () => 'very').join(' ')} `;
+    const root = render(`<p>The ${inserted}sat.</p>`);
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('The cat sat.', snapshot.text));
+    const fresh = changeRanges(
+      diffWords(`The ${inserted}cat sat.`, snapshot.text)
+    );
+    expect(ranges.removed).toEqual([{ at: 4, text: 'cat' }]);
+    expect(fresh.removed).toEqual([{ at: 104, text: 'cat ' }]);
+    const created = decorate(root, snapshot, ranges, 1000, fresh, undefined, [
+      { ...fresh.removed[0], fresh: true }
+    ]);
+    const ghosts = created.filter(el => el.classList.contains(REMOVED_CLASS));
+    expect(ghosts.map(ghost => ghost.textContent)).toEqual(['cat ']);
+    expect(ghosts.map(wasShownBefore)).toEqual([false]);
+    expect(root.textContent).toBe(`The ${inserted}cat sat.`);
+  });
+
+  it('moves a given ghost out of a heading like any other', () => {
+    const root = render('<h2 id="r">Summary</h2>\n<p>Body</p>');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('Report\nBody', snapshot.text));
+    const created = decorate(root, snapshot, ranges, 1000, ranges, undefined, [
+      { at: 0, text: 'Report', fresh: false }
+    ]);
+    const ghost = created.find(element =>
+      element.classList.contains(REMOVED_CLASS)
+    ) as HTMLElement;
+    expect(ghost.textContent).toBe('Report');
+    expect(wasShownBefore(ghost)).toBe(true);
+    expect(ghost.parentElement).toBe(root.querySelector('p'));
+    const heading = root.querySelector('h2') as HTMLElement;
+    expect(heading.textContent).toBe('Summary');
+    expect(heading.id).toBe('r');
+  });
+
+  it('cuts a slice shown before where the carried runs it spans meet', () => {
+    const root = render('<p>alpha aaa bbb ccc</p>');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('alpha', snapshot.text));
+    const fresh = changeRanges(diffWords('alpha aaa bbb', snapshot.text));
+    const created = decorate(root, snapshot, ranges, 1000, fresh, {
+      added: [' aaa', ' bbb']
+    });
+    expect(created.map(element => element.textContent)).toEqual([
+      ' aaa',
+      ' bbb',
+      ' ccc'
+    ]);
+    expect(created.map(wasShownBefore)).toEqual([true, true, false]);
+    expect(root.textContent).toBe('alpha aaa bbb ccc');
+  });
+
+  it('moves a removal inside a heading to the block after it', () => {
+    const root = render(
+      '<h2 id="r">Summary<a class="jp-InternalAnchorLink">¶</a></h2>\n<p>Body</p>'
+    );
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('Report¶\nBody', snapshot.text));
+    const created = decorate(root, snapshot, ranges, 1000);
+    const ghost = created.find(element =>
+      element.classList.contains(REMOVED_CLASS)
+    ) as HTMLElement;
+    expect(ghost.textContent).toBe('Report¶');
+    expect(ghost.parentElement).toBe(root.querySelector('p'));
+    const heading = root.querySelector('h2') as HTMLElement;
+    expect(heading.textContent).toBe('Summary¶');
+    expect(heading.id).toBe('r');
+  });
+
+  it('shows no ghost when only headings could hold it', () => {
+    const root = render('<h1 id="a">A</h1>\n<h1 id="b">B</h1>');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('A\nGone\nB', snapshot.text));
+    decorate(root, snapshot, ranges, 1000);
+    expect(root.querySelectorAll(`.${REMOVED_CLASS}`).length).toBe(0);
+    expect(root.textContent).toBe('A\nB');
+  });
+
+  it('puts a paragraph removed before a heading at the end of the block before it', () => {
+    const root = render('<p>Alpha.</p>\n<h2 id="c">Gamma</h2>');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(
+      diffWords('Alpha.\nBeta gone.\nGamma', snapshot.text)
+    );
+    const [ghost] = decorate(root, snapshot, ranges, 1000);
+    expect(ghost.textContent).toBe('Beta gone.\n');
+    expect(ghost.parentElement).toBe(root.querySelector('p'));
+    const heading = root.querySelector('h2') as HTMLElement;
+    expect(heading.textContent).toBe('Gamma');
+    expect(heading.id).toBe('c');
   });
 
   it('shows no ghost when only the added side of a replacement passes the bound', () => {
@@ -203,6 +361,31 @@ describe('decorate', () => {
     decorate(root, snapshot, ranges, 1000);
     expect(root.querySelectorAll(`.${REMOVED_CLASS}`).length).toBe(0);
     expect(root.querySelectorAll(`.${ADDED_CLASS}`).length).toBeGreaterThan(0);
+  });
+
+  it('shows a short ghost when only the addition beside it passes the bound', () => {
+    const root = render(
+      `<p>${'para '.repeat(200)}The new closing sentence here.</p><p>${'appended '.repeat(600)}</p>`
+    );
+    const snapshot = captureText(root);
+    const ranges = changeRanges(
+      diffWords(
+        `${'para '.repeat(200)}The old closing sentence here.`,
+        snapshot.text
+      )
+    );
+    expect(ranges.removed.map(removal => removal.text)).toEqual([
+      'old closing sentence here.'
+    ]);
+    const added = ranges.added[0];
+    expect(added.start).toBe(ranges.removed[0].at);
+    expect(
+      tokenize(snapshot.text.slice(added.start, added.end)).length
+    ).toBeGreaterThan(MAX_LCS_TOKENS);
+    decorate(root, snapshot, ranges, 1000);
+    const ghosts = root.querySelectorAll(`.${REMOVED_CLASS}`);
+    expect(ghosts.length).toBe(1);
+    expect(ghosts[0].textContent).toBe('old closing sentence here.');
   });
 
   it('carries the fade duration onto the decoration', () => {

@@ -1,4 +1,4 @@
-import { changeRanges, diffWords } from '../diff';
+import { changeRanges, diffWords, mapOffsets } from '../diff';
 
 /**
  * Reassemble the earlier string from an edit script.
@@ -112,5 +112,27 @@ describe('changeRanges', () => {
       expect(range.end).toBeLessThanOrEqual(later.length);
       expect(range.end).toBeGreaterThan(range.start);
     }
+  });
+});
+
+describe('mapOffsets', () => {
+  it('carries offsets across unchanged text and collapses a changed run to a point', () => {
+    const inserted = mapOffsets(diffWords('alpha delta', 'alpha beta delta'));
+    // 'delta' starts at 6 before the insertion of 'beta ' and at 11 after it.
+    expect(inserted.toEarlier(11)).toBe(6);
+    expect(inserted.toEarlier(13)).toBe(8);
+    expect(inserted.toLater(8)).toBe(13);
+    // Every offset inside the inserted text maps to the point it was inserted
+    // at, and that point maps to the offset before the inserted text.
+    expect(inserted.toEarlier(8)).toBe(6);
+    expect(inserted.toLater(6)).toBe(6);
+    expect(inserted.toEarlier(16)).toBe(11);
+
+    const deleted = mapOffsets(diffWords('alpha beta delta', 'alpha delta'));
+    expect(deleted.toLater(11)).toBe(6);
+    expect(deleted.toLater(8)).toBe(6);
+    expect(deleted.toLater(13)).toBe(8);
+    expect(deleted.toEarlier(8)).toBe(13);
+    expect(deleted.toEarlier(11)).toBe(16);
   });
 });

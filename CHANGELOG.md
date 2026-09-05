@@ -2,6 +2,19 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [Unreleased]
+
+### Added
+
+- Changes play out as typing in the rendered view: added text grows letter by letter on its green background in every changed place at once; removed text stands red for a pause, then is deleted from its last letter backwards
+- Setting `animationSpeed` in characters per second, default 200; 0 shows a change at once; a reduced-motion preference turns the animation off
+- A write arriving during an animation continues it: shown text is not retyped and a ghost already shown warns once
+
+### Fixed
+
+- A ghost already on screen no longer fades in again when the word at its offset is replaced twice within one fade
+- A short removal keeps its ghost when the same write appends a long section beside it
+
 ## [0.6.8] - 2026-09-05
 
 ### Added

@@ -5,7 +5,8 @@
  | Only background colour and opacity are animated. Text colour is left alone
  | so syntax highlighting inside fenced code blocks still shows through, and no
  | box model property is set on a decoration so the spacing other extensions
- | rely on is intact.
+ | rely on is intact. The change animator edits only the text inside a
+ | decoration, never its box.
  */
 
 :root {
@@ -45,6 +46,17 @@ body[data-jp-theme-light='false'] {
   background-color: var(--jp-AdvancedMd-removed-bg);
   text-decoration: line-through;
   animation-name: jp-AdvancedMd-fade-in, jp-AdvancedMd-ghost-out;
+}
+
+/*
+ | While a decoration is still being typed or deleted its fade-out waits. The
+ | animator removes the class when the text is complete, and a play state
+ | change never restarts an animation, so the fade-in runs from creation and
+ | the fade-out starts at completion. A ghost being deleted is taken out by the
+ | animator before its fade-out would run.
+ */
+.jp-AdvancedMd-decoration.jp-AdvancedMd-typing {
+  animation-play-state: running, paused;
 }
 
 /*

@@ -58,6 +58,7 @@ function readSettings(settings: ISettingRegistry.ISettings): ILiveViewSettings {
     enabled: bool('enabled'),
     pollInterval: num('pollInterval', 1),
     fadeDuration: num('fadeDuration', 0),
+    animationSpeed: num('animationSpeed', 0),
     highlight: bool('highlight'),
     tabCue: bool('tabCue')
   };

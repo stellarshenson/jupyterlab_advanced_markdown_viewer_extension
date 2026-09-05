@@ -24,6 +24,13 @@
       "minimum": 0,
       "default": 4000
     },
+    "animationSpeed": {
+      "title": "Animation speed (characters per second)",
+      "description": "How fast added text is typed in and removed text is deleted from its end in the rendered view. 0 shows a change at once.",
+      "type": "integer",
+      "minimum": 0,
+      "default": 200
+    },
     "highlight": {
       "title": "Highlight changes",
       "description": "Show added text on a green background and removed text on a red one.",

@@ -66,7 +66,9 @@ const LONG_REWRITTEN = `${LONG}\nA final paragraph appeared.\n`;
 
 /**
  * Settings that make the feature observable within a test: poll every second,
- * and hold the highlight long enough to assert on it.
+ * hold the highlight long enough to assert on it, and show a change at once so
+ * the text read after a decoration appears is complete; the change animation
+ * describe sets its own speed.
  */
 function settings(overrides: Record<string, unknown> = {}) {
   return {
@@ -75,6 +77,7 @@ function settings(overrides: Record<string, unknown> = {}) {
       enabled: true,
       pollInterval: 1,
       fadeDuration: 30000,
+      animationSpeed: 0,
       highlight: true,
       tabCue: true,
       ...overrides
@@ -151,6 +154,34 @@ async function readDisk(page: any, path: string): Promise<string> {
 const previewScrollTop = (page: any): Promise<number> =>
   page.evaluate(
     () => document.querySelector('.jp-RenderedMarkdown')?.scrollTop ?? -1
+  );
+
+/**
+ * Sample the text length of the last element matching a selector at a fixed
+ * interval, inside the page so the samples are evenly spaced. A sample is
+ * null when nothing matches.
+ */
+const sampleLength = (
+  page: any,
+  selector: string,
+  count: number,
+  everyMs: number
+): Promise<Array<number | null>> =>
+  page.evaluate(
+    ([target, n, every]: [string, number, number]) =>
+      new Promise<Array<number | null>>(resolve => {
+        const samples: Array<number | null> = [];
+        const timer = setInterval(() => {
+          const matches = document.querySelectorAll(target);
+          const last = matches[matches.length - 1];
+          samples.push(last ? (last.textContent ?? '').length : null);
+          if (samples.length >= n) {
+            clearInterval(timer);
+            resolve(samples);
+          }
+        }, every);
+      }),
+    [selector, count, everyMs]
   );
 
 test.describe('live preview with a long highlight', () => {
@@ -476,5 +507,126 @@ test.describe('the reader position', () => {
     expect(await page.evaluate(() => (window as any).__anchorScrolls)).toBe(1);
     const after = await previewScrollTop(page);
     expect(Math.abs(after - before)).toBeLessThan(50);
+  });
+});
+
+test.describe('change animation', () => {
+  // 20 characters per second: the third paragraph (27 characters) types for
+  // 1350 ms and the ghost 'apples.' is held for 750 ms then deleted over
+  // 350 ms, both long enough to sample every 20 ms.
+  test.use({ mockSettings: settings({ animationSpeed: 20 }) });
+
+  const THIRD = 'A third paragraph appeared.';
+
+  test.beforeEach(async ({ page, tmpPath }) => {
+    await page.contents.uploadContent(INITIAL, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`);
+  });
+
+  test('types added text in letter by letter on its green background', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
+
+    const typing = page.locator('.jp-AdvancedMd-added.jp-AdvancedMd-typing');
+    await expect(typing.first()).toBeAttached({ timeout: 20000 });
+    // A transparent background would match a colour pattern too, so the
+    // assertion names the one value that means no tint.
+    await expect(typing.last()).not.toHaveCSS(
+      'background-color',
+      'rgba(0, 0, 0, 0)'
+    );
+
+    const samples = await sampleLength(page, '.jp-AdvancedMd-added', 80, 20);
+    expect(samples[0]).toBeLessThan(THIRD.length);
+    for (let i = 1; i < samples.length; i++) {
+      expect(samples[i]).toBeGreaterThanOrEqual(samples[i - 1] as number);
+    }
+    expect(new Set(samples).size).toBeGreaterThan(5);
+    expect(samples[samples.length - 1]).toBe(THIRD.length);
+    // At the default speed of 200 the same text would type in 135 ms, which
+    // is seven samples; the low speed set here is what makes it slow.
+    const growing = samples.filter(length => (length as number) < THIRD.length);
+    expect(growing.length).toBeGreaterThanOrEqual(40);
+
+    await expect(page.locator('.jp-AdvancedMd-typing')).toHaveCount(0, {
+      timeout: 20000
+    });
+    expect(
+      await page.locator('.jp-AdvancedMd-added').last().textContent()
+    ).toBe(THIRD);
+  });
+
+  test('holds removed text, deletes it from the end, then takes it out', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
+
+    const ghost = page.locator('.jp-AdvancedMd-removed');
+    await expect(ghost.first()).toBeAttached({ timeout: 20000 });
+    await expect(ghost.first()).toHaveCSS(
+      'text-decoration-line',
+      'line-through'
+    );
+
+    // Sampling starts a few hundred milliseconds into the 750 ms hold, after
+    // the two polls above returned. Without a hold the 7 characters would be
+    // gone within 350 ms at 20 cps, so ten full-length samples (200 ms) prove
+    // the ghost stood before its deletion started.
+    const samples = await sampleLength(page, '.jp-AdvancedMd-removed', 100, 20);
+    expect(samples[0]).toBe('apples.'.length);
+    let held = 0;
+    while (held < samples.length && samples[held] === 'apples.'.length) {
+      held += 1;
+    }
+    expect(held).toBeGreaterThanOrEqual(10);
+    for (let i = 1; i < samples.length; i++) {
+      const previous = samples[i - 1];
+      const current = samples[i];
+      if (previous !== null && current !== null) {
+        expect(current).toBeLessThanOrEqual(previous);
+      }
+    }
+    const last = samples[samples.length - 1];
+    expect(last === null || last === 0).toBe(true);
+
+    // The fade is 30 s, so the ghost left by deletion, not by the fade: the
+    // added text is still decorated.
+    await expect(ghost).toHaveCount(0, { timeout: 20000 });
+    await expect(page.locator('.jp-RenderedMarkdown')).toContainText('oranges');
+    await expect(page.locator('.jp-RenderedMarkdown')).not.toContainText(
+      'apples'
+    );
+    expect(await page.locator('.jp-AdvancedMd-added').count()).toBeGreaterThan(
+      0
+    );
+  });
+});
+
+test.describe('animation turned off', () => {
+  test.use({ mockSettings: settings({ animationSpeed: 0 }) });
+
+  test('shows the whole change at once', async ({ page, tmpPath }) => {
+    await page.contents.uploadContent(INITIAL, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`);
+    await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
+
+    await expect(page.locator('.jp-AdvancedMd-added').first()).toBeVisible({
+      timeout: 20000
+    });
+    const added = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.jp-AdvancedMd-added')).map(
+        element => ({
+          typing: element.classList.contains('jp-AdvancedMd-typing'),
+          text: element.textContent ?? ''
+        })
+      )
+    );
+    expect(added.some(span => span.typing)).toBe(false);
+    const text = added.map(span => span.text).join(' ');
+    expect(text).toContain('A third paragraph appeared.');
+    expect(text).toContain('oranges');
   });
 });

@@ -41,11 +41,24 @@ export const REMOVED_CLASS = 'jp-AdvancedMd-removed';
 export const DECORATION_CLASS = 'jp-AdvancedMd-decoration';
 
 /**
+ * The longest removal, in tokens, still shown as a ghost when the diff took
+ * its coarse branch because of the addition beside it. A sentence or two
+ * reads as a struck phrase; the lumped middle of a rewritten document does
+ * not.
+ */
+export const MAX_GHOST_TOKENS = 50;
+
+/**
  * Class on a removal ghost that would otherwise touch the word after it.
  */
 export const GAP_CLASS = 'jp-AdvancedMd-gap';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * Selector for the heading elements, whose text and ids stay as rendered.
+ */
+export const HEADINGS = 'h1,h2,h3,h4,h5,h6';
 
 /**
  * One text node and the range of the captured text it holds.
@@ -128,14 +141,23 @@ interface INodeWork {
 }
 
 /**
+ * Where in the snapshot text each decoration sits, kept off the element so the
+ * markup carries nothing but its classes and fade variables.
+ */
+const offsets = new WeakMap<HTMLElement, number>();
+
+/**
  * Build the decoration element for a run of text.
  *
+ * @param at - offset in the snapshot text: where an added slice starts, or
+ * where a removal was taken from
  * @param fresh - whether the text was changed by this render; text tinted by
  * an earlier render of the same fade keeps its tint and does not fade in again
  */
 function makeDecoration(
   className: string,
   text: string,
+  at: number,
   fadeMs: number,
   fresh: boolean
 ): HTMLElement {
@@ -146,7 +168,82 @@ function makeDecoration(
     span.style.setProperty('--jp-AdvancedMd-fade-in', '0ms');
   }
   span.textContent = text;
+  offsets.set(span, at);
   return span;
+}
+
+/**
+ * Where a decoration sits in the text of the render that made it: the offset
+ * an added slice starts at, or the offset a removal was taken from. The change
+ * animator matches a decoration to the run it continues by this offset, so two
+ * runs of the same text in different places stay apart.
+ */
+export function offsetOf(element: HTMLElement): number {
+  return offsets.get(element) ?? 0;
+}
+
+/**
+ * Whether a decoration was built for text an earlier render of the same fade
+ * already showed.
+ *
+ * {@link makeDecoration} records that on the element by turning its fade-in
+ * off; the change animator reads it to decide what still has to be typed.
+ */
+export function wasShownBefore(element: HTMLElement): boolean {
+  return element.style.getPropertyValue('--jp-AdvancedMd-fade-in') === '0ms';
+}
+
+/**
+ * Texts of the added runs the change animator still holds from the previous
+ * render, in the order it holds them.
+ *
+ * A decoration built for text an earlier render already showed continues one
+ * of those runs. The next diff may merge what were several runs into one
+ * slice, so {@link decorate} cuts such a slice where the runs meet and every
+ * part continues its own run.
+ */
+export interface ICarriedRuns {
+  added: string[];
+}
+
+/**
+ * A removal shown as a ghost: where it sits in the snapshot text, its text,
+ * and whether this render made it rather than an earlier render of the same
+ * fade.
+ */
+export interface IGhost extends IRemoval {
+  fresh: boolean;
+}
+
+/**
+ * Build the function that tells where a slice shown before must be cut so
+ * that every part lies within one carried run: the edges between the runs the
+ * slice spans, as offsets into the slice. Slices arrive in document order, so
+ * the search continues from the previous match and starts over when nothing
+ * follows it.
+ */
+function carriedCutter(runs: string[]): (text: string) => number[] {
+  const joined = runs.join('');
+  const edges: number[] = [];
+  let end = 0;
+  for (const run of runs) {
+    end += run.length;
+    edges.push(end);
+  }
+  let cursor = 0;
+  return text => {
+    let at = joined.indexOf(text, cursor);
+    if (at < 0) {
+      at = joined.indexOf(text);
+    }
+    if (at < 0) {
+      return [];
+    }
+    cursor = at + text.length;
+    return edges
+      .filter(edge => edge > at && edge < at + text.length)
+      .map(edge => edge - at);
+  };
 }
 
 /**
@@ -172,35 +269,72 @@ function overlaps(
 }
 
 /**
- * Find the element a removal ghost may be placed inside.
+ * Whether a removal at this text node is shown as a ghost right there.
  *
- * A ghost must not become a direct child of the render root, so a removal that
- * lands in the whitespace between two blocks is redirected into the block
- * beside it.
+ * A ghost must not become a direct child of the render root, and must not sit
+ * inside a heading, whose text it would change and whose content the change
+ * animator leaves alone. Such a removal is placed by {@link ghostAnchor}.
+ */
+function holdsGhost(node: Text, root: HTMLElement): boolean {
+  const parent = node.parentElement;
+  return (
+    parent !== null && parent !== root && parent.closest(HEADINGS) === null
+  );
+}
+
+/**
+ * The direct child of the render root a text node sits in: the block a
+ * removal belongs to, or the whitespace between blocks itself. Read before the
+ * text nodes are rebuilt, because a heading's text node may be replaced while
+ * the heading stays.
+ */
+function blockOf(node: Text, root: HTMLElement): Element | Text {
+  let block: Element | Text = node;
+  while (block.parentNode && block.parentNode !== root) {
+    block = block.parentNode as Element;
+  }
+  return block;
+}
+
+/**
+ * Find the element a removal ghost is placed inside when its own text node
+ * cannot hold it.
  *
+ * The ghost goes to the start of the block after the one the removal belongs
+ * to, or to the end of the nearest previous block when the next one is a
+ * heading, headings being passed over in both directions. A document with no
+ * other block shows no ghost, so heading text stays as rendered.
+ *
+ * @param block - the block the removal belongs to, or the whitespace between
+ * blocks it sits in
  * @returns the node to insert before, and its parent, or null when there is
  * nowhere safe to put the ghost
  */
 function ghostAnchor(
-  node: Text,
-  root: HTMLElement
+  block: Element | Text
 ): { parent: Node; before: Node | null } | null {
-  if (node.parentElement !== root) {
-    return { parent: node.parentNode!, before: node };
+  const isHeading = (element: Element) => element.matches(HEADINGS);
+  const into = (element: Element) => ({
+    parent: element,
+    before: element.firstChild
+  });
+  const next = block.nextElementSibling;
+  if (next && !isHeading(next)) {
+    return into(next);
   }
-  let sibling: Node | null = node.nextSibling;
-  while (sibling) {
-    if (sibling.nodeType === Node.ELEMENT_NODE) {
-      return { parent: sibling, before: sibling.firstChild };
+  for (
+    let el = block.previousElementSibling;
+    el;
+    el = el.previousElementSibling
+  ) {
+    if (!isHeading(el)) {
+      return { parent: el, before: null };
     }
-    sibling = sibling.nextSibling;
   }
-  sibling = node.previousSibling;
-  while (sibling) {
-    if (sibling.nodeType === Node.ELEMENT_NODE) {
-      return { parent: sibling, before: null };
+  for (let el = next; el; el = el.nextElementSibling) {
+    if (!isHeading(el)) {
+      return into(el);
     }
-    sibling = sibling.previousSibling;
   }
   return null;
 }
@@ -230,6 +364,13 @@ function spanAt(spans: ITextSpan[], offset: number): ITextSpan | null {
  * @param fresh - the subset of the changes this render made, positioned the
  * same way, when an earlier render of the same fade already showed the rest;
  * omitted when every change is new
+ * @param carried - the added runs the change animator still holds from the
+ * previous render, so a slice shown before is cut where the runs it spans meet
+ * @param ghosts - the ghosts to show in place of the removals in `ranges`,
+ * when this render animates during a pending fade: the change animator builds
+ * them from what this render removed and what is still on its way out;
+ * omitted when every removal against the baseline is shown, fresh unless
+ * `fresh` places none at its offset
  * @returns the decoration elements that were inserted
  */
 export function decorate(
@@ -237,10 +378,13 @@ export function decorate(
   snapshot: ITextSnapshot,
   ranges: IChangeRanges,
   fadeMs: number,
-  fresh?: IChangeRanges
+  fresh?: IChangeRanges,
+  carried?: ICarriedRuns,
+  ghosts?: IGhost[]
 ): HTMLElement[] {
   const work = new Map<Text, INodeWork>();
   const created: HTMLElement[] = [];
+  const cutAdded = carriedCutter(carried?.added ?? []);
 
   const workFor = (span: ITextSpan): INodeWork => {
     let entry = work.get(span.node);
@@ -283,40 +427,47 @@ export function decorate(
   // inside a rebuilt node is rebuilt with it rather than against a stale offset.
   //
   // Past the diff's own token bound, on either side, the whole changed middle
-  // arrives as one removal and one addition at the same offset. Placing that
-  // removal inline would put the old document inside the first block and shift
-  // everything below it when the ghost is taken out, so such a removal is not
-  // shown; the added text is still marked and the tab cue fires.
+  // arrives as one removal and one addition at the same offset. A long removal
+  // of that kind is not a phrase the reader can take in but the old document
+  // lumped together, so it is not shown; the added text is still marked and
+  // the tab cue fires. A short one is exactly the text that went, and its
+  // ghost is the warning the reader expects, whatever the size of the addition
+  // beside it.
   const pastBound = (text: string) => tokenize(text).length > MAX_LCS_TOKENS;
-  const deferredGhosts: Array<{ span: ITextSpan; removal: IRemoval }> = [];
-  for (const removal of ranges.removed) {
+  const readable = (text: string) => tokenize(text).length <= MAX_GHOST_TOKENS;
+  const deferredGhosts: Array<{ block: Element | Text; ghost: IGhost }> = [];
+  const shown =
+    ghosts ??
+    ranges.removed.map(removal => ({
+      ...removal,
+      fresh: isFreshRemoval(removal, fresh)
+    }));
+  for (const ghost of shown) {
     if (
-      pastBound(removal.text) ||
-      ranges.added.some(
-        range =>
-          range.start === removal.at &&
-          pastBound(snapshot.text.slice(range.start, range.end))
-      )
+      pastBound(ghost.text) ||
+      (!readable(ghost.text) &&
+        ranges.added.some(
+          range =>
+            range.start === ghost.at &&
+            pastBound(snapshot.text.slice(range.start, range.end))
+        ))
     ) {
       continue;
     }
-    const span = spanAt(snapshot.spans, removal.at);
+    const span = spanAt(snapshot.spans, ghost.at);
     if (!span) {
       continue;
     }
-    if (span.node.parentElement === root) {
-      deferredGhosts.push({ span, removal });
-    } else {
-      workFor(span).removed.push({
-        at: Math.min(
-          Math.max(removal.at - span.start, 0),
-          span.end - span.start
-        ),
-        text: removal.text,
-        fresh: isFreshRemoval(removal, fresh),
-        gap: needsGap(removal, snapshot)
-      });
+    if (!holdsGhost(span.node, root)) {
+      deferredGhosts.push({ block: blockOf(span.node, root), ghost });
+      continue;
     }
+    workFor(span).removed.push({
+      at: Math.min(Math.max(ghost.at - span.start, 0), span.end - span.start),
+      text: ghost.text,
+      fresh: ghost.fresh,
+      gap: needsGap(ghost, snapshot)
+    });
   }
 
   for (const [node, entry] of work) {
@@ -332,7 +483,25 @@ export function decorate(
     for (const cut of entry.cuts) {
       cuts.add(cut);
     }
-    const points = Array.from(cuts).sort((a, b) => a - b);
+    const addedAt = (at: number, next: number) =>
+      entry.added.some(range => range.start <= at && range.end >= next);
+    let points = Array.from(cuts).sort((a, b) => a - b);
+    // A slice an earlier render showed may span several carried runs when
+    // this diff merged them; it is cut where they meet.
+    if (fresh) {
+      for (let i = 0; i + 1 < points.length; i++) {
+        const [at, next] = [points[i], points[i + 1]];
+        if (
+          addedAt(at, next) &&
+          !overlaps(fresh.added, entry.base + at, entry.base + next)
+        ) {
+          for (const cut of cutAdded(value.slice(at, next))) {
+            cuts.add(at + cut);
+          }
+        }
+      }
+      points = Array.from(cuts).sort((a, b) => a - b);
+    }
 
     const fragment = document.createDocumentFragment();
     for (let i = 0; i < points.length; i++) {
@@ -342,6 +511,7 @@ export function decorate(
           const element = makeDecoration(
             REMOVED_CLASS,
             ghost.text,
+            entry.base + at,
             fadeMs,
             ghost.fresh
           );
@@ -357,13 +527,11 @@ export function decorate(
         continue;
       }
       const slice = value.slice(at, next);
-      const isAdded = entry.added.some(
-        range => range.start <= at && range.end >= next
-      );
-      if (isAdded) {
+      if (addedAt(at, next)) {
         const element = makeDecoration(
           ADDED_CLASS,
           slice,
+          entry.base + at,
           fadeMs,
           overlaps(fresh?.added, entry.base + at, entry.base + next)
         );
@@ -376,18 +544,19 @@ export function decorate(
     node.parentNode?.replaceChild(fragment, node);
   }
 
-  for (const { span, removal } of deferredGhosts) {
-    const anchor = ghostAnchor(span.node, root);
+  for (const { block, ghost } of deferredGhosts) {
+    const anchor = ghostAnchor(block);
     if (!anchor) {
       continue;
     }
     const element = makeDecoration(
       REMOVED_CLASS,
-      removal.text,
+      ghost.text,
+      ghost.at,
       fadeMs,
-      isFreshRemoval(removal, fresh)
+      ghost.fresh
     );
-    if (needsGap(removal, snapshot)) {
+    if (needsGap(ghost, snapshot)) {
       element.classList.add(GAP_CLASS);
     }
     anchor.parent.insertBefore(element, anchor.before);
@@ -399,10 +568,17 @@ export function decorate(
 
 /**
  * Whether a removal was made by this render rather than shown already.
+ *
+ * The offset alone does not tell: a word replaced twice within one fade puts
+ * a different removal at the same offset while the ghost of the first
+ * replacement is still on screen, so the text has to match as well.
  */
 function isFreshRemoval(removal: IRemoval, fresh?: IChangeRanges): boolean {
   return (
-    fresh === undefined || fresh.removed.some(other => other.at === removal.at)
+    fresh === undefined ||
+    fresh.removed.some(
+      other => other.at === removal.at && other.text === removal.text
+    )
   );
 }
 

@@ -13,7 +13,14 @@ import { Contents } from '@jupyterlab/services';
 import { IDisposable } from '@lumino/disposable';
 import { Signal } from '@lumino/signaling';
 
-import { changeRanges, diffWords } from './diff';
+import { ChangeAnimator, prefersReducedMotion } from './animate';
+import {
+  changeRanges,
+  diffWords,
+  mapOffsets,
+  MAX_LCS_TOKENS,
+  tokenize
+} from './diff';
 import {
   captureText,
   decorate,
@@ -78,6 +85,7 @@ export interface ILiveViewSettings {
   enabled: boolean;
   pollInterval: number;
   fadeDuration: number;
+  animationSpeed: number;
   highlight: boolean;
   tabCue: boolean;
 }
@@ -89,6 +97,7 @@ export const DEFAULT_SETTINGS: ILiveViewSettings = {
   enabled: true,
   pollInterval: 2,
   fadeDuration: 4000,
+  animationSpeed: 200,
   highlight: true,
   tabCue: true
 };
@@ -126,6 +135,13 @@ export class LiveViewController implements IDisposable {
     this._widget.content.rendered.connect(this._onRendered, this);
     this._widget.disposed.connect(this._onWidgetDisposed, this);
 
+    // The stylesheet's fades follow the reduced motion preference as it
+    // changes; so does the change animation.
+    if (typeof window.matchMedia === 'function') {
+      this._motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+      this._motionQuery.addEventListener('change', this._applySpeed);
+    }
+
     const node = this._widget.node;
     node.addEventListener('pointerdown', this._onAttention, true);
     node.addEventListener('keydown', this._onAttention, true);
@@ -158,11 +174,16 @@ export class LiveViewController implements IDisposable {
    * Apply changed settings without reopening the document.
    */
   updateSettings(settings: ILiveViewSettings): void {
+    const speedChanged =
+      settings.animationSpeed !== this._settings.animationSpeed;
     this._settings = settings;
     this._watcher.interval = settings.pollInterval * 1000;
     this._watcher.enabled = settings.enabled;
     if (!settings.enabled || !settings.highlight) {
       this._endFade();
+    }
+    if (speedChanged) {
+      this._applySpeed();
     }
     if (!settings.enabled || !settings.tabCue) {
       this._setTabState(null);
@@ -187,6 +208,7 @@ export class LiveViewController implements IDisposable {
     node.removeEventListener('keydown', this._onAttention, true);
     node.removeEventListener('wheel', this._onAttention, true);
     node.removeEventListener('scroll', this._onScroll, true);
+    this._motionQuery?.removeEventListener('change', this._applySpeed);
     this._clearDecorations();
     this._setTabState(null);
     this._watcher.dispose();
@@ -299,6 +321,10 @@ export class LiveViewController implements IDisposable {
     if (!root) {
       return;
     }
+    // Every render detaches the text nodes the animator was writing to. The
+    // runs are kept only for the decorations this render creates, which
+    // continue them, and are forgotten when it creates none.
+    this._animator.stop();
 
     const snapshot: ITextSnapshot = captureText(root);
     const previous = this._previousText;
@@ -313,16 +339,42 @@ export class LiveViewController implements IDisposable {
       previous !== snapshot.text;
     this._pending = false;
 
+    let decorated = false;
     if (shouldDecorate) {
       const ranges = changeRanges(diffWords(previous as string, snapshot.text));
       if (hasVisibleChange(ranges)) {
+        decorated = true;
         // The renderer replaced the DOM, so decorations are always created
         // anew. While a fade is pending, only what this render changed fades
         // in; text tinted by an earlier render of the same fade keeps its
         // tint without flashing.
-        const fresh =
+        const freshOps =
           this._fadeTimer !== null && last !== null
-            ? changeRanges(diffWords(last, snapshot.text))
+            ? diffWords(last, snapshot.text)
+            : null;
+        const fresh = freshOps ? changeRanges(freshOps) : undefined;
+        const offsets = freshOps ? mapOffsets(freshOps) : undefined;
+        // Past the diff's token bound on either side, the changed middle
+        // arrives as one removal and one addition with the unchanged text
+        // inside the addition. Typing that would take text the reader had
+        // away and bring it back, so such a change lands at once, tinted as
+        // without animation. The diff this render made decides: what an
+        // earlier coarse write of the same fade showed stays complete anyway,
+        // and a small write after it is typed.
+        const scope = fresh ?? ranges;
+        const past = (text: string) => tokenize(text).length > MAX_LCS_TOKENS;
+        const coarse =
+          scope.added.some(range =>
+            past(snapshot.text.slice(range.start, range.end))
+          ) || scope.removed.some(removal => past(removal.text));
+        const speed = coarse ? 0 : this._speed();
+        // While a fade is pending and this render animates, the ghosts are
+        // what this render removed and what is still on its way out, so a
+        // ghost already taken out never comes back. Otherwise every removal
+        // against the held baseline is shown, as without animation.
+        const ghosts =
+          freshOps && offsets && speed > 0
+            ? this._animator.ghosts(freshOps, offsets)
             : undefined;
         this._clearDecorations();
         this._decorations = decorate(
@@ -330,10 +382,20 @@ export class LiveViewController implements IDisposable {
           snapshot,
           ranges,
           this._settings.fadeDuration,
-          fresh
+          fresh,
+          this._animator.carried(),
+          ghosts
         );
-        this._scheduleFade();
+        const animationMs = this._animator.start(
+          this._decorations,
+          speed,
+          offsets
+        );
+        this._scheduleFade(animationMs);
       }
+    }
+    if (!decorated) {
+      this._animator.clear();
     }
 
     // While a fade is pending the baseline is held, so a change arriving
@@ -387,19 +449,47 @@ export class LiveViewController implements IDisposable {
   }
 
   /**
+   * The animation speed in force: the setting, or 0 when the operating system
+   * asks for reduced motion.
+   */
+  private _speed(): number {
+    return prefersReducedMotion() ? 0 : this._settings.animationSpeed;
+  }
+
+  /**
+   * The speed in force changed, by a setting or by the operating system: the
+   * runs in progress take it on their next frame, and the fade waits for the
+   * time they still need.
+   */
+  private _applySpeed = (): void => {
+    this._animator.speed = this._speed();
+    if (this._fadeTimer !== null) {
+      this._scheduleFade(this._animator.remainingMs());
+    }
+  };
+
+  /**
    * Take the decoration markup back out once the fade has run, so the DOM
    * returns to exactly what the renderer produced.
+   *
+   * The fade runs after the longest typing or deletion is over, so the
+   * baseline is held until the last decoration is complete.
+   *
+   * @param animationMs - how long the change animation still needs
    */
-  private _scheduleFade(): void {
+  private _scheduleFade(animationMs = 0): void {
     if (this._fadeTimer !== null) {
       window.clearTimeout(this._fadeTimer);
     }
-    this._fadeTimer = window.setTimeout(() => {
-      this._endFade();
-      if (this._widget.isVisible) {
-        this._clearUpdatedCue();
-      }
-    }, this._settings.fadeDuration + FADE_IN_MS);
+    this._fadeTimer = window.setTimeout(
+      () => {
+        this._endFade();
+        if (this._widget.isVisible) {
+          this._clearUpdatedCue();
+        }
+      },
+      animationMs + this._settings.fadeDuration + FADE_IN_MS
+    );
   }
 
   /**
@@ -408,6 +498,7 @@ export class LiveViewController implements IDisposable {
    */
   private _endFade(): void {
     this._clearDecorations();
+    this._animator.clear();
     const root = this._root;
     if (root) {
       this._previousText = captureText(root).text;
@@ -423,6 +514,9 @@ export class LiveViewController implements IDisposable {
       window.clearTimeout(this._fadeTimer);
       this._fadeTimer = null;
     }
+    // Typed text is completed before the decorations are unwrapped, so the
+    // document that comes back is the whole one.
+    this._animator.stop();
     if (!this._decorations.length) {
       return;
     }
@@ -503,6 +597,8 @@ export class LiveViewController implements IDisposable {
   private _previousText: string | null = null;
   private _lastRendered: string | null = null;
   private _decorations: HTMLElement[] = [];
+  private _animator = new ChangeAnimator();
+  private _motionQuery: MediaQueryList | null = null;
   private _pending = false;
   private _disposed = false;
   private _fadeTimer: number | null = null;
