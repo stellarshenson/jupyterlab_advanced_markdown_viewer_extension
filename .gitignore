@@ -131,6 +131,7 @@ dmypy.json
 
 # Test and tool artefacts
 junit.xml
-logs/*.log
+logs/*
 tmp/
 graphify-out/
+!logs/README.md
