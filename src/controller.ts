@@ -85,6 +85,7 @@ export interface ILiveViewSettings {
   enabled: boolean;
   pollInterval: number;
   fadeDuration: number;
+  animation: boolean;
   animationSpeed: number;
   highlight: boolean;
   tabCue: boolean;
@@ -97,6 +98,7 @@ export const DEFAULT_SETTINGS: ILiveViewSettings = {
   enabled: true,
   pollInterval: 2,
   fadeDuration: 4000,
+  animation: true,
   animationSpeed: 200,
   highlight: true,
   tabCue: true
@@ -175,7 +177,8 @@ export class LiveViewController implements IDisposable {
    */
   updateSettings(settings: ILiveViewSettings): void {
     const speedChanged =
-      settings.animationSpeed !== this._settings.animationSpeed;
+      settings.animationSpeed !== this._settings.animationSpeed ||
+      settings.animation !== this._settings.animation;
     this._settings = settings;
     this._watcher.interval = settings.pollInterval * 1000;
     this._watcher.enabled = settings.enabled;
@@ -453,7 +456,9 @@ export class LiveViewController implements IDisposable {
    * asks for reduced motion.
    */
   private _speed(): number {
-    return prefersReducedMotion() ? 0 : this._settings.animationSpeed;
+    return this._settings.animation && !prefersReducedMotion()
+      ? this._settings.animationSpeed
+      : 0;
   }
 
   /**

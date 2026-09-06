@@ -17,9 +17,25 @@ Keep open Markdown files live. When an AI agentic tool or any other process rewr
 - **Live updates** - open Markdown documents refresh automatically when the file changes on disk
 - **Tab title cue** - the document tab signals that new content arrived
 - **Change highlighting** - removed text on a pale red background, added text on a pale green background, both fading out calmly
-- **Changes play out as typing** - added text appears letter by letter, very fast, on its green background, in every changed place at once; removed text first turns red, then is deleted from its last letter backwards. The reader follows a change as it happens and no text disappears without warning. The speed is the `animationSpeed` setting, in characters per second; 0 turns the animation off
+- **Changes play out as typing** - added text appears letter by letter, very fast, on its green background, in every changed place at once; removed text first turns red, then is deleted from its last letter backwards. The reader follows a change as it happens and no text disappears without warning. The `animation` setting turns this off; `animationSpeed` sets the speed in characters per second
 - **Rendered view** - live updates apply to the rendered Markdown view; an editor open on the same file keeps JupyterLab's own File Changed dialog for a save over unsaved edits
 - **Unsaved edits are never overwritten** - a change arriving while the document has unsaved edits is held, shown as a red tab marker, and applied once the document is clean again
+
+![Typing animation: added text grows on green, removed text stands red and is deleted backwards](docs/images/animation-01.png)
+
+![Tab cue: a green dot before the label and a pulsing icon while changes arrive](docs/images/tab-01-arriving.png)
+
+## Settings
+
+All settings live under Settings, Advanced Settings Editor, Advanced Markdown Viewer.
+
+- `enabled` - on by default; off, the preview keeps what it showed until the document is reloaded and nothing else in this extension runs
+- `pollInterval` - how often an open preview checks its file, in seconds
+- `highlight` - green and red backgrounds on changed text
+- `fadeDuration` - how long the highlight takes to fade, in milliseconds
+- `animation` - on by default; changes play out as typing
+- `animationSpeed` - typing and deletion speed in characters per second; 0 shows a change at once
+- `tabCue` - the dot on the document tab
 
 ## Requirements
 

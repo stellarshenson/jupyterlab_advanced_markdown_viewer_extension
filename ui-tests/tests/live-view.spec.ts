@@ -77,6 +77,7 @@ function settings(overrides: Record<string, unknown> = {}) {
       enabled: true,
       pollInterval: 1,
       fadeDuration: 30000,
+      animation: true,
       animationSpeed: 0,
       highlight: true,
       tabCue: true,
@@ -612,7 +613,7 @@ test.describe('change animation', () => {
 });
 
 test.describe('animation turned off', () => {
-  test.use({ mockSettings: settings({ animationSpeed: 0 }) });
+  test.use({ mockSettings: settings({ animation: false }) });
 
   test('shows the whole change at once', async ({ page, tmpPath }) => {
     await page.contents.uploadContent(INITIAL, 'text', `${tmpPath}/${FILE}`);

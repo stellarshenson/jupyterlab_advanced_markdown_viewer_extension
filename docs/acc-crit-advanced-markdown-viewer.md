@@ -195,10 +195,13 @@ Signalling on the document tab that new content arrived
 
 User settings in schema/plugin.json
 
-- [ ] `ACC-CONFIG-33` **Extension can be disabled** - HIGH; an enabled setting, default true, stops all watching, applying, highlighting and cues when false, without a restart
+- [x] `ACC-CONFIG-33` **Extension can be disabled** - HIGH; an enabled setting, default true, stops all watching, applying, highlighting and cues when false, without a restart
+  - evidence: Galata 'the extension turned off > does not update the preview at all' (18/18 on the installed build v0.6.8, logs/galata.log 2026-09-05); unit test 'a settings change during a fade ends the fade and the next change fades in' covers the controller side; DEF-CONFIG-2 closed on the same mechanism
+  - mechanism: 2026-09-05T16:05:16Z @kj schema key enabled (boolean, default true) read by readSettings; the controller passes it to FileWatcher.enabled, which stops or starts the Lumino poll without a restart, and clears decorations and tab marker when false; nothing is watched, applied, highlighted or cued until it is true again
   - test: set enabled false, rewrite the file, assert no update; set true, assert updates resume
   - test-tags: UNIT, E2E
   - log: 2026-09-04T17:47:05Z @kj added
+  - log: 2026-09-05T16:05:16Z @kj closed
 - [ ] `ACC-CONFIG-34` **Settings are validated** - MEDIUM; the schema declares pollInterval, fadeDuration, highlight, tabCue and enabled with types, defaults and minimums, so an invalid value is rejected by the settings editor
   - test: enter pollInterval 0 in the settings editor, assert the validation error
   - test-tags: MANUAL
@@ -427,3 +430,10 @@ How an applied change is played out in the rendered view over time, so the reade
   - log: 2026-09-05T15:00:13Z @kj closed
   - log: 2026-09-05T15:01:12Z @kj reopened: reopened to correct the evidence line: a cited test name did not exist; evidence retired: unit tests 'leaves a heading's text complete on the first frame' (animate.spec) and 'moves a given ghost out of a heading like any other' (highlight.spec); the watcher suite unchanged (62 original tests still pass); 132/132 unit tests via make test, Galata 18/18 on the installed build v0.6.8 (logs/galata.log 2026-09-05), adversarial review (architect, ux-designer, bug-hunter) rounds 4 and 5 clean, SHIP
   - log: 2026-09-05T15:01:12Z @kj closed
+- [x] `ACC-ANIM-80` **Animation can be disabled** - MEDIUM; the setting animation, on by default, turns the typing and deletion animation off; off, a change lands at once as before the animation existed, while live updates, highlighting and the tab cue keep working; intent: a reader who wants the plain highlight keeps it with one switch, without touching the speed
+  - evidence: unit tests 'lands the change at once when the animation is turned off' and 'turning the animation off mid-typing completes every run on the next frame' in src/**tests**/controller.spec.ts (134 passing); Galata 'animation turned off > shows the whole change at once' in ui-tests/tests/live-view.spec.ts (18 passed on installed 0.6.8)
+  - test: set animation=false, rewrite the file: the added span is complete on the first frame and carries no typing class; set it back to true: the next write types
+  - test-tags: UNIT, E2E
+  - mechanism: 2026-09-05T16:01:49Z @kj schema/plugin.json key animation (boolean, default true) read by readSettings; LiveViewController._speed returns 0 when it is false, the same path as reduced motion and animationSpeed 0, and a settings change re-applies the speed to the running animator
+  - log: 2026-09-05T16:01:49Z @kj added
+  - log: 2026-09-05T16:10:28Z @kj closed

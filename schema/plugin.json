@@ -6,7 +6,7 @@
   "properties": {
     "enabled": {
       "title": "Enabled",
-      "description": "Watch open Markdown previews for changes made outside JupyterLab.",
+      "description": "Keep open Markdown previews live: a change made to the file outside JupyterLab is applied to the preview without a reload. Off, the preview keeps what it showed until the document is reloaded, and nothing else in this extension runs.",
       "type": "boolean",
       "default": true
     },
@@ -23,6 +23,12 @@
       "type": "number",
       "minimum": 0,
       "default": 4000
+    },
+    "animation": {
+      "title": "Animate changes",
+      "description": "Play out an external change as typing: added text appears letter by letter and removed text is deleted from its end after a pause. Off shows a change at once.",
+      "type": "boolean",
+      "default": true
     },
     "animationSpeed": {
       "title": "Animation speed (characters per second)",

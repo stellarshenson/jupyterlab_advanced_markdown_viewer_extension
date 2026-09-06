@@ -89,6 +89,7 @@ describe('LiveViewController', () => {
     ...DEFAULT_SETTINGS,
     pollInterval: 1,
     fadeDuration: 4000,
+    animation: true,
     animationSpeed: 0
   };
 
@@ -490,6 +491,32 @@ describe('LiveViewController', () => {
       expect(decorationCount(root)).toBe(1);
       jest.advanceTimersByTime(1);
       expect(decorationCount(root)).toBe(0);
+    });
+
+    it('lands the change at once when the animation is turned off', () => {
+      setup({ animation: false });
+      render('<p>alpha</p>');
+      applied();
+      render(`<p>alpha</p>\n<p>${'x'.repeat(40)}</p>`);
+      expect(addedText(root)).toEqual(['x'.repeat(40)]);
+      expect(typingCount(root)).toBe(0);
+    });
+
+    it('turning the animation off mid-typing completes every run on the next frame', () => {
+      const addition = 'x'.repeat(40);
+      render('<p>alpha</p>');
+      applied();
+      render(`<p>alpha</p>\n<p>${addition}</p>`);
+      jest.advanceTimersByTime(20);
+      expect(addedText(root)[0].length).toBeLessThan(40);
+      controller.updateSettings({
+        ...settings,
+        animationSpeed: SPEED,
+        animation: false
+      });
+      jest.advanceTimersByTime(16);
+      expect(addedText(root)).toEqual([addition]);
+      expect(typingCount(root)).toBe(0);
     });
 
     it('holds the baseline until typing and fade are over', () => {

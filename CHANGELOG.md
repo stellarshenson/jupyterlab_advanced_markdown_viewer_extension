@@ -2,13 +2,19 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
-## [Unreleased]
+## [0.6.10] - 2026-09-06
 
 ### Added
 
 - Changes play out as typing in the rendered view: added text grows letter by letter on its green background in every changed place at once; removed text stands red for a pause, then is deleted from its last letter backwards
-- Setting `animationSpeed` in characters per second, default 200; 0 shows a change at once; a reduced-motion preference turns the animation off
+- Settings `animation` (on by default) and `animationSpeed` in characters per second, default 200; off, or speed 0, shows a change at once; a reduced-motion preference turns the animation off
 - A write arriving during an animation continues it: shown text is not retyped and a ghost already shown warns once
+- Screenshots and a video of the typing animation and of the tab cue under `docs/images/`, embedded in the README
+
+### Changed
+
+- The `enabled` setting description states the off state: the preview keeps what it showed until the document is reloaded and nothing else in the extension runs
+- README gains a Settings section listing every key with its default
 
 ### Fixed
 
