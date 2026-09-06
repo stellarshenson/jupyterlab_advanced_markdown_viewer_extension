@@ -1,7 +1,7 @@
 {
     "name": "jupyterlab_advanced_markdown_viewer_extension",
-    "version": "0.6.8",
-    "description": "Jupyterlab extension that finally allows Markdown files to receive live updates when underlying ai agentic tool is changing them. When change was performed - the title of the markdown file will give visual cue and the text in the markdown will be visibly removed (using pale red-ish bg colour) and added (using greenish bg colour) with the calm fade in and fade out. This will work in both view mode and edit mode - and will have the system manage, that content in the markdown isn't garbled when user edits the file at the same time. No more need to refresh the tab / view to see the latest changes",
+    "version": "0.6.10",
+    "description": "Live Markdown preview for JupyterLab: an open rendered Markdown document follows the file on disk without a reload, with changes typed in on a green background, removed text shown red before it goes, and a tab cue",
     "keywords": [
         "jupyter",
         "jupyterlab",
