@@ -166,6 +166,7 @@ Showing the user what an external change removed and added, in the rendered view
   - evidence: Galata 'shows the text the change removed' and 'takes the decorations back out once the fade has run' in ui-tests/tests/live-view.spec.ts, the ghost appearing then gone with the document text no longer holding it
   - test: delete a paragraph from a terminal, assert a red ghost of it in both tabs that is gone after the fade
   - test-tags: UNIT, E2E
+  - mechanism: 2026-09-07T09:03:05Z @kj the removed text is decorated struck through on the pale red background with an animation and, past the diff token bound, an inline gap marker; the earlier rule that CSS sets only background-color and transition was superseded by DEF-HILITE-6 and the strike
   - mechanism: 2026-09-05T08:34:56Z @kj the ghost rule is two-sided, matching the diff's own coarse branch: a removal is not shown when its own token count passes MAX_LCS_TOKENS or when the added range starting at the same offset passes it (DEF-HILITE-11); the added text is still marked and the tab cue fires
   - mechanism: 2026-09-04T23:59:23Z @kj a removal longer than the diff's token bound MAX_LCS_TOKENS (1000 tokens, the coarse branch) is not shown as a ghost; the added text is still marked and the tab cue fires
   - mechanism: 2026-09-04T17:46:56Z @kj editor: CodeMirror inline widget decoration rendering the removed text read-only; viewer: span.jp-AdvancedMd-removed inserted inside the block at the removal point; both removed on fade end; CSS sets only background-color and transition so code-block token colours show through
@@ -181,6 +182,7 @@ Showing the user what an external change removed and added, in the rendered view
   - log: 2026-09-06T16:54:27Z @kj edited text
   - log: 2026-09-06T17:18:14Z @kj edited text
   - log: 2026-09-06T22:05:04Z @kj closed
+  - log: 2026-09-07T10:04:33Z @kj round 1 review: under reduced motion the removal ghost's opacity fade now runs (DEF-HILITE-31), so the reflow at removal stays off screen for readers with that preference; colour and opacity ramps are not motion
 - [x] `ACC-HILITE-22` **Highlights follow the theme** - HIGH; the highlight colours come from the extension's CSS variables with light and dark defaults that keep the text readable in both JupyterLab themes
   - evidence: 'differ between the light and the dark theme and stay readable in both' in ui-tests/tests/live-view.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: switch theme to dark, rewrite the file, assert the highlight contrast against the text
@@ -293,6 +295,12 @@ Signalling on the document tab that new content arrived
   - log: 2026-09-06T21:08:32Z @kj edited text
   - log: 2026-09-06T21:08:32Z @kj edited test (replaced)
   - log: 2026-09-06T22:05:04Z @kj closed
+- [ ] `ACC-CUE-115` **A screen reader is told when a change arrives** - LOW; When an external change is applied to the visible preview a polite live region announces it in words, once per applied change, and the notes list rows carry roles a screen reader can move through
+  - test: apply an external change, assert the live region text names the change; assert the list has a list role and each row a listitem role with aria-current on the selected one
+  - test-tags: UNIT, FUNCTIONAL
+  - mechanism: 2026-09-07T09:21:50Z @kj one visually hidden aria-live=polite element per page, created once by the controller module and written when a change is applied to the visible preview with the text '<label> was updated from disk'; the notes list carries role=list and each row role=listitem with aria-current on the selected row, because option forbids the buttons and textarea a row holds
+  - log: 2026-09-07T09:01:37Z @kj added
+  - log: 2026-09-07T09:21:50Z @kj edited test (replaced)
 
 ## Settings `CONFIG`
 
@@ -307,7 +315,7 @@ User settings in schema/plugin.json
   - test-tags: UNIT, E2E
   - log: 2026-09-04T17:47:05Z @kj added
   - log: 2026-09-05T16:05:16Z @kj closed
-- [x] `ACC-CONFIG-34` **Settings are validated** - MEDIUM; the schema declares pollInterval, fadeDuration, highlight, tabCue and enabled with types, defaults and minimums, so an invalid value is rejected by the settings editor
+- [x] `ACC-CONFIG-34` **Settings are validated** - MEDIUM; the schema declares every setting with its type, default and minimum where one applies, so an invalid value is rejected by the settings editor
   - evidence: unit test 'gives every numeric setting the lowest value the code accepts' in `src/__tests__/schema.spec.ts`, which reads the minimums from src/index.ts rather than restating them, with the three other schema tests; and the two settings-editor tests in ui-tests/tests/settings.spec.ts, which fail when the declared minimum is removed from the schema the lab serves; green on build 0.6.19
   - test: enter pollInterval 0 in the settings editor, assert the error under the field and that the stored setting keeps its value
   - test-tags: UNIT, E2E
@@ -315,6 +323,7 @@ User settings in schema/plugin.json
   - log: 2026-09-06T22:05:03Z @kj closed
   - log: 2026-09-06T22:05:17Z @kj edited test (replaced)
   - log: 2026-09-06T22:05:17Z @kj edited test-tags (replaced)
+  - log: 2026-09-07T09:03:05Z @kj edited text
 
 ## Sibling extension compatibility `COMPAT`
 
@@ -389,6 +398,13 @@ The live update keeps the other Stellars Markdown extensions working; survey of 
   - mechanism: 2026-09-06T17:31:38Z @kj the controller calls widget.content.update() when the watcher reports an applied change; the viewer's own render timeout cannot be cancelled from outside, so the same text renders again about a second later
   - log: 2026-09-06T17:31:38Z @kj added
   - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-COMPAT-116` **A marker tooltip keeps the document's own caption lines** - HIGH; Every tab marker's tooltip carries the state's words above the document's own caption (Name, Path, Last Saved, Last Checkpoint), and the words survive the document manager's caption rewrite after an applied change, because the colourful-tab sibling identifies a file tab by the Path line of the tab title attribute
+  - evidence: Galata siblings 'keeps the colour it gave the tab while the marker shows' fails with the composition removed from the installed bundle; unit test 'names the change in words for as long as it stands, then gives the caption back' in `src/__tests__/cue.spec.ts` fails with the guard removed; green on build 0.6.31
+  - test: apply a change with the colourful-tab sibling installed, assert the tab keeps its colour and the title attribute holds both the state words and the Path line
+  - test-tags: UNIT, FUNCTIONAL
+  - mechanism: 2026-09-07T10:04:33Z @kj LiveViewController composes the caption as the state's words, a blank line, then the document caption, and its title.changed handler re-composes over a fresh caption while a state is held
+  - log: 2026-09-07T10:04:33Z @kj added
+  - log: 2026-09-07T10:04:33Z @kj closed
 
 ## Comments `NOTES`
 
@@ -597,6 +613,7 @@ Reader comments anchored to a block of text, stored in the Markdown file as HTML
   - log: 2026-09-06T15:41:20Z @kj added
   - log: 2026-09-07T00:39:25Z @kj closed
   - log: 2026-09-07T03:39:23Z @kj edited text
+  - log: 2026-09-07T09:01:37Z @kj round 1 review: the two Galata tests write once before the mark and never during the save; the guarantee is shown for writes spaced 200 ms or more apart and open below that, see DEF-NOTES-33 and DEF-NOTES-34
 - [x] `ACC-NOTES-101` **Markers never break Markdown syntax** - HIGH; markers are placed at word boundaries inside a block or at block boundaries around a run of blocks, never inside a fenced or indented code block, a heading, a link or an emphasis span; a selection that starts or ends inside one of these is widened to its boundary
   - evidence: Galata 'ACC-NOTES-101 keeps a heading whole when the selection starts inside it' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: select text that starts inside a heading and ends in the paragraph below, assert the heading line is unchanged, the opening marker sits alone on a line before it, and the closing marker is inline in the paragraph
@@ -646,6 +663,12 @@ Reader comments anchored to a block of text, stored in the Markdown file as HTML
   - mechanism: 2026-09-07T03:39:23Z @kj with the switch off nothing moves the document's record of the revision, so the platform's own conflict check sees a different file and asks
   - log: 2026-09-07T03:39:23Z @kj added
   - log: 2026-09-07T03:39:30Z @kj closed
+- [ ] `ACC-NOTES-114` **A keyboard-only reader can mark a passage** - MEDIUM; Marking is reachable without a pointer: the mark command is in the command palette and carries a keybinding, enabled when the preview holds a selection, and marks the selected passage
+  - related: DEF-NOTES-34 - the selection carry this criterion needs
+  - test: select a passage with the keyboard, invoke the keybinding, assert the markers land in the file
+  - test-tags: UNIT, FUNCTIONAL
+  - mechanism: 2026-09-07T09:01:37Z @kj the mark command is registered with the command palette and a keybinding whose isEnabled reads the selection; the attachment is resolved from the selection, not from a context-menu hit node
+  - log: 2026-09-07T09:01:37Z @kj added
 
 ## Change animation `ANIM`
 

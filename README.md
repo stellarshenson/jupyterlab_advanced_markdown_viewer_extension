@@ -21,8 +21,9 @@ Keep open Markdown files live. When an AI agentic tool or any other process rewr
 - **Rendered view** - live updates apply to the rendered Markdown view; an editor open on the same file keeps JupyterLab's own File Changed dialog for a save over unsaved edits
 - **Unsaved edits are never overwritten** - a change arriving while the document has unsaved edits is held, shown as a red square on the tab, and applied once the document is clean again
 - **A file that is gone says so** - a document whose file has been deleted carries a still cross on the tab, distinct from the held change by shape and by movement, and takes the new content if the file comes back
-- **Marks and notes in the file itself** - select a passage in the rendered view and mark it in one of four colours, with notes attached to it. A mark is a pair of HTML comments around the passage, so the Markdown file carries everything and any other renderer shows the document with no trace of it
+- **Marks and notes in the file itself** - select a passage in the rendered view, right-click and mark it in one of four colours, with notes attached to it. A mark is a pair of HTML comments around the passage, so the Markdown file carries everything and any other renderer shows the document with no trace of it
 - **A panel beside the preview** - the marks of the open document listed in order, each with its passage and its notes; a narrow strip of ticks instead, or nothing at all. The state you leave it in is written into the file, so the document opens the way you left it
+- **Marking while the agent writes** - a mark is saved through the document, so a mark made while writes land faster than one every 200 ms can meet JupyterLab's File Changed dialog; choose Revert, which keeps the agent's text and the preview keeps following. Overwrite discards what the agent wrote since the mark started and Cancel holds the preview until the document is saved or reverted. Select and right-click within a second of a write landing, or wait for a pause
 
 ![A change part way through: added text typed in on green, the last line still mid-word, and the removed text struck on red before it is deleted](docs/images/animation-01.png)
 
@@ -32,13 +33,13 @@ Keep open Markdown files live. When an AI agentic tool or any other process rewr
 
 All settings live under Settings, Advanced Settings Editor, Advanced Markdown Viewer.
 
-- `enabled` - on by default; off, the preview keeps what it showed until the document is reloaded and nothing else in this extension runs
-- `pollInterval` - how often an open preview checks its file, in seconds
+- `enabled` - on by default; off, the preview keeps what it showed until the document is reloaded; marks and notes have their own setting
+- `pollInterval` - the interval of the fallback check for filesystems that raise no file events, in seconds; file events through the server extension are the primary path, so a lower value does not make updates faster
 - `highlight` - green and red backgrounds on changed text
 - `fadeDuration` - how long the highlight stays on changed text, in milliseconds; it rises over 0.5 s and fades away over the last 0.75 s
 - `animation` - on by default; changes play out as typing
 - `animationSpeed` - typing and deletion speed in characters per second; 0 shows a change at once
-- `tabCue` - the turning marker on the document tab
+- `tabCue` - the markers on the document tab
 - `notes` - on by default; off, the panel, the marks and the marking entries are hidden and the markers in the file are left alone
 - `author` - the handle a note line opens with; empty, the extension uses the name the lab reports for the reader
 

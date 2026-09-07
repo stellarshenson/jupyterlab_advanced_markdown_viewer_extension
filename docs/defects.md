@@ -95,6 +95,14 @@ Defects in the rendered-view decorations
   - root-cause: 2026-09-07T02:47:38Z @kj the source tokens and the rendered text snapshot are computed inside the per-mark loop although both are the same for every mark, and the guard that skips the DOM rewrite is evaluated after the scanning rather than before it
   - log: 2026-09-07T02:47:38Z @kj added
   - log: 2026-09-07T03:39:11Z @kj closed
+- [x] `DEF-HILITE-31` **Reduced motion removes the removal ghost's opacity fade and brings back the layout jump** - MEDIUM; Under prefers-reduced-motion the decoration rule sets animation none on every decoration, which also removes the ghost's opacity fade; the ghost is taken out at full opacity and the following text reflows visibly, the jump ACC-HILITE-21 forbids; colour and opacity ramps are not motion and should run
+  - evidence: Galata 'the highlights under reduced motion > keep their colour ramps, the ghost fading out before it is taken out' in ui-tests/tests/live-view.spec.ts fails with the decoration reduced-motion rule put back into the installed CSS bundle (animationName none) while the tab-marker reduced-motion test passes; green on build 0.6.31
+  - repro: emulate reduced motion, rewrite the file removing a word, read the computed animation-name on the removed span
+  - test-tags: FUNCTIONAL
+  - root-cause: 2026-09-07T09:01:37Z @kj The reduced-motion rule at style/base.css:107-111 sets animation none on .jp-AdvancedMd-decoration, which by source order also removes the removal ghost's opacity fade
+  - log: 2026-09-07T09:01:37Z @kj added
+  - log: 2026-09-07T10:04:33Z @kj closed
+  - log: 2026-09-07T10:04:33Z @kj fixed in style/base.css: the decoration reduced-motion block deleted; the tab-marker and mark-flash blocks stay, and the typing animation stays off under reduced motion through the controller
 
 ## Settings `CONFIG`
 
@@ -146,6 +154,14 @@ Defects in how disk content reaches the open document
   - root-cause: 2026-09-07T02:47:54Z @kj the marker write calls save on the shared context with no test of whether the model was already dirty
   - log: 2026-09-07T02:47:54Z @kj added
   - log: 2026-09-07T03:39:11Z @kj closed
+- [x] `DEF-APPLY-27` **A CRLF file gains one carriage return per line on every save after the preview opens** - CRITICAL; Open a file with CRLF line endings in the preview: the watcher applies the raw disk text as an external change at once, the tab shows the updated marker, and every later save (a mark, a note, a panel state change) writes one more CR per line, so the file grows CR CR LF then CR CR CR LF; reproduced by the round 1 sceptic on 0.6.28
+  - evidence: unit tests 'applies nothing when a CRLF file holds what the document holds as LF' and 'applies a CRLF write as LF text' in `src/__tests__/watcher.spec.ts` fail on the unchanged _read and again when the regex is made a no-op; Galata 'DEF-APPLY-27 keeps one carriage return per line through two marks' in ui-tests/tests/notes.spec.ts fails with the normalisation mutated in the installed bundle; green on build 0.6.31 (jest 427, Galata 99)
+  - repro: open a CRLF file in the preview, mark a passage twice, count the CR CR LF sequences in the file
+  - test-tags: UNIT, FUNCTIONAL
+  - root-cause: 2026-09-07T09:01:36Z @kj FileWatcher._read compares and applies the raw disk text while the Context holds a CRLF file as LF and re-expands on save, so a CRLF file is applied as an external change on open and every save adds one CR per line
+  - log: 2026-09-07T09:01:36Z @kj added
+  - log: 2026-09-07T10:04:32Z @kj closed
+  - log: 2026-09-07T10:04:32Z @kj fixed in FileWatcher._read: the disk text is normalised to LF before the shadow and model comparisons and _apply, while _record(full) keeps the raw revision and hash; consequence kept: a document loaded as LF whose file is later rewritten as CRLF is applied and saved as LF, the Context's own line-ending rule
 
 ## Tab title cue `CUE`
 
@@ -175,6 +191,15 @@ Defects in the document tab marker and animation
   - root-cause: 2026-09-07T00:38:59Z @kj not established; the shape is a deletion event the watcher did not report while the machine was busy, so the state is only reached by the slower fallback
   - log: 2026-09-07T00:38:59Z @kj added
   - log: 2026-09-07T01:31:42Z @kj closed
+- [x] `DEF-CUE-30` **The turning half circle, the marker of the commonest state, has no tooltip** - MEDIUM; The held square and the missing cross carry a caption naming the state in words; the updated marker carries none, so the commonest marker reads as a loading glyph to a first-time reader
+  - evidence: unit test 'names the change in words for as long as it stands, then gives the caption back' in `src/__tests__/cue.spec.ts` fails with the map entry removed and with the guard removed; Galata tab-cue 'is a half-filled circle in the tab own text colour, with a tooltip' fails with the words reworded or the guard removed in the installed bundle, and siblings 'keeps the colour it gave the tab while the marker shows' fails with the composition removed; green on build 0.6.31 (Galata 99)
+  - repro: rewrite an open file externally, hover the tab, read the tooltip
+  - test-tags: UNIT, FUNCTIONAL
+  - root-cause: 2026-09-07T10:04:33Z @kj the caption map lacked the updated state, and a caption set on an applied change was overwritten about 10 ms later by the document manager, which rewrites the caption on the file-changed signal once it has listed the checkpoints; the earlier held and missing captions also replaced the document's own caption, which the colourful-tab sibling reads for its Path line
+  - root-cause: 2026-09-07T09:01:37Z @kj The tab caption map names the held and missing states only, so the updated state has no tooltip
+  - log: 2026-09-07T09:01:37Z @kj added
+  - log: 2026-09-07T10:04:33Z @kj closed
+  - log: 2026-09-07T10:04:33Z @kj fixed in three parts in src/controller.ts: the TAB_CAPTIONS entry for the updated state; a title.changed guard that puts the state's words back over the fresh caption the document manager writes after an applied change; the caption composed as the state's words, a blank line, then the document's own caption, so siblings reading the Path line keep working
 
 ## Comments `NOTES`
 
@@ -202,6 +227,50 @@ Marks, note lines and the notes panel
   - root-cause: 2026-09-07T00:38:59Z @kj the author is taken from the identity username without asking whether it reads as a handle; ACC-NOTES-104 asks for the hub login name, which a generated identifier is not
   - log: 2026-09-07T00:38:59Z @kj added
   - log: 2026-09-07T01:31:42Z @kj closed
+- [x] `DEF-NOTES-28` **Add note and the passage click open no note entry while the panel is minimap or hidden** - MAJOR; With the panel in the minimap or hidden state, the Add note command and a click on a marked passage select the mark and ask for a note entry, but those states render no rows, so the entry never appears and the reader gets nothing; reproduced by the round 1 sceptic
+  - evidence: unit tests 'asks for the expanded state when the entry is opened from the minimap' and 'while hidden' in `src/__tests__/notes-panel.spec.ts` and 'expands a minimap panel when the note entry is asked for' in `src/__tests__/wiring.spec.ts` fail with the setState ask removed; Galata 'DEF-NOTES-28 opens the note entry from the marked passage' fails with the ask removed from the installed bundle; green on build 0.6.31
+  - repro: open a document whose settings marker says panel=minimap, click a marked passage, look for the note textarea
+  - test-tags: UNIT, FUNCTIONAL
+  - root-cause: 2026-09-07T09:01:36Z @kj NotesPanel.selectMark opens a note entry without leaving the minimap or hidden state, whose render builds no rows, so the entry the reader asked for never appears
+  - log: 2026-09-07T09:01:36Z @kj added
+  - log: 2026-09-07T10:04:33Z @kj closed
+  - log: 2026-09-07T10:04:33Z @kj fixed in NotesPanel.selectMark: with openNote and a state other than expanded it asks the handler for the expanded state first, so both routes to the entry are covered by one line
+- [x] `DEF-NOTES-29` **The note caret jumps to the end of the draft on every external write** - MAJOR; The panel is rebuilt on every applied write; the textarea is a new node carrying the draft text and the focus but not the caret, so a reader typing a note mid-sentence while the agent writes finds every further keystroke landing at the end; reproduced by the round 1 sceptic (the list scroll position is kept, only the caret moves)
+  - evidence: unit test 'keeps the caret where it was through a change of the document' in `src/__tests__/notes-panel.spec.ts` fails with setSelectionRange removed (caret 11 instead of 5); Galata 'DEF-NOTES-29 keeps the caret where it was through an external write' fails with the call removed from the installed bundle; green on build 0.6.31
+  - repro: open a note entry, type a sentence, put the caret in its middle, rewrite the file externally, type one character
+  - test-tags: UNIT, FUNCTIONAL
+  - root-cause: 2026-09-07T09:01:36Z @kj NotesPanel._render recreates the note textarea on every setMarks and carries only its text and focus, so the caret moves to the end of the draft on every external write
+  - log: 2026-09-07T09:01:36Z @kj added
+  - log: 2026-09-07T10:04:33Z @kj closed
+  - log: 2026-09-07T10:04:33Z @kj fixed in NotesPanel._render: the caret of a focused textarea in the body is kept and restored on the new textarea after focus; no scroll handling, the list body node persists
+- [x] `DEF-NOTES-32` **Panel buttons are announced by their glyph instead of their title** - MEDIUM; button() sets a title but no aria-label, so assistive technology announces the glyph (multiplication x) for close, expand, collapse, the colour dots, Save, Cancel and Remove
+  - evidence: unit test 'names every button for assistive technology by its title' in `src/__tests__/notes-panel.spec.ts` (ten buttons) fails with the aria-label line removed; green on build 0.6.31
+  - repro: inspect any panel button: title set, aria-label absent
+  - test-tags: UNIT
+  - root-cause: 2026-09-07T09:01:37Z @kj button() in src/notes-panel.ts names the panel buttons by their glyph text and sets no aria-label
+  - log: 2026-09-07T09:01:37Z @kj added
+  - log: 2026-09-07T10:04:33Z @kj closed
+  - log: 2026-09-07T10:04:33Z @kj fixed in button() in src/notes-panel.ts: aria-label set to the title
+- [ ] `DEF-NOTES-33` **A mark saved during a write stream faster than one write per 200 ms raises File Changed** - MAJOR; Marking while the agent streams writes: at 40-100 ms spacing 1 to 2 marks in 10 raise the File Changed dialog; Overwrite discards the agent's lines since the mark started, Cancel holds the preview until the document is saved or reverted, Revert keeps the agent's text; one line was lost with no dialog at 100 ms; 0 of 18 at 200 ms and 0 of 6 at 1 s; reproduced by the round 1 sceptic. ACC-NOTES-100 is proven for writes spaced 200 ms or more apart and open below that
+  - related: ACC-NOTES-100 - the guarantee this defect bounds
+  - repro: stream writes every 50 ms to an open file, mark a passage ten times, count File Changed dialogs and lost lines
+  - test-tags: FUNCTIONAL
+  - root-cause: 2026-09-07T09:01:37Z @kj The mark's save goes through the Context, whose check-then-PUT leaves a window in which a write lands between the hash check and the PUT; a stat before save only narrows it
+  - log: 2026-09-07T09:01:37Z @kj added
+  - log: 2026-09-07T09:21:51Z @kj round 2 design: no client-side edit closes the Context's check-then-PUT windows; a server write route removes the dialog but not the loss; the bound at 200 ms spacing is accepted for now and the route design is in docs/defects/DEF-NOTES-33-atomic-write-route.md, decision for the Star Colonel
+  - log: 2026-09-07T10:18:39Z @kj Star Colonel's decision 2026-09-07: fix it - the server compare-and-write route from docs/defects/DEF-NOTES-33-atomic-write-route.md is being built, server half first, client half after the round 2 executors leave src/notes.ts
+  - log: 2026-09-07T10:28:03Z @kj server half built: WriteHandler on POST .../write with @authorized write on contents; FileWatchRegistry.swap takes a per-path lock, compares the file's hash (the contents manager's own algorithm over the raw bytes, the value the client holds as contentsModel.hash) with expected, answers 409 with the current content on a mismatch and otherwise writes in place keeping the inode so an appender holding the file open keeps writing to it; five pytest cases, 29 passing, the lock and the comparison each broken and watched failing
+- [ ] `DEF-NOTES-34` **Every applied write collapses the reader's selection and detaches the context-menu hit node** - MAJOR; Each render replaces the rendered nodes, so the selection lives 530-1010 ms at one write a second and a context-menu gesture slower than about half a second after a write marks nothing, silently, because marking() finds its attachment through the stale hit-test node; under a stream of writes a passage can never be marked; reproduced by the round 1 sceptic
+  - related: ACC-NOTES-100 - the guarantee this defect bounds; ACC-NOTES-114 - keyboard marking needs the same selection carry
+  - repro: stream writes once a second, select a passage, right-click, wait one second, choose Mark: nothing is marked
+  - test-tags: FUNCTIONAL
+  - root-cause: 2026-09-07T09:01:37Z @kj The selection is not carried across renders and marking() resolves its attachment from the contextMenuHitTest node that the render detached, and mark() holds a live Range across its own refresh
+  - log: 2026-09-07T09:01:37Z @kj added
+- [ ] `DEF-NOTES-35` **A note typed into the panel is discarded without a word when the mark's markers vanished before Save** - MEDIUM; addNote and _rewrite cannot say whether the write found the markers; Save clears the draft regardless, so a note written while the agent removed the markers is lost and the row only shows unanchored; confirmed by reading src/notes-panel.ts:465-472 and src/notes.ts:836
+  - repro: open a note entry, remove the mark's markers externally, type a note, press Save
+  - test-tags: UNIT
+  - root-cause: 2026-09-07T09:01:37Z @kj addNote and _rewrite in src/notes.ts return nothing about whether the markers were found, so the panel's Save handler clears the draft unconditionally
+  - log: 2026-09-07T09:01:37Z @kj added
 
 ## Change detection `DETECT`
 
