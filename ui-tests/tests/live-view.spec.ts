@@ -1,4 +1,14 @@
-import { expect, galata, test } from '@jupyterlab/galata';
+import { expect, test } from '@jupyterlab/galata';
+
+import {
+  FILE,
+  INITIAL,
+  REWRITTEN,
+  labFixtures,
+  openPreview,
+  settings,
+  typeInEditor
+} from './helpers';
 
 /**
  * Integration tests for the live Markdown preview.
@@ -8,46 +18,7 @@ import { expect, galata, test } from '@jupyterlab/galata';
  * telling the open document, which is exactly what an agentic tool does.
  */
 
-const PLUGIN_ID = 'jupyterlab_advanced_markdown_viewer_extension:plugin';
-const FILE = 'live.md';
-
-/**
- * Galata's stock readiness wait expects a Launcher tab in the main area. The
- * lab this suite runs against opens with an empty main area, so the wait
- * times out before any test body runs. Readiness here is the splash gone and
- * the shell mounted, which is all the tests need.
- */
-test.use({
-  waitForApplication: async ({ baseURL }, use) => {
-    await use(async (page: any) => {
-      await page.locator('#jupyterlab-splash').waitFor({ state: 'detached' });
-      await page.locator('#main').waitFor();
-    });
-  }
-});
-
-const INITIAL = [
-  '# Report',
-  '',
-  'The first paragraph is unchanged.',
-  '',
-  'The second paragraph mentions apples.',
-  ''
-].join('\n');
-
-/**
- * Same document with the second paragraph rewritten and a third added.
- */
-const REWRITTEN = [
-  '# Report',
-  '',
-  'The first paragraph is unchanged.',
-  '',
-  'The second paragraph mentions oranges.',
-  '',
-  'A third paragraph appeared.',
-  ''
-].join('\n');
+test.use(labFixtures);
 
 /**
  * A document long enough to scroll, with a heading anchor at the top.
@@ -63,67 +34,6 @@ const LONG = [
 ].join('\n');
 
 const LONG_REWRITTEN = `${LONG}\nA final paragraph appeared.\n`;
-
-/**
- * Settings that make the feature observable within a test: poll every second,
- * hold the highlight long enough to assert on it, and show a change at once so
- * the text read after a decoration appears is complete; the change animation
- * describe sets its own speed.
- */
-function settings(overrides: Record<string, unknown> = {}) {
-  return {
-    ...galata.DEFAULT_SETTINGS,
-    [PLUGIN_ID]: {
-      enabled: true,
-      pollInterval: 1,
-      fadeDuration: 30000,
-      animation: true,
-      animationSpeed: 0,
-      highlight: true,
-      tabCue: true,
-      ...overrides
-    }
-  };
-}
-
-/**
- * Open the Markdown preview for a path and wait for its first render.
- */
-async function openPreview(
-  page: any,
-  path: string,
-  firstText = 'The first paragraph is unchanged.'
-): Promise<void> {
-  await page.evaluate(async (target: string) => {
-    await (window as any).jupyterapp.commands.execute('docmanager:open', {
-      path: target,
-      factory: 'Markdown Preview'
-    });
-  }, path);
-  await expect(page.locator('.jp-RenderedMarkdown')).toContainText(firstText);
-}
-
-/**
- * Open the same file in the text editor and type into it, which leaves the
- * shared document dirty. The editor tab is current afterwards.
- */
-async function typeInEditor(
-  page: any,
-  path: string,
-  text: string
-): Promise<void> {
-  await page.evaluate(async (target: string) => {
-    await (window as any).jupyterapp.commands.execute('docmanager:open', {
-      path: target,
-      factory: 'Editor'
-    });
-  }, path);
-  const editor = page.locator('.jp-FileEditor .cm-content');
-  await expect(editor).toBeVisible();
-  await editor.click();
-  await page.keyboard.press('Control+End');
-  await page.keyboard.type(text);
-}
 
 /**
  * Save the current document without waiting: a File Changed dialog, when one
@@ -342,6 +252,46 @@ test.describe('highlighting turned off', () => {
       { timeout: 20000 }
     );
     await expect(page.locator('.jp-AdvancedMd-decoration')).toHaveCount(0);
+    // The two settings are independent: the cue still says which document
+    // moved when the highlighting is off.
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
+    ).toHaveCount(1);
+  });
+});
+
+test.describe('the tab cue turned off', () => {
+  test.use({
+    mockSettings: settings({ tabCue: false })
+  });
+
+  test('still updates the content but marks no tab', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(INITIAL, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`);
+    await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
+
+    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
+      'A third paragraph appeared.',
+      { timeout: 20000 }
+    );
+    // The live update is unaffected: the change landed and is highlighted.
+    await expect(
+      page.locator('.jp-AdvancedMd-decoration').first()
+    ).toBeVisible();
+    // Neither marker: not the arriving one, and not either of the two the
+    // reader has to act on.
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
+    ).toHaveCount(0);
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked')
+    ).toHaveCount(0);
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabMissing')
+    ).toHaveCount(0);
   });
 });
 
@@ -398,6 +348,27 @@ test.describe('a document open in the editor as well', () => {
       { timeout: 20000 }
     );
 
+    // The applied change marked the tab and drew decorations. The reader
+    // takes the marker back by acting on the document, so from here on
+    // anything on the tab or in the text came from the save.
+    await page.locator('.jp-RenderedMarkdown').click();
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
+    ).toHaveCount(0);
+    // Every change this extension applies from disk is one shared-model
+    // transaction carrying its origin; a save taken for an external change
+    // would add one.
+    await page.evaluate((origin: string) => {
+      const w = window as any;
+      const model = w.jupyterapp.shell.currentWidget.context.model;
+      w.__applies = 0;
+      model.sharedModel.ysource.observe((event: any) => {
+        if (event.transaction.origin === origin) {
+          w.__applies += 1;
+        }
+      });
+    }, 'jupyterlab_advanced_markdown_viewer_extension');
+
     // The document holds the disk revision now, so an edit on top of it is
     // an ordinary edit and saves as one.
     await typeInEditor(page, path, 'EDIT AFTER APPLY');
@@ -408,6 +379,19 @@ test.describe('a document open in the editor as well', () => {
       .toContain('EDIT AFTER APPLY');
     await expect(page.locator('.jp-Dialog')).toHaveCount(0);
     expect(await readDisk(page, path)).toContain('A third paragraph appeared.');
+
+    // The save is this session's own write. The file event it raises is
+    // answered by a read that finds the file holding what the document holds,
+    // so nothing is applied, nothing is highlighted and no marker returns.
+    await page.waitForTimeout(3000);
+    expect(await page.evaluate(() => (window as any).__applies)).toBe(0);
+    await expect(page.locator('.jp-AdvancedMd-decoration')).toHaveCount(0);
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
+    ).toHaveCount(0);
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked')
+    ).toHaveCount(0);
   });
 
   test('keeps the blocked marker while the reader looks, and drops it once the edits are saved', async ({
@@ -511,7 +495,9 @@ test.describe('the reader position', () => {
     });
     await page.waitForTimeout(1500);
 
-    expect(await page.evaluate(() => (window as any).__anchorScrolls)).toBe(1);
+    // A change renders twice: at once when it is applied, and again when the
+    // viewer's own render timeout runs; the stand-in fires on both.
+    expect(await page.evaluate(() => (window as any).__anchorScrolls)).toBe(2);
     const after = await previewScrollTop(page);
     expect(Math.abs(after - before)).toBeLessThan(50);
   });
@@ -635,5 +621,331 @@ test.describe('animation turned off', () => {
     const text = added.map(span => span.text).join(' ');
     expect(text).toContain('A third paragraph appeared.');
     expect(text).toContain('oranges');
+  });
+});
+
+/**
+ * A computed colour as numbers: red, green, blue and alpha.
+ */
+const parseColour = (colour: string): number[] =>
+  (colour.match(/[\d.]+/g) ?? []).map(Number);
+
+/**
+ * The alpha of a computed colour. A colour that is not there reads as 0.
+ */
+const alphaOf = (colour: string | null): number => {
+  if (!colour) {
+    return 0;
+  }
+  const parts = parseColour(colour);
+  return parts.length > 3 ? parts[3] : 1;
+};
+
+/**
+ * One semi-transparent colour laid over an opaque one.
+ */
+const over = (top: number[], bottom: number[]): number[] => {
+  const alpha = top.length > 3 ? top[3] : 1;
+  return [0, 1, 2].map(i => top[i] * alpha + bottom[i] * (1 - alpha));
+};
+
+/**
+ * WCAG relative luminance of an opaque colour.
+ */
+const luminance = (rgb: number[]): number => {
+  const [r, g, b] = rgb.map(value => {
+    const channel = value / 255;
+    return channel <= 0.03928
+      ? channel / 12.92
+      : Math.pow((channel + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+
+/**
+ * What a reader sees on a highlight: the text colour against the highlight
+ * colour, both laid over the background of the page behind them.
+ */
+interface IHighlightColours {
+  background: string;
+  page: string;
+  color: string;
+}
+
+/**
+ * WCAG contrast ratio of the text on a highlight.
+ */
+const contrastOf = (sample: IHighlightColours): number => {
+  const behind = parseColour(sample.page);
+  const background = over(parseColour(sample.background), behind);
+  const text = over(parseColour(sample.color), background);
+  const light = Math.max(luminance(background), luminance(text));
+  const dark = Math.min(luminance(background), luminance(text));
+  return (light + 0.05) / (dark + 0.05);
+};
+
+/**
+ * Read the colours of the first added highlight, with the first opaque
+ * background behind it, which is what its own transparent colour is seen on.
+ */
+const readHighlight = (page: any): Promise<IHighlightColours> =>
+  page.evaluate(() => {
+    const span = document.querySelector('.jp-AdvancedMd-added') as HTMLElement;
+    let node: HTMLElement | null = span;
+    let behind = 'rgb(255, 255, 255)';
+    while (node) {
+      const colour = getComputedStyle(node).backgroundColor;
+      const parts = (colour.match(/[\d.]+/g) ?? []).map(Number);
+      if (parts.length > 0 && (parts.length < 4 || parts[3] > 0.99)) {
+        behind = colour;
+        break;
+      }
+      node = node.parentElement;
+    }
+    return {
+      background: getComputedStyle(span).backgroundColor,
+      page: behind,
+      color: getComputedStyle(span).color
+    };
+  });
+
+/**
+ * Sample the colour of the first added highlight, and the position of the
+ * last block of the document, at a fixed interval inside the page. Sampling
+ * starts at the first sighting of a highlight, so every sample is placed
+ * against the moment the decoration appeared.
+ */
+const sampleFade = (
+  page: any,
+  everyMs: number,
+  count: number
+): Promise<Array<{ at: number; bg: string | null; top: number }>> =>
+  page.evaluate(
+    ([every, wanted]: [number, number]) =>
+      new Promise<Array<{ at: number; bg: string | null; top: number }>>(
+        resolve => {
+          const samples: Array<{
+            at: number;
+            bg: string | null;
+            top: number;
+          }> = [];
+          let started: number | null = null;
+          const timer = setInterval(() => {
+            const span = document.querySelector('.jp-AdvancedMd-added');
+            const now = performance.now();
+            if (started === null) {
+              if (!span) {
+                return;
+              }
+              started = now;
+            }
+            const last = document.querySelector('.jp-RenderedMarkdown')
+              ?.lastElementChild as HTMLElement | null;
+            samples.push({
+              at: Math.round(now - (started as number)),
+              bg: span ? getComputedStyle(span).backgroundColor : null,
+              top: last ? Math.round(last.getBoundingClientRect().top) : -1
+            });
+            if (samples.length >= wanted) {
+              clearInterval(timer);
+              resolve(samples);
+            }
+          }, every);
+        }
+      ),
+    [everyMs, count]
+  );
+
+test.describe('the fade over the life of a highlight', () => {
+  // The fade duration is the schema default. The change animation is off, so
+  // the whole change is on screen at once and the colour is the only thing
+  // that moves.
+  test.use({
+    mockSettings: settings({ fadeDuration: 3000, animation: false })
+  });
+
+  test('rises, holds, then drains over the last part of its life without moving the text', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await openPreview(page, path);
+
+    // Sampling is started before the write, so the first sample is taken
+    // within 20 ms of the decoration appearing.
+    const sampling = sampleFade(page, 20, 220);
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    const samples = await sampling;
+
+    const peak = Math.max(...samples.map(sample => alphaOf(sample.bg)));
+    expect(peak).toBeGreaterThan(0.2);
+
+    // The rise: the first sighting is well under the settled colour, and the
+    // colour has arrived by the 500 ms the stylesheet gives the rise.
+    expect(alphaOf(samples[0].bg)).toBeLessThan(peak * 0.6);
+    const risen = samples.find(sample => sample.at >= 600);
+    expect(alphaOf((risen as { bg: string | null }).bg)).toBe(peak);
+
+    // The hold: between the rise and the drain the colour does not move. A
+    // sample taken while the viewer was replacing the DOM sees no decoration
+    // at all and says nothing about the colour, so it is left out.
+    const held = samples.filter(
+      sample => sample.at >= 600 && sample.at <= 2500 && sample.bg !== null
+    );
+    expect(held.length).toBeGreaterThan(80);
+    for (const sample of held) {
+      expect(alphaOf(sample.bg)).toBe(peak);
+    }
+
+    // The drain: the colour leaves over the last stretch of the life, and the
+    // decorations are taken out only once it has gone.
+    let gone = samples.length;
+    while (gone > 0 && samples[gone - 1].bg === null) {
+      gone--;
+    }
+    expect(samples.length - gone).toBeGreaterThan(20);
+    const last = samples[gone - 1];
+    expect(alphaOf(last.bg)).toBeLessThan(peak * 0.25);
+    const draining = samples.find(
+      sample =>
+        sample.at > 600 && sample.bg !== null && alphaOf(sample.bg) < peak
+    );
+    const drainMs = last.at - (draining as { at: number }).at;
+    expect(drainMs).toBeGreaterThan(500);
+    expect(drainMs).toBeLessThan(1000);
+
+    // Nothing jumps when the decorations leave: the block after the change
+    // stays where it was for the whole life of the highlight, the removal of
+    // the struck-out text included.
+    const tops = samples.map(sample => sample.top).filter(top => top >= 0);
+    expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1);
+  });
+});
+
+test.describe('the highlight colours in each theme', () => {
+  test.use({ mockSettings: settings() });
+
+  test('differ between the light and the dark theme and stay readable in both', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await openPreview(page, path);
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await expect(page.locator('.jp-AdvancedMd-added').first()).toBeVisible({
+      timeout: 20000
+    });
+    // Past the 500 ms rise, so the colour read is the settled one.
+    await page.waitForTimeout(800);
+
+    const light = await readHighlight(page);
+    await page.theme.setDarkTheme();
+    await expect
+      .poll(async () => (await readHighlight(page)).background)
+      .not.toBe(light.background);
+    const dark = await readHighlight(page);
+
+    // The variables carry a value of their own for each theme.
+    expect(dark.page).not.toBe(light.page);
+    expect(dark.background).not.toBe(light.background);
+    // The text on the highlight stays at or above the contrast WCAG asks of
+    // body text in both.
+    expect(contrastOf(light)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastOf(dark)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+/**
+ * A document whose middle block is a fenced block of code the renderer
+ * colours, so a change inside it can be seen against the token markup.
+ */
+const CODE = [
+  '# Report',
+  '',
+  'Before the block.',
+  '',
+  '```python',
+  'first = 1',
+  'second = 2',
+  '```',
+  '',
+  'After the block.',
+  ''
+].join('\n');
+
+const CODE_REWRITTEN = CODE.replace('second = 2', 'second = 33');
+
+/**
+ * The class names of the token elements inside the fenced block, which the
+ * renderer generates, and the count of decorations among them.
+ */
+const codeTokens = (
+  page: any
+): Promise<{ tokens: string[]; decorations: number }> =>
+  page.evaluate(() => {
+    const code = document.querySelector('.jp-RenderedMarkdown pre code');
+    const spans = Array.from(code?.querySelectorAll('span') ?? []);
+    return {
+      tokens: spans
+        .filter(span => !span.className.includes('jp-AdvancedMd'))
+        .map(span => span.className),
+      decorations: spans.filter(span =>
+        span.className.includes('jp-AdvancedMd')
+      ).length
+    };
+  });
+
+test.describe('a change inside a fenced code block', () => {
+  test.use({ mockSettings: settings() });
+
+  test('is highlighted while the colouring of the block survives', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(CODE, 'text', path);
+    await openPreview(page, path, 'Before the block.');
+
+    const before = await codeTokens(page);
+    // The renderer colours the block, so there is something to lose.
+    expect(before.tokens.length).toBeGreaterThan(0);
+    expect(before.decorations).toBe(0);
+
+    await page.contents.uploadContent(CODE_REWRITTEN, 'text', path);
+
+    // The change is highlighted inside the block itself. The text of the block
+    // is not asserted against here: the struck-out text the change replaced
+    // stands in it for the whole fade, which this suite makes long.
+    const added = page.locator(
+      '.jp-RenderedMarkdown pre code .jp-AdvancedMd-added'
+    );
+    await expect(added.first()).toBeVisible({ timeout: 20000 });
+    // Both renders of the change are over.
+    await page.waitForTimeout(2000);
+    expect((await added.allTextContents()).join('')).toContain('33');
+
+    // The colouring is still there, and it is the same colouring: every class
+    // the renderer used before the change is still in use after it.
+    const after = await codeTokens(page);
+    expect(after.decorations).toBeGreaterThan(0);
+    for (const token of new Set(before.tokens)) {
+      expect(after.tokens).toContain(token);
+    }
+    // The decoration sets a background and no colour of its own, so whatever
+    // colour the renderer gave the text around it shows through it.
+    const colours = await page.evaluate(() => {
+      const span = document.querySelector(
+        '.jp-RenderedMarkdown pre code .jp-AdvancedMd-added'
+      ) as HTMLElement;
+      return {
+        background: getComputedStyle(span).backgroundColor,
+        color: getComputedStyle(span).color,
+        around: getComputedStyle(span.parentElement as HTMLElement).color
+      };
+    });
+    expect(colours.background).not.toBe('rgba(0, 0, 0, 0)');
+    expect(colours.color).toBe(colours.around);
   });
 });

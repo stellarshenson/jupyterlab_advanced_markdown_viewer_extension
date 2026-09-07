@@ -11,9 +11,10 @@ import { DocumentRegistry } from '@jupyterlab/docregistry';
 import { MarkdownDocument } from '@jupyterlab/markdownviewer';
 import { Contents } from '@jupyterlab/services';
 import { IDisposable } from '@lumino/disposable';
-import { Signal } from '@lumino/signaling';
+import { ISignal, Signal } from '@lumino/signaling';
 
 import { ChangeAnimator, prefersReducedMotion } from './animate';
+import { ChangeChannel } from './channel';
 import {
   changeRanges,
   diffWords,
@@ -41,6 +42,16 @@ export const TAB_UPDATED_CLASS = 'jp-AdvancedMd-tabUpdated';
 export const TAB_BLOCKED_CLASS = 'jp-AdvancedMd-tabBlocked';
 
 /**
+ * Class marking a tab whose file is gone from disk.
+ *
+ * A removed file and a change held behind unsaved edits both leave the view
+ * behind the disk, but they ask the reader for opposite things: restore or
+ * close the file, against save or revert the document. They therefore carry
+ * different markers.
+ */
+export const TAB_MISSING_CLASS = 'jp-AdvancedMd-tabMissing';
+
+/**
  * Class marking a tab whose document is receiving changes right now.
  *
  * Set on every applied change and cleared after a quiet period, so the tab
@@ -49,21 +60,54 @@ export const TAB_BLOCKED_CLASS = 'jp-AdvancedMd-tabBlocked';
 export const TAB_ACTIVE_CLASS = 'jp-AdvancedMd-tabActive';
 
 /**
- * Shortest quiet period before an active tab settles to its static marker.
+ * Tooltip for each state the reader has to act on, so the tab says in words
+ * which of the two it is and what it asks for.
  */
-const MIN_QUIET_MS = 3000;
+const BLOCKED_CAPTIONS: { [className: string]: string | undefined } = {
+  [TAB_BLOCKED_CLASS]:
+    'A change on disk is held back by unsaved edits in this document. Save or revert the document to take the change.',
+  [TAB_MISSING_CLASS]:
+    'The file is gone from disk. This view keeps the last content that was read.'
+};
+
+/**
+ * Quiet period before an active tab settles to its static marker.
+ *
+ * Changes arrive as file events, within a fraction of a second of the write,
+ * so how long the tab keeps animating after the last one is a fixed period
+ * and not derived from the fallback interval.
+ *
+ * Exported so the tests measure the periods the code uses rather than restate
+ * them, which would hide a change to this value instead of reporting it.
+ */
+export const QUIET_MS = 3000;
 
 /**
  * How long a decoration takes to appear. Matches the stylesheet.
  */
-const FADE_IN_MS = 300;
+const FADE_IN_MS = 500;
 
 /**
- * How long the switch-tab scrolling fix holds the scroll position after a tab
- * is activated. Restoring scroll inside that window would fight it, so the
- * controller stays passive until it has finished.
+ * Attribute the switch-tab scrolling fix puts on the document widget while it
+ * holds the scroll position. While it is there, that extension owns the
+ * position and this controller stays passive.
+ */
+const FOREIGN_SCROLL_GUARD_ATTRIBUTE = 'data-jp-scroll-guard';
+
+/**
+ * How long the switch-tab scrolling fix can hold the scroll position after a
+ * tab is activated. Used only until a widget has been seen carrying the
+ * attribute above: a sibling that does not mark its widgets, or none at all,
+ * leaves nothing else to go by.
  */
 const FOREIGN_SCROLL_GUARD_MS = 3000;
+
+/**
+ * Whether a guard marker has ever been seen in this lab. One sighting says the
+ * sibling marks its widgets, so from then on the marker alone decides and a
+ * released guard no longer costs the reader their position for three seconds.
+ */
+let foreignGuardMarked = false;
 
 /**
  * Delay of the second scroll restore, chosen to land after the Markdown viewer
@@ -79,7 +123,12 @@ const LATE_SCROLL_RESTORE_MS = 150;
 const INPUT_SCROLL_WINDOW_MS = 500;
 
 /**
- * Settings the controller reads.
+ * Settings the extension reads.
+ *
+ * The first seven are this controller's own. The last two belong to the notes
+ * controller, which is created beside this one and handed the same object, so
+ * the extension has one settings shape and the schema test one list to check
+ * the declaration against.
  */
 export interface ILiveViewSettings {
   enabled: boolean;
@@ -89,6 +138,8 @@ export interface ILiveViewSettings {
   animationSpeed: number;
   highlight: boolean;
   tabCue: boolean;
+  notes: boolean;
+  author: string;
 }
 
 /**
@@ -96,12 +147,14 @@ export interface ILiveViewSettings {
  */
 export const DEFAULT_SETTINGS: ILiveViewSettings = {
   enabled: true,
-  pollInterval: 2,
-  fadeDuration: 4000,
+  pollInterval: 10,
+  fadeDuration: 3000,
   animation: true,
-  animationSpeed: 200,
+  animationSpeed: 10,
   highlight: true,
-  tabCue: true
+  tabCue: true,
+  notes: true,
+  author: ''
 };
 
 /**
@@ -110,6 +163,7 @@ export const DEFAULT_SETTINGS: ILiveViewSettings = {
 export interface ILiveViewControllerOptions {
   widget: MarkdownDocument;
   contents: Contents.IManager;
+  channel: ChangeChannel;
   settings: ILiveViewSettings;
 }
 
@@ -127,7 +181,7 @@ export class LiveViewController implements IDisposable {
       context: options.widget
         .context as DocumentRegistry.IContext<DocumentRegistry.ICodeModel>,
       contents: options.contents,
-      interval: options.settings.pollInterval * 1000,
+      channel: options.channel,
       enabled: options.settings.enabled
     });
     this._watcher.applied.connect(this._onApplied, this);
@@ -163,13 +217,41 @@ export class LiveViewController implements IDisposable {
   }
 
   /**
+   * Emitted when the decorations of a change are complete: the fade has run,
+   * the decoration markup is out and the rendered DOM is again exactly what
+   * the renderer produced.
+   *
+   * Anything else reading the rendered text waits for this. A decoration
+   * holds the text it wraps out of the text capture while it is on screen,
+   * and the change animation replaces text nodes as it types, so a passage
+   * inside a change can only be found once both are over.
+   */
+  get settled(): ISignal<this, void> {
+    return this._settled;
+  }
+
+  /**
    * Record that the document tab was just brought to the front.
    *
    * Another extension takes ownership of the scroll position for a few seconds
-   * after that happens, and this controller yields to it.
+   * after that happens, and this controller yields to it. It marks the widget
+   * while it holds; this timestamp only bounds the wait where no mark appears.
    */
   noteActivated(): void {
     this._activatedAt = Date.now();
+  }
+
+  /**
+   * Read the file now and apply whatever changed on disk.
+   *
+   * The notes controller calls this before every marker write, so a change
+   * already written by another process is in the document before the save
+   * that follows and the save cannot report the file as changed. With live
+   * updates turned off the watcher reads nothing here, as on every other
+   * entrance.
+   */
+  async refresh(): Promise<void> {
+    await this._watcher.refresh();
   }
 
   /**
@@ -180,7 +262,6 @@ export class LiveViewController implements IDisposable {
       settings.animationSpeed !== this._settings.animationSpeed ||
       settings.animation !== this._settings.animation;
     this._settings = settings;
-    this._watcher.interval = settings.pollInterval * 1000;
     this._watcher.enabled = settings.enabled;
     if (!settings.enabled || !settings.highlight) {
       this._endFade();
@@ -205,6 +286,10 @@ export class LiveViewController implements IDisposable {
     if (this._quietTimer !== null) {
       window.clearTimeout(this._quietTimer);
       this._quietTimer = null;
+    }
+    if (this._cueTimer !== null) {
+      window.clearTimeout(this._cueTimer);
+      this._cueTimer = null;
     }
     const node = this._widget.node;
     node.removeEventListener('pointerdown', this._onAttention, true);
@@ -273,10 +358,44 @@ export class LiveViewController implements IDisposable {
       return;
     }
     this._pending = true;
+    // The viewer re-renders on its own only once its render timeout has run,
+    // a second by default; asking for the render now is what puts the change
+    // on screen within half a second of the write. The viewer's own render
+    // follows later and is taken as a re-render of the same text.
+    this._widget.content.update();
     if (this._settings.tabCue) {
       this._setTabState(TAB_UPDATED_CLASS, true);
       this._resetQuietTimer();
+      this._resetCueTimer();
     }
+  }
+
+  /**
+   * Take the updated marker back a fade duration after the tab has settled,
+   * but only while the tab is the one in front.
+   *
+   * A reader looking at the document has seen the change by the time its
+   * highlight has gone, so the marker has done its work. A tab behind another
+   * one keeps its marker until the reader comes to it and acts, which is what
+   * the marker is for.
+   *
+   * The period is measured from the end of the quiet period rather than from
+   * the change, so the settled turn always has a window to be seen in. Both
+   * timers are armed on the same change, and at the shipped defaults the fade
+   * duration and the quiet period are the same 3000 ms, so a period measured
+   * from the change would take the marker away in the tick the tab settled
+   * and the slower turn ACC-CUE-71 asks for would never appear.
+   */
+  private _resetCueTimer(): void {
+    if (this._cueTimer !== null) {
+      window.clearTimeout(this._cueTimer);
+    }
+    this._cueTimer = window.setTimeout(() => {
+      this._cueTimer = null;
+      if (this._widget.isVisible) {
+        this._clearUpdatedCue();
+      }
+    }, QUIET_MS + this._settings.fadeDuration);
   }
 
   /**
@@ -287,27 +406,31 @@ export class LiveViewController implements IDisposable {
     if (this._quietTimer !== null) {
       window.clearTimeout(this._quietTimer);
     }
-    const quiet = Math.max(MIN_QUIET_MS, this._settings.pollInterval * 2000);
     this._quietTimer = window.setTimeout(() => {
       this._quietTimer = null;
       this._setActive(false);
-    }, quiet);
+    }, QUIET_MS);
   }
 
+  /**
+   * A change was found and not applied: held behind unsaved edits, or the
+   * file is gone from disk. Either way the marker says the preview is behind,
+   * and which marker says what the reader has to do about it.
+   */
   private _onBlocked(_: unknown, reason: BlockedReason): void {
     if (!this._settings.enabled || !this._settings.tabCue) {
       return;
     }
-    if (reason === 'dirty') {
-      this._setTabState(TAB_BLOCKED_CLASS);
-    }
+    this._setTabState(
+      reason === 'missing' ? TAB_MISSING_CLASS : TAB_BLOCKED_CLASS
+    );
   }
 
   /**
    * The change the blocked marker reported is no longer waiting on disk.
    */
   private _onUnblocked(): void {
-    if (this._hasTabClass(TAB_BLOCKED_CLASS)) {
+    if (this._isBlocked()) {
       this._setTabState(null);
     }
   }
@@ -334,8 +457,14 @@ export class LiveViewController implements IDisposable {
     const last = this._lastRendered;
     this._lastRendered = snapshot.text;
 
+    // A render of the text already on screen while decorations are showing,
+    // the viewer's own render after an applied change or another extension's
+    // re-render, only replaced the DOM: the same decorations are made again
+    // and the runs continue, without the fade starting over.
+    const redo =
+      !this._pending && this._fadeTimer !== null && snapshot.text === last;
     const shouldDecorate =
-      this._pending &&
+      (this._pending || redo) &&
       this._settings.enabled &&
       this._settings.highlight &&
       previous !== null &&
@@ -379,7 +508,13 @@ export class LiveViewController implements IDisposable {
           freshOps && offsets && speed > 0
             ? this._animator.ghosts(freshOps, offsets)
             : undefined;
-        this._clearDecorations();
+        if (redo) {
+          // The elements the last render made are detached already, and the
+          // fade timer they were given stands.
+          undecorate(this._decorations);
+        } else {
+          this._clearDecorations();
+        }
         this._decorations = decorate(
           root,
           snapshot,
@@ -394,7 +529,23 @@ export class LiveViewController implements IDisposable {
           speed,
           offsets
         );
-        this._scheduleFade(animationMs);
+        if (redo) {
+          // The stylesheet places the drain from the element's own creation,
+          // and this render built its elements again in the middle of a fade
+          // the first render timed. Each one is given the life it has left,
+          // less the time its typing holds the fade-out paused, so the colour
+          // still drains over the last part of the life rather than being cut
+          // off part-way through by the decorations being taken out.
+          const life = Math.max(0, this._fadeEndsAt - Date.now() - animationMs);
+          for (const element of this._decorations) {
+            element.style.setProperty(
+              '--jp-AdvancedMd-fade-duration',
+              `${life}ms`
+            );
+          }
+        } else {
+          this._scheduleFade(animationMs);
+        }
       }
     }
     if (!decorated) {
@@ -427,7 +578,7 @@ export class LiveViewController implements IDisposable {
     if (target <= 0 && this._lastInputAt === 0) {
       return;
     }
-    if (Date.now() - this._activatedAt < FOREIGN_SCROLL_GUARD_MS) {
+    if (this._foreignScrollGuard()) {
       return;
     }
     this._userScrolledDuringRestore = false;
@@ -449,6 +600,25 @@ export class LiveViewController implements IDisposable {
       this._lateScrollTimer = null;
       restore();
     }, LATE_SCROLL_RESTORE_MS);
+  }
+
+  /**
+   * Whether another extension owns the scroll position right now.
+   *
+   * The switch-tab scrolling fix marks the widget while its guard is live and
+   * takes the marker off as soon as it releases, which is usually well inside
+   * the three seconds it may hold. The timer is the fallback for a lab where
+   * no marker has ever appeared.
+   */
+  private _foreignScrollGuard(): boolean {
+    if (this._widget.node.hasAttribute(FOREIGN_SCROLL_GUARD_ATTRIBUTE)) {
+      foreignGuardMarked = true;
+      return true;
+    }
+    return (
+      !foreignGuardMarked &&
+      Date.now() - this._activatedAt < FOREIGN_SCROLL_GUARD_MS
+    );
   }
 
   /**
@@ -486,15 +656,11 @@ export class LiveViewController implements IDisposable {
     if (this._fadeTimer !== null) {
       window.clearTimeout(this._fadeTimer);
     }
-    this._fadeTimer = window.setTimeout(
-      () => {
-        this._endFade();
-        if (this._widget.isVisible) {
-          this._clearUpdatedCue();
-        }
-      },
-      animationMs + this._settings.fadeDuration + FADE_IN_MS
-    );
+    const life = animationMs + this._settings.fadeDuration + FADE_IN_MS;
+    // When the decorations go, which is what a re-render of the same text
+    // aligns its drain against.
+    this._fadeEndsAt = Date.now() + life;
+    this._fadeTimer = window.setTimeout(() => this._endFade(), life);
   }
 
   /**
@@ -508,6 +674,7 @@ export class LiveViewController implements IDisposable {
     if (root) {
       this._previousText = captureText(root).text;
     }
+    this._settled.emit();
   }
 
   /**
@@ -534,9 +701,19 @@ export class LiveViewController implements IDisposable {
    * is still on disk, whatever the reader did.
    */
   private _clearUpdatedCue(): void {
-    if (!this._hasTabClass(TAB_BLOCKED_CLASS)) {
+    if (!this._isBlocked()) {
       this._setTabState(null);
     }
+  }
+
+  /**
+   * Whether the tab carries either of the markers the reader has to act on.
+   */
+  private _isBlocked(): boolean {
+    return (
+      this._hasTabClass(TAB_BLOCKED_CLASS) ||
+      this._hasTabClass(TAB_MISSING_CLASS)
+    );
   }
 
   private _hasTabClass(name: string): boolean {
@@ -561,8 +738,10 @@ export class LiveViewController implements IDisposable {
           name &&
           name !== TAB_UPDATED_CLASS &&
           name !== TAB_BLOCKED_CLASS &&
+          name !== TAB_MISSING_CLASS &&
           name !== TAB_ACTIVE_CLASS
       );
+    this._setCaption(state ? BLOCKED_CAPTIONS[state] : undefined);
     if (state) {
       classes.push(state);
       if (active) {
@@ -577,6 +756,29 @@ export class LiveViewController implements IDisposable {
       window.clearTimeout(this._quietTimer);
       this._quietTimer = null;
     }
+  }
+
+  /**
+   * Put a state's tooltip on the tab, or take it back off.
+   *
+   * The caption the tab carried before the first marker is kept, so a tab
+   * that stops being blocked says again whatever the document gave it.
+   *
+   * @param text - the tooltip, or undefined for the state having no tooltip
+   */
+  private _setCaption(text: string | undefined): void {
+    const title = this._widget.title;
+    if (text === undefined) {
+      if (this._documentCaption !== null) {
+        title.caption = this._documentCaption;
+        this._documentCaption = null;
+      }
+      return;
+    }
+    if (this._documentCaption === null) {
+      this._documentCaption = title.caption;
+    }
+    title.caption = text;
   }
 
   /**
@@ -607,11 +809,15 @@ export class LiveViewController implements IDisposable {
   private _pending = false;
   private _disposed = false;
   private _fadeTimer: number | null = null;
+  private _fadeEndsAt = 0;
   private _lateScrollTimer: number | null = null;
   private _quietTimer: number | null = null;
+  private _cueTimer: number | null = null;
+  private _documentCaption: string | null = null;
   private _activatedAt = 0;
   private _scrollTop = 0;
   private _restoreTarget: number | null = null;
   private _lastInputAt = 0;
   private _userScrolledDuringRestore = false;
+  private _settled = new Signal<this, void>(this);
 }

@@ -14,5 +14,9 @@ configure_jupyter_server(c)
 # raise here while Playwright waited happily on the default port.
 c.ServerApp.port = int(os.environ.get("JUPYTER_TEST_PORT") or "8888")
 
+# The fixtures each test removes go for good: a move to the trash fails on a
+# root outside the home directory and leaves every fixture behind.
+c.FileContentsManager.delete_to_trash = False
+
 # Uncomment to set server log level to debug level
 # c.ServerApp.log_level = "DEBUG"

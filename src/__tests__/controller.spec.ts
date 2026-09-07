@@ -28,6 +28,7 @@ jest.mock('../watcher', () => {
 import {
   DEFAULT_SETTINGS,
   LiveViewController,
+  TAB_ACTIVE_CLASS,
   TAB_BLOCKED_CLASS,
   TAB_UPDATED_CLASS
 } from '../controller';
@@ -54,7 +55,8 @@ function makeWidget() {
     isVisible: true,
     context: { path: 'live.md' },
     content: Object.assign(content, {
-      rendered: new Signal<any, void>(content)
+      rendered: new Signal<any, void>(content),
+      update: () => undefined
     })
   };
   widget.disposed = new Signal<any, void>(widget);
@@ -100,6 +102,7 @@ describe('LiveViewController', () => {
     controller = new LiveViewController({
       widget,
       contents: {} as any,
+      channel: {} as any,
       settings
     });
     watcher = watcherModule.__instances[0];
@@ -166,7 +169,7 @@ describe('LiveViewController', () => {
     jest.advanceTimersByTime(1000);
     applied();
     render('<p>alpha beta gamma</p>');
-    jest.advanceTimersByTime(4300);
+    jest.advanceTimersByTime(4500);
     expect(root.querySelectorAll(`.${DECORATION_CLASS}`).length).toBe(0);
     applied();
     render('<p>alpha beta gamma delta</p>');
@@ -210,6 +213,19 @@ describe('LiveViewController', () => {
       applied();
       expect(tabClasses()).toContain(TAB_UPDATED_CLASS);
       expect(tabClasses()).not.toContain(TAB_BLOCKED_CLASS);
+    });
+
+    it('settles the animating marker a fixed period after the last change', () => {
+      // Changes arrive as events, so how long the icon keeps animating after
+      // the last one does not follow the fallback interval.
+      controller.updateSettings({ ...settings, pollInterval: 60 });
+      applied();
+      expect(tabClasses()).toContain(TAB_ACTIVE_CLASS);
+      jest.advanceTimersByTime(2999);
+      expect(tabClasses()).toContain(TAB_ACTIVE_CLASS);
+      jest.advanceTimersByTime(1);
+      expect(tabClasses()).not.toContain(TAB_ACTIVE_CLASS);
+      expect(tabClasses()).toContain(TAB_UPDATED_CLASS);
     });
   });
 
@@ -308,6 +324,7 @@ describe('LiveViewController', () => {
       controller = new LiveViewController({
         widget,
         contents: {} as any,
+        channel: {} as any,
         settings: { ...settings, animationSpeed: SPEED, ...overrides }
       });
       watcher = watcherModule.__instances[0];
@@ -445,7 +462,7 @@ describe('LiveViewController', () => {
       render(`<p>alpha</p>\n<p>${SENTENCE}</p>`);
       expect(addedText(root)).toEqual([SENTENCE]);
       expect(typingCount(root)).toBe(0);
-      jest.advanceTimersByTime(4300);
+      jest.advanceTimersByTime(4500);
       expect(decorationCount(root)).toBe(0);
     });
 
@@ -487,7 +504,7 @@ describe('LiveViewController', () => {
       expect(typingCount(root)).toBe(0);
       // The fade was re-armed when the speed changed, 20 ms in, for the fade
       // duration plus the fade-in.
-      jest.advanceTimersByTime(4300 - 16 - 1);
+      jest.advanceTimersByTime(4500 - 16 - 1);
       expect(decorationCount(root)).toBe(1);
       jest.advanceTimersByTime(1);
       expect(decorationCount(root)).toBe(0);
@@ -530,7 +547,7 @@ describe('LiveViewController', () => {
       const shown = addedText(root)[0];
       expect(shown.length).toBeLessThan(300);
       expect(addition.startsWith(shown)).toBe(true);
-      jest.advanceTimersByTime(3000 + 16);
+      jest.advanceTimersByTime(3200 + 16);
       expect(decorationCount(root)).toBe(0);
       expect(root.textContent).toBe(`alpha${addition}`);
       applied();
@@ -575,7 +592,7 @@ describe('LiveViewController', () => {
         render(`<p>alpha</p>\n<p>${SENTENCE}</p>`);
         expect(addedText(root)).toEqual([SENTENCE]);
         expect(typingCount(root)).toBe(0);
-        jest.advanceTimersByTime(4300 - 1);
+        jest.advanceTimersByTime(4500 - 1);
         expect(decorationCount(root)).toBe(1);
         jest.advanceTimersByTime(1);
         expect(decorationCount(root)).toBe(0);
@@ -665,7 +682,7 @@ describe('LiveViewController', () => {
       expect(ghost.textContent).toBe('beta ');
       expect(ghost.classList.contains(TYPING_CLASS)).toBe(false);
       // The fade was re-armed when the speed changed, 100 ms in.
-      jest.advanceTimersByTime(4300 - 16 - 1);
+      jest.advanceTimersByTime(4500 - 16 - 1);
       expect(ghostText(root)).toBe('beta ');
       jest.advanceTimersByTime(1);
       expect(decorationCount(root)).toBe(0);
@@ -1125,21 +1142,28 @@ describe('LiveViewController', () => {
       expect(root.textContent).toBe('alpha\nThe fox');
     });
 
-    it('stops driving spans a render nothing external caused threw away', () => {
+    it('carries the typing across a render nothing external caused', () => {
       render('<p>alpha</p>');
       applied();
       const html = `<p>alpha</p>\n<p>${SENTENCE}</p>`;
       render(html);
       jest.advanceTimersByTime(20);
-      expect(() => {
-        render(html);
-        jest.advanceTimersByTime(200);
-      }).not.toThrow();
+      const shown = addedText(root)[0].length;
+      // The viewer's own render after the change, or another extension's,
+      // replaced the DOM with the same text: the decorations are made again
+      // and the run goes on from where it was, nothing lands at once.
+      render(html);
+      jest.advanceTimersByTime(200);
+      expect(decorationCount(root)).toBeGreaterThan(0);
+      const later = addedText(root)[0].length;
+      expect(later).toBeGreaterThan(shown);
+      expect(later).toBeLessThan(SENTENCE.length);
+      // The fade timer this change started still fires on time, once, and
+      // takes the decorations out.
+      const timers = jest.getTimerCount();
+      jest.advanceTimersByTime(600 + 4500);
       expect(root.textContent).toBe(`alpha\n${SENTENCE}`);
       expect(decorationCount(root)).toBe(0);
-      // The fade timer this change started still fires on time, once.
-      const timers = jest.getTimerCount();
-      jest.advanceTimersByTime(600 + 4300);
       expect(jest.getTimerCount()).toBeLessThan(timers);
     });
 

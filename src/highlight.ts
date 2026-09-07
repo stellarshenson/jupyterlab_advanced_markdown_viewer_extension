@@ -56,6 +56,19 @@ export const GAP_CLASS = 'jp-AdvancedMd-gap';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /**
+ * Stands in the captured text between two blocks whose own text would
+ * otherwise run together.
+ *
+ * Two blocks always render on separate lines, so their words are never one
+ * word, but the renderer leaves no whitespace between some of them - a fenced
+ * code block and the paragraph after it, for one. Without this break the
+ * tokenizer reads the last word of the first block and the first word of the
+ * second as a single token, and the diff pairs a match found after a block
+ * with a removal inside it.
+ */
+const BLOCK_BREAK = '\n';
+
+/**
  * Selector for the heading elements, whose text and ids stay as rendered.
  */
 export const HEADINGS = 'h1,h2,h3,h4,h5,h6';
@@ -71,6 +84,11 @@ interface ITextSpan {
 
 /**
  * The text of one render, with the nodes it came from.
+ *
+ * The text carries a {@link BLOCK_BREAK} where two blocks abut, so it is the
+ * text of the document as the reader sees it laid out rather than the bare
+ * concatenation of the text nodes. Those breaks belong to no span, so nothing
+ * is ever decorated over them.
  */
 export interface ITextSnapshot {
   text: string;
@@ -110,10 +128,21 @@ export function captureText(root: HTMLElement): ITextSnapshot {
 
   const spans: ITextSpan[] = [];
   let text = '';
+  let block: Element | Text | null = null;
   let current = walker.nextNode();
   while (current) {
     const value = current.nodeValue ?? '';
     if (value.length) {
+      const owner = blockOf(current as Text, root);
+      if (
+        block !== null &&
+        owner !== block &&
+        !/\s$/.test(text) &&
+        !/^\s/.test(value)
+      ) {
+        text += BLOCK_BREAK;
+      }
+      block = owner;
       spans.push({
         node: current as Text,
         start: text.length,
@@ -306,18 +335,35 @@ function blockOf(node: Text, root: HTMLElement): Element | Text {
  * other block shows no ghost, so heading text stays as rendered.
  *
  * @param block - the block the removal belongs to, or the whitespace between
- * blocks it sits in
+ * blocks it sits in, or null when the render holds no text and so no block
+ * owns the removal
+ * @param root - the rendered Markdown host
  * @returns the node to insert before, and its parent, or null when there is
  * nowhere safe to put the ghost
  */
 function ghostAnchor(
-  block: Element | Text
+  block: Element | Text | null,
+  root: HTMLElement
 ): { parent: Node; before: Node | null } | null {
   const isHeading = (element: Element) => element.matches(HEADINGS);
   const into = (element: Element) => ({
     parent: element,
     before: element.firstChild
   });
+  if (block === null) {
+    // The change left the render with no text, so there is no block the
+    // removal came from. The ghost goes into the first block that survived
+    // it. A render with no block at all shows none: the only place left
+    // would be a new direct child of the render root, whose count another
+    // extension matches against the Markdown block count. The reader is left
+    // with an empty page and the tab cue.
+    for (let el = root.firstElementChild; el; el = el.nextElementSibling) {
+      if (!isHeading(el)) {
+        return into(el);
+      }
+    }
+    return null;
+  }
   const next = block.nextElementSibling;
   if (next && !isHeading(next)) {
     return into(next);
@@ -435,7 +481,10 @@ export function decorate(
   // beside it.
   const pastBound = (text: string) => tokenize(text).length > MAX_LCS_TOKENS;
   const readable = (text: string) => tokenize(text).length <= MAX_GHOST_TOKENS;
-  const deferredGhosts: Array<{ block: Element | Text; ghost: IGhost }> = [];
+  const deferredGhosts: Array<{
+    block: Element | Text | null;
+    ghost: IGhost;
+  }> = [];
   const shown =
     ghosts ??
     ranges.removed.map(removal => ({
@@ -456,6 +505,9 @@ export function decorate(
     }
     const span = spanAt(snapshot.spans, ghost.at);
     if (!span) {
+      // The render holds no text at all, so no text node can carry the ghost
+      // and no block owns it.
+      deferredGhosts.push({ block: null, ghost });
       continue;
     }
     if (!holdsGhost(span.node, root)) {
@@ -545,7 +597,7 @@ export function decorate(
   }
 
   for (const { block, ghost } of deferredGhosts) {
-    const anchor = ghostAnchor(block);
+    const anchor = ghostAnchor(block, root);
     if (!anchor) {
       continue;
     }

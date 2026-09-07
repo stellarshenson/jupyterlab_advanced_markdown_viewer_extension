@@ -23,6 +23,9 @@ module.exports = {
   webServer: {
     command: 'jlpm start',
     url: `${BASE_URL}/lab`,
+    // The server root is this directory, so a test that writes through the
+    // filesystem finds a contents-API path at the same place.
+    env: { ...process.env, JUPYTERLAB_GALATA_ROOT_DIR: __dirname },
     timeout: 120 * 1000,
     reuseExistingServer: false
   }

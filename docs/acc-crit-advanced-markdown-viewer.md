@@ -10,361 +10,642 @@ Open Markdown documents receive external changes from disk live, in the rendered
 
 Noticing that an open Markdown file was rewritten on disk by another process
 
-- [ ] `ACC-DETECT-1` **Open Markdown files are watched** - CRITICAL; every Markdown document open in a viewer or editor tab is polled for a newer last_modified while its tab exists, and stops being polled when the tab closes
+- [x] `ACC-DETECT-1` **Open Markdown files are watched** - CRITICAL; every Markdown document open in a rendered preview is watched for a change on disk while its tab exists, and stops being watched when the tab closes; a file open in the editor alone is not watched, the viewer-only decision of 2026-09-06
+  - evidence: unit 'registers its path once loaded and releases it on dispose' in `src/__tests__/watcher.spec.ts`, with Galata 'shows content another process wrote, without a reload' in ui-tests/tests/live-view.spec.ts
   - test: open a .md file, rewrite it from a terminal, assert the new content appears without a reload; close the tab, assert no further contents requests for that path
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-04T19:57:21Z @kj poll contents.get(path, {content:false}) per open document; compare the content hash first and fall back to last_modified with a 500 ms margin, which is what JupyterLab core's Context does and what jupyter-collaboration fails to do (it compares mtime alone, and its tracker records both false negatives from filesystem timestamp resolution and false positives from identical-content writes)
   - mechanism: 2026-09-04T17:46:55Z @kj one poll timer per open document context, contents.get(path, {content: false}) at the configured interval, compare last_modified with context.contentsModel.last_modified recorded at the last load or save; the timer is disposed with the widget
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-DETECT-2` **Only external changes trigger a reload** - HIGH; a save made from the same JupyterLab session updates the recorded last_modified and never produces a reload, a cue or highlights
+  - log: 2026-09-06T18:14:28Z @kj edited text
+  - log: 2026-09-06T18:14:38Z @kj closed
+- [x] `ACC-DETECT-2` **Only external changes trigger a reload** - HIGH; a save made from the same JupyterLab session updates the recorded last_modified and never produces a reload, a cue or highlights
+  - evidence: 'saves from the editor after an applied change without a File Changed dialog' in ui-tests/tests/live-view.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: edit and save from the editor, assert no highlight and no tab cue
   - test-tags: UNIT, E2E
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-DETECT-3` **Poll interval is configurable** - HIGH; the poll interval is a setting in seconds, default 2, minimum 1, and a change takes effect on open documents without reopening them
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [-] `ACC-DETECT-3` **Poll interval is configurable** - HIGH; the poll interval is a setting in seconds, default 2, minimum 1, and a change takes effect on open documents without reopening them
   - test: set interval to 5, rewrite the file, assert the update lands between 5 and 10 s
   - test-tags: UNIT, E2E
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-DETECT-4` **Poll cost is bounded** - MEDIUM; a poll never fetches file content, only metadata, and the content is fetched once per detected change
+  - log: 2026-09-06T15:55:35Z @kj rejected: superseded by ACC-EVENT-94, pollInterval is the fallback interval with default 10
+- [x] `ACC-DETECT-4` **Poll cost is bounded** - MEDIUM; a poll never fetches file content, only metadata, and the content is fetched once per detected change
+  - evidence: pytest test_stat in jupyterlab_advanced_markdown_viewer_extension/tests/test_routes.py (the batched route answers mtime and size only
   - test: record network requests for 30 s with no change, assert every request carries content=0
   - test-tags: E2E
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-DETECT-5` **Server push replaces polling when available** - LOW; when the server extension exposes a watch channel the frontend subscribes to it and disables the poll timer for that document
+  - log: 2026-09-06T18:14:19Z @kj closed
+- [-] `ACC-DETECT-5` **Server push replaces polling when available** - LOW; when the server extension exposes a watch channel the frontend subscribes to it and disables the poll timer for that document
   - test: with the server extension enabled, assert zero contents.get polls and an update within 1 s of the write
   - test-tags: INTEGRATION, E2E
   - mechanism: 2026-09-04T17:46:55Z @kj jupyter_server websocket handler backed by a watchdog observer on the open paths; not part of the first release, polling is the baseline
   - log: 2026-09-04T17:46:55Z @kj added
   - log: 2026-09-04T19:57:21Z @kj jupyter-collaboration is not installed on this workstation and is opt-in upstream, so there is no server-side ydoc or file watcher; frontend polling is the only option without adding a server dependency
-- [ ] `ACC-DETECT-6` **Edge: file removed on disk** - MEDIUM; when the poll gets 404 the tab keeps its content, the cue shows a removed state, polling stops, and no error dialog opens
+  - log: 2026-09-06T15:55:35Z @kj rejected: superseded by ACC-EVENT-81 and ACC-EVENT-82, the event channel is the primary path
+- [x] `ACC-DETECT-6` **Edge: file removed on disk** - MEDIUM; when the file is gone from disk the tab keeps its content, the cue shows a removed state, no further content read is made for that path, and no error dialog opens
+  - mechanism: 2026-09-07T04:19:55Z @kj the server leaves a path it cannot serve out of its answer rather than answering nothing for it, so a path on another drive is not read as a deletion; the cost is stated: the server cannot tell a drive prefix from a real first path segment carrying a colon, because only the browser holds the list of drives, so a file whose own first segment carries a colon is not watched
+  - evidence: Galata 'marks a deleted file and applies it once it is recreated' in ui-tests/tests/events.spec.ts asserts the preview still contains 'apples', the tab carries jp-AdvancedMd-tabBlocked
   - test: delete the file from a terminal while open, assert content stays and no dialog
   - test-tags: E2E
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-DETECT-7` **Edge: file renamed in JupyterLab** - MEDIUM; renaming the document through the file browser moves the watch to the new path
+  - log: 2026-09-06T17:12:11Z @kj edited text
+  - log: 2026-09-06T18:14:19Z @kj closed
+- [x] `ACC-DETECT-7` **Edge: file renamed in JupyterLab** - MEDIUM; renaming the document through the file browser moves the watch to the new path
+  - evidence: Galata 'follows the document to its new path after a rename' in ui-tests/tests/events.spec.ts (rename, then a write under the new name lands) and unit 'moves the registration when the document is renamed' in `src/__tests__/watcher.spec.ts`
   - test: rename the open file, rewrite it under the new name, assert the update lands
   - test-tags: E2E
   - log: 2026-09-04T17:46:55Z @kj added
+  - log: 2026-09-06T18:14:19Z @kj closed
 
 ## Applying external content `APPLY`
 
 How new content from disk reaches the open document model without losing the user's work
 
-- [ ] `ACC-APPLY-8` **Content is applied through the document model** - CRITICAL; the new file content is written into the document's shared model so every consumer of the model, the rendered viewer and the editor, updates through the standard pipeline
+- [x] `ACC-APPLY-8` **Content is applied through the document model** - CRITICAL; the new file content is written into the document's shared model so every consumer of the model, the rendered viewer and the editor, updates through the standard pipeline
+  - evidence: Galata 'applies two writes fifty milliseconds apart as one change' in ui-tests/tests/events.spec.ts observes sharedModel.ysource and counts transactions carrying the extension's origin
   - test: open the same file in viewer and editor, rewrite it, assert both tabs show the new text
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-04T19:57:21Z @kj Differential Synchronization (Fraser 2009, ACM DocEng), single-machine common-shadow variant run in one direction: hold a shadow of the last text agreed with disk, diff shadow against the new snapshot, apply the result as positioned updateSource hunks in one outer transaction tagged with our origin; update the shadow unconditionally so a bad cycle self-corrects; never setSource, which discards every relative position
   - mechanism: 2026-09-04T17:46:55Z @kj diff old disk text against new disk text, apply the hunks as sharedModel.updateSource operations inside one Yjs transaction tagged with the extension's own origin so cursor and undo history survive and the standard contentChanged -> render -> rendered pipeline runs; never setSource of the whole text, never context.revert(), never direct DOM replacement
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-APPLY-9` **Applied content is not dirty** - CRITICAL; after an external change is applied the document is clean, the recorded last_modified equals the new disk value, and a following user save succeeds without the 'file has changed on disk' dialog
+  - log: 2026-09-06T18:14:19Z @kj closed
+- [x] `ACC-APPLY-9` **Applied content is not dirty** - CRITICAL; after an external change is applied the document is clean, the recorded last_modified equals the new disk value, and a following user save succeeds without the 'file has changed on disk' dialog
+  - evidence: Unit 'applies a change from disk and records the revision on the context' in `src/__tests__/watcher.spec.ts` (model clean
   - mechanism: 2026-09-05T07:40:06Z @kj RESOLVED: after each apply the watcher records the applied revision (hash, last_modified) on the Context through its own private _updateContentsModel, the move the Context makes for itself after a save and the collaborative drive triggers through a save event; a unit test guards the method's presence in the installed docregistry and a runtime warning names its absence; a save from the editor over unsaved edits never reaches this path and keeps the File Changed dialog, which is the editor's own conflict
   - mechanism: 2026-09-04T19:57:21Z @kj UNRESOLVED: JupyterLab core keeps the disk hash and mtime in the private Context._contentsModel and compares them in _maybeSave; merging without updating it raises the File Changed dialog on the user's next save, and there is no public setter - the only public call that updates it is revert(), whose _revert does model.fromString and destroys unsaved edits; the three options are save-after-merge, patch the private field, or accept the dialog
   - test: rewrite the file, then edit and save from the editor, assert no dialog and the save lands
   - test-tags: E2E
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-APPLY-10` **Concurrent user edits are preserved** - CRITICAL; text the user typed but has not saved is never lost or displaced when an external change is applied; hunks that do not overlap the edited lines are applied at their mapped positions
+  - log: 2026-09-06T18:14:19Z @kj closed
+- [-] `ACC-APPLY-10` **Concurrent user edits are preserved** - CRITICAL; text the user typed but has not saved is never lost or displaced when an external change is applied; hunks that do not overlap the edited lines are applied at their mapped positions
   - test: type on line 2, rewrite lines 10-12 from a terminal, assert line 2 keeps the typed text and lines 10-12 update
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-04T19:57:21Z @kj three-way merge in place of Fraser's fuzzy patching: base is the shadow, ours is the live text with unsaved keystrokes, theirs is the new snapshot; a wrong fuzzy match silently corrupts a document the user is reading, a reported conflict can be routed to the user; note diff3 is not idempotent, so recovery from a bad merge is restoring the shadow, never merging again over the output
   - mechanism: 2026-09-04T17:46:55Z @kj three-way merge: base is the last text loaded from disk, ours is the model, theirs is the new disk text; non-overlapping hunks apply, overlapping hunks keep ours
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-APPLY-11` **Overlapping change keeps the user's text** - HIGH; when an external hunk overlaps lines the user changed, the user's lines stay, the document becomes dirty, and the tab cue shows the conflict state until the user saves or reloads
+  - log: 2026-09-06T15:55:35Z @kj rejected: superseded by the block-until-clean policy, the Star Colonel chose the stable path over a three-way merge 2026-09-06
+- [-] `ACC-APPLY-11` **Overlapping change keeps the user's text** - HIGH; when an external hunk overlaps lines the user changed, the user's lines stay, the document becomes dirty, and the tab cue shows the conflict state until the user saves or reloads
   - test: edit line 5 unsaved, rewrite line 5 from a terminal, assert the editor keeps the user's line 5 and the cue shows conflict
   - test-tags: UNIT, E2E
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-APPLY-12` **No apply while typing** - HIGH; an external change detected during active typing is held until 1 s after the last keystroke, then applied
+  - log: 2026-09-06T15:55:35Z @kj rejected: superseded by the block-until-clean policy, the Star Colonel chose the stable path over a three-way merge 2026-09-06
+- [-] `ACC-APPLY-12` **No apply while typing** - HIGH; an external change detected during active typing is held until 1 s after the last keystroke, then applied
   - test: type continuously for 5 s while the file is rewritten, assert the update lands about 1 s after typing stops
   - test-tags: UNIT, E2E
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-APPLY-13` **Cursor and selection survive** - HIGH; the editor cursor and selection stay on the same text after an external change is applied above or below them
+  - log: 2026-09-06T15:55:35Z @kj rejected: editor tab is out of scope, viewer-only decision by the Star Colonel 2026-09-06
+- [-] `ACC-APPLY-13` **Cursor and selection survive** - HIGH; the editor cursor and selection stay on the same text after an external change is applied above or below them
   - test: place the cursor on line 20, insert 3 lines at line 1 from a terminal, assert the cursor is on the same text at line 23
   - test-tags: UNIT, E2E
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-APPLY-14` **Scroll position survives** - HIGH; the rendered view and the editor keep the same content in view after an external change is applied outside the visible region
+  - log: 2026-09-06T15:55:35Z @kj rejected: editor tab is out of scope, viewer-only decision by the Star Colonel 2026-09-06
+- [x] `ACC-APPLY-14` **Scroll position survives** - HIGH; the rendered view keeps the same content in view after an external change is applied outside the visible region
+  - evidence: Galata 'stays where the reader scrolled to when another extension scrolls to the URL hash' in ui-tests/tests/live-view.spec.ts, an append at the end moving scrollTop less than 50 px, with unit 'overrides a scroll another extension made' in `src/__tests__/controller.spec.ts`
   - test: scroll the viewer to the middle, append text at the end from a terminal, assert the visible heading is unchanged
   - test-tags: E2E
   - mechanism: 2026-09-04T17:46:55Z @kj one scroll guard installed on the rendered signal: snapshot scrollTop, wait for images, restore, abort on user wheel; it stays passive while the switch-tab scrolling fix guard is live and runs after the TOC fix hash scroll so it holds the last write
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-APPLY-15` **Undo does not revert external content** - MEDIUM; external hunks are excluded from the editor's undo stack, so undo reverts only the user's own edits
+  - log: 2026-09-06T18:14:28Z @kj edited text
+  - log: 2026-09-06T18:14:38Z @kj closed
+- [-] `ACC-APPLY-15` **Undo does not revert external content** - MEDIUM; external hunks are excluded from the editor's undo stack, so undo reverts only the user's own edits
   - test: rewrite from a terminal, press undo, assert the external change stays
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-04T19:57:21Z @kj sharedModel.transact(fn, false, ORIGIN) - @jupyter/ydoc passes 'undoable ? this : origin' and constructs the UndoManager with trackedOrigins Set([this]), so undoable=false both excludes the change and tags it; note updateSource calls transact with no arguments, so it must be wrapped in an outer transaction or the change lands in the undo stack looking like typing
   - mechanism: 2026-09-04T17:46:55Z @kj the external transaction origin is excluded from the shared model's undo manager tracked origins
   - log: 2026-09-04T17:46:55Z @kj added
   - log: 2026-09-04T19:57:21Z @kj open decision: exclusion is not settled. Vim pushes a reload as one undoable change for buffers under 10000 lines so undo recovers the previous text. Excluding transactions does not discard existing history, it rebases it. See docs/research-live-markdown-reconciliation.md
-- [ ] `ACC-APPLY-16` **Edge: whole file replaced** - MEDIUM; a rewrite that changes every line applies as one replacement and the document still renders and stays clean
+  - log: 2026-09-06T15:55:35Z @kj rejected: editor tab is out of scope, viewer-only decision by the Star Colonel 2026-09-06; the transaction is already kept off the undo stack, see ACC-APPLY-8
+- [x] `ACC-APPLY-16` **Edge: whole file replaced** - MEDIUM; a rewrite that changes every line applies as one replacement and the document still renders and stays clean
+  - evidence: 'replaces every line of the document in one transaction, leaving it clean' in `src/__tests__/watcher.spec.ts`; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: replace the entire file content from a terminal, assert the render and dirty state
   - test-tags: UNIT, E2E
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-APPLY-17` **Edge: empty file** - MEDIUM; a rewrite to an empty file leaves an empty document, no error, and the removed text highlighted then faded
+  - log: 2026-09-06T22:05:03Z @kj closed
+- [x] `ACC-APPLY-17` **Edge: empty file** - MEDIUM; a rewrite to an empty file leaves an empty document with no error, and the text it removed is struck out first wherever the render still holds a block to put the ghost in; a render left with no block at all shows none, by the decision recorded on ACC-HILITE-110
+  - evidence: 'empties the document when the file is truncated, without an error' in `src/__tests__/controller.spec.ts` for the empty result, and 'puts the ghost of all the text in the block that survived it' and 'shows no ghost when the change left the render with no block' in `src/__tests__/highlight.spec.ts` for the two halves of the removal; green on build 0.6.19
+  - related: ACC-HILITE-110
   - test: truncate the file, assert empty content and a removed-text highlight
   - test-tags: UNIT, E2E
   - log: 2026-09-04T17:46:55Z @kj added
-- [ ] `ACC-APPLY-18` **Edge: large file** - LOW; a 5000-line file applies an external change without blocking the UI for more than 100 ms
+  - log: 2026-09-06T22:05:17Z @kj edited text
+  - log: 2026-09-06T22:05:17Z @kj closed
+- [x] `ACC-APPLY-18` **Edge: large file** - LOW; a 5000-line file applies an external change without blocking the UI for more than 100 ms
+  - evidence: 'applies a change to a five thousand line document in under 100 ms' in `src/__tests__/watcher.spec.ts`; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: rewrite a 5000-line file, measure the main-thread block with the performance API
   - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-APPLY-43` **Shadow of the last disk text is maintained** - CRITICAL; a per-document shadow holds the text last agreed with disk, is set on load, on save and after every reconciliation, and is the base of every merge; it is never shown to the user and never written to disk
+  - log: 2026-09-06T22:05:03Z @kj closed
+- [-] `ACC-APPLY-43` **Shadow of the last disk text is maintained** - CRITICAL; a per-document shadow holds the text last agreed with disk, is set on load, on save and after every reconciliation, and is the base of every merge; it is never shown to the user and never written to disk
   - test: load a file, type without saving, assert the shadow equals the disk text and not the model text
   - test-tags: UNIT
   - mechanism: 2026-09-04T19:57:21Z @kj Fraser's shadow. Without it the merge degenerates to a two-way diff of live against disk and the user's unsaved keystrokes are classified as deletions - which is exactly the defect in jupyter_ydoc's YUnicode.set today
   - log: 2026-09-04T19:57:21Z @kj added
+  - log: 2026-09-06T15:55:35Z @kj rejected: superseded by the block-until-clean policy, no shadow merge; the watcher keeps only the last applied text for comparison
+- [x] `ACC-APPLY-105` **External change is held while the document is dirty** - CRITICAL; an external change that arrives while the document holds unsaved edits is not applied; the watcher keeps the newest disk text, the tab shows the blocked cue once, and the change lands as soon as the document is clean again after a revert; a save from the session overwrites the disk, so the held change is dropped and the cue released; the user's text is never overwritten
+  - evidence: Unit 'reports a change once while the document is dirty, then applies it once clean' in `src/__tests__/watcher.spec.ts` (one blocked:dirty for two events, source unchanged, applied on the clean transition)
+  - test: type in the editor without saving, write the file externally, assert no change in the preview and the blocked cue; revert the document, assert the held change is applied and the cue cleared
+  - test-tags: UNIT, E2E
+  - mechanism: 2026-09-06T15:55:35Z @kj FileWatcher keeps _pending while model.dirty and emits blocked('dirty') once per distinct disk text; a completed save resets the shadow and emits unblocked; a clean model on the next check applies the pending text
+  - log: 2026-09-06T15:55:35Z @kj added
+  - log: 2026-09-06T18:14:19Z @kj closed
 
 ## Change highlighting `HILITE`
 
 Showing the user what an external change removed and added, in the rendered view and in the editor
 
-- [ ] `ACC-HILITE-19` **Added text is highlighted green** - CRITICAL; text added by an external change carries a pale green background in the editor and in the rendered view
+- [x] `ACC-HILITE-19` **Added text is highlighted green** - CRITICAL; text added by an external change carries a pale green background in the rendered view
+  - evidence: Galata 'highlights the text the change added' in ui-tests/tests/live-view.spec.ts, a visible jp-AdvancedMd-added carrying a background colour and the added word, with unit 'wraps added text in an added decoration' in `src/__tests__/highlight.spec.ts`
   - test: append a paragraph from a terminal, assert the new text has the added-highlight class in both tabs
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-04T17:46:56Z @kj editor: CodeMirror Decoration.mark in a StateField over the added ranges, never injected DOM; viewer: on the MarkdownViewer rendered signal wrap added text nodes inside their existing block element in span.jp-AdvancedMd-added, mapping hunks to blocks with a source-to-block map; never add or remove direct children of .jp-RenderedMarkdown and never touch heading ids
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-HILITE-20` **Removed text is shown red then disappears** - CRITICAL; text removed by an external change stays visible with a pale red background for the fade duration, then is taken out of the view; the document model never contains the removed text
+  - log: 2026-09-06T18:14:28Z @kj edited text
+  - log: 2026-09-06T18:14:38Z @kj closed
+- [x] `ACC-HILITE-20` **Removed text is shown red then disappears** - CRITICAL; text removed by an external change stays visible, struck through on a pale red background, until the animation deletes it or the fade takes it out; the document model never contains the removed text
+  - evidence: Galata 'shows the text the change removed' and 'takes the decorations back out once the fade has run' in ui-tests/tests/live-view.spec.ts, the ghost appearing then gone with the document text no longer holding it
   - test: delete a paragraph from a terminal, assert a red ghost of it in both tabs that is gone after the fade
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-05T08:34:56Z @kj the ghost rule is two-sided, matching the diff's own coarse branch: a removal is not shown when its own token count passes MAX_LCS_TOKENS or when the added range starting at the same offset passes it (DEF-HILITE-11); the added text is still marked and the tab cue fires
   - mechanism: 2026-09-04T23:59:23Z @kj a removal longer than the diff's token bound MAX_LCS_TOKENS (1000 tokens, the coarse branch) is not shown as a ghost; the added text is still marked and the tab cue fires
   - mechanism: 2026-09-04T17:46:56Z @kj editor: CodeMirror inline widget decoration rendering the removed text read-only; viewer: span.jp-AdvancedMd-removed inserted inside the block at the removal point; both removed on fade end; CSS sets only background-color and transition so code-block token colours show through
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-HILITE-21` **Highlights fade calmly** - HIGH; a highlight fades in over 300 ms and fades out over the configured duration, default 4 s, with CSS transitions and no layout jump when it leaves
+  - log: 2026-09-06T18:14:28Z @kj edited text
+  - log: 2026-09-06T18:14:38Z @kj closed
+- [x] `ACC-HILITE-21` **Highlights fade calmly** - HIGH; a highlight rises to its colour over 500 ms, holds it, and drains to the natural background over the last 750 ms of its life; both spans are constants of the extension, the configured duration, default 3 s, is the whole time the highlight is on screen after rising, and nothing jumps in the layout when it leaves
+  - evidence: 'rises, holds, then drains over the last part of its life without moving the text' in ui-tests/tests/live-view.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
+  - mechanism: 2026-09-06T20:24:51Z @kj the highlight rises over the fade-in, holds at full colour, then drains over the last 750 ms before the decorations are taken out; a re-render during the fade rebuilds every decoration, so each rebuilt one is given the life it has left, less the time a typing animation holds the fade-out paused
   - test: rewrite the file, sample the highlight opacity at 0, 2 and 5 s
   - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-HILITE-22` **Highlights follow the theme** - HIGH; the highlight colours come from the extension's CSS variables with light and dark defaults that keep the text readable in both JupyterLab themes
+  - log: 2026-09-06T16:54:27Z @kj edited text
+  - log: 2026-09-06T17:18:14Z @kj edited text
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-HILITE-22` **Highlights follow the theme** - HIGH; the highlight colours come from the extension's CSS variables with light and dark defaults that keep the text readable in both JupyterLab themes
+  - evidence: 'differ between the light and the dark theme and stay readable in both' in ui-tests/tests/live-view.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: switch theme to dark, rewrite the file, assert the highlight contrast against the text
-  - test-tags: MANUAL
+  - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-HILITE-23` **Highlights survive a re-render** - HIGH; a viewer re-render triggered within the fade window keeps the highlights and their remaining fade time
+  - log: 2026-09-06T20:24:51Z @kj edited test-tags (replaced)
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-HILITE-23` **Highlights survive a re-render** - HIGH; a viewer re-render triggered within the fade window keeps the highlights and their remaining fade time
+  - evidence: Unit 'carries the typing across a render nothing external caused' in `src/__tests__/controller.spec.ts` re-renders the same markup mid-fade and asserts the decorations are still present, the run continues rather than landing at once
   - mechanism: 2026-09-04T23:59:23Z @kj implemented as one held highlight group: the diff baseline is kept while a fade is pending, decorations re-created by a render during the hold skip their fade-in, and the fade restarts from full on every write
   - test: rewrite twice within 2 s, assert the first highlight is still visible after the second render
   - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-HILITE-24` **Highlights do not alter the document** - MEDIUM; highlight markup exists only in the DOM and editor decorations; the file on disk and the model text contain no highlight markup
+  - log: 2026-09-06T18:14:19Z @kj closed
+- [x] `ACC-HILITE-24` **Highlights do not alter the document** - MEDIUM; highlight markup exists only in the DOM and editor decorations; the file on disk and the model text contain no highlight markup
+  - evidence: 'leaves no highlight markup in the document text' in `src/__tests__/watcher.spec.ts`; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: after a highlight, read the model text and the file, assert no span or class text
   - test-tags: UNIT
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-HILITE-25` **Successive changes stack** - MEDIUM; a second external change during a fade adds its own highlights and each fades on its own timer
+  - log: 2026-09-06T22:05:03Z @kj closed
+- [x] `ACC-HILITE-25` **Successive changes stack** - MEDIUM; a second external change arriving during a fade adds its own highlights beside the ones already showing, and the whole group fades together once the last of them is complete, so a reader watching a burst sees everything that changed rather than the newest change alone
+  - evidence: unit 'keeps earlier changes highlighted while writes arrive faster than the fade' in `src/__tests__/controller.spec.ts`, which holds the baseline across the second write and asserts both changes carry decorations
   - mechanism: 2026-09-04T23:59:23Z @kj implemented without per-change timers: a second external change during a fade joins the held highlight and the whole group fades fadeDuration after the last change; per-group timers are not to be implemented (locked in adversarial review round 1)
-  - test: two rewrites 1 s apart, assert two highlight groups with different remaining fades
+  - test: rewrite the file twice a second apart, assert both changes are highlighted at once and that they leave together
   - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-HILITE-26` **Edge: change inside a code block** - MEDIUM; a change inside a fenced code block is highlighted without breaking the syntax colouring of the block
+  - log: 2026-09-06T18:14:59Z @kj edited text and test (replaced)
+  - log: 2026-09-06T18:14:59Z @kj closed
+- [x] `ACC-HILITE-26` **Edge: change inside a code block** - MEDIUM; a change inside a fenced code block is highlighted without breaking the syntax colouring of the block
+  - evidence: 'is highlighted while the colouring of the block survives' in ui-tests/tests/live-view.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: rewrite one line of a fenced block, assert the highlight and the token colours
   - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-HILITE-27` **Highlighting can be disabled** - LOW; a setting turns highlighting off while live updates and the tab cue keep working
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-HILITE-27` **Highlighting can be disabled** - LOW; a setting turns highlighting off while live updates and the tab cue keep working
+  - evidence: 'still updates the content but draws no decoration' in ui-tests/tests/live-view.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: disable highlighting, rewrite the file, assert updated text and no highlight class
   - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-HILITE-110` **An emptied document shows no ghost** - MEDIUM; MEDIUM; when a change leaves the rendered view holding no block at all there is no removal ghost, because the only place left would be a new direct child of the render root, which a sibling extension counts against the source block count; the tab cue is the record that the change happened; a render that still holds a block but no text does show the ghost, inside the first surviving block that is not a heading
+  - evidence: 'shows no ghost when the change left the render with no block', 'puts the ghost of all the text in the block that survived it' and 'passes over a heading when only headings and a block survived' in `src/__tests__/highlight.spec.ts`; removing the deferral fails the last two
+  - test: apply a change that empties the document, assert no decoration is created and no direct child is added to the render root, and that the tab carries the change marker
+  - test-tags: UNIT
+  - mechanism: 2026-09-06T21:33:25Z @kj decorate defers a ghost whose own text node is gone to the first surviving non-heading block, and drops it when no block survives
+  - log: 2026-09-06T21:33:25Z @kj added
+  - log: 2026-09-06T22:05:17Z @kj closed
 
 ## Tab title cue `CUE`
 
 Signalling on the document tab that new content arrived
 
-- [ ] `ACC-CUE-28` **Tab shows an updated state** - HIGH; when an external change is applied the document tab title gets a visible updated marker
+- [x] `ACC-CUE-28` **Tab shows an updated state** - HIGH; when an external change is applied the document tab carries a half-filled circle before its label, in the tab's own text colour, so a reader scanning the tab bar sees which document moved
+  - evidence: 'is a half-filled circle in the tab own text colour' in ui-tests/tests/tab-cue.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: rewrite the file, assert the tab carries the updated marker class
   - test-tags: UNIT, E2E
+  - mechanism: 2026-09-06T17:49:03Z @kj style/base.css writes the marker as a ::before on .lm-TabBar-tabLabel of a tab carrying jp-AdvancedMd-tabUpdated; the glyph is U+25D0 in currentColor, so a colour another extension gave the tab is untouched
   - mechanism: 2026-09-04T17:46:56Z @kj toggle widget.title.className through Lumino, styled with a coloured dot before the label; never inline styles on .lm-TabBar-tab, so tab-colouring extensions reconcile cleanly
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-CUE-29` **Cue clears on attention** - HIGH; the updated marker clears when the tab is activated and the user scrolls, clicks or types in it, and after the fade duration when the tab is already active
+  - log: 2026-09-06T17:49:03Z @kj edited text
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-CUE-29` **Cue clears on attention** - HIGH; the updated marker clears when the tab is activated and the user scrolls, clicks or types in it, and, when the tab is already the one in front, once the writer has been quiet for the settle period and a further fade duration has passed
+  - evidence: 'clears itself a fade duration after the change while the tab is in front', 'measures the period from the last change', 'keeps the marker while another tab is in front, until the reader acts' in ; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - mechanism: 2026-09-05T07:40:06Z @kj a wheel, pointer or key event on the preview clears the updated marker only; the blocked marker is not the reader's to clear because the change it reports is still on disk
   - test: rewrite while another tab is active, switch back, click in the document, assert the marker is gone
   - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-CUE-30` **Cue distinguishes conflict** - HIGH; a change held back or merged over user edits shows a distinct conflict marker with a tooltip naming the state
+  - log: 2026-09-06T21:33:31Z @kj edited text
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-CUE-30` **Cue distinguishes conflict** - HIGH; a change held back over unsaved edits shows a red square where the turning circle would be; the square stands still and nudges once every eight seconds, so the state differs by shape, by colour and by whether the tab moves continuously, and a tooltip names it
+  - evidence: 'names the held change on the tab and gives the caption back when it lands', 'names a missing file in words of its own', 'is a still red square with a tooltip, telling itself apart from the arriving circle' in ui-tests/tests/tab-cue.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
+  - mechanism: 2026-09-06T18:02:48Z @kj style/base.css gives the jp-AdvancedMd-tabBlocked marker the glyph U+25FC in the blocked colour and a keyframe whose motion occupies the first five percent of an eight-second cycle, a 400 ms nudge inside the 100 to 500 ms band Nielsen Norman Group reports as the useful range; a held change never progresses, so continuous motion would misreport it, and the rule is written after the arriving marker so a tab carrying both shows the blocked one
   - mechanism: 2026-09-05T07:40:06Z @kj the watcher keeps a change held back by unsaved edits and reports it once; the blocked marker stays through any interaction and ends when the change lands (document clean, applied, marker becomes updated) or when the document took it another way, a save that overwrote it or a reload that loaded it (unblocked signal, marker cleared)
   - test: produce an overlapping change, assert the conflict marker and tooltip text
   - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-CUE-31` **Cue shows a removed file** - MEDIUM; a file removed on disk shows a removed marker until the tab is closed or the file reappears
+  - log: 2026-09-06T17:49:03Z @kj edited text
+  - log: 2026-09-06T18:02:48Z @kj edited text
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-CUE-31` **Cue shows a removed file** - MEDIUM; a file removed on disk shows a removed marker until the tab is closed or the file reappears
+  - mechanism: 2026-09-07T01:31:54Z @kj a file deleted while its document is still opening is closed by JupyterLab itself with a load error, because the checkpoint it takes of a file it opens fails on the vanished file; no tab survives for the extension to mark, so the marker is unreachable in that window by the platform's own design
+  - evidence: Galata 'marks a deleted file and applies it once it is recreated' in ui-tests/tests/events.spec.ts deletes the file, asserts the marker appears, recreates it
   - test: delete the file, assert the removed marker; restore it, assert the marker clears
   - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-CUE-32` **Cue can be disabled** - LOW; a setting turns the tab cue off while live updates keep working
+  - log: 2026-09-06T18:14:20Z @kj closed
+- [x] `ACC-CUE-32` **Cue can be disabled** - LOW; a setting turns the tab cue off while live updates keep working
+  - evidence: 'still updates the content but marks no tab' in ui-tests/tests/live-view.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: disable the cue, rewrite the file, assert updated text and no marker
   - test-tags: E2E
   - log: 2026-09-04T17:46:56Z @kj added
-- [ ] `ACC-CUE-71` **Tab animates while changes are arriving** - HIGH; while external changes keep arriving the tab icon pulses, and once no change has arrived for a quiet period the icon stops and the static updated marker remains
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-CUE-71` **Tab animates while changes are arriving** - HIGH; the marker turns a quarter of a turn at a time for as long as the tab carries a change, and it turns faster while changes keep arriving than after the writer has gone quiet, so motion rather than colour draws the eye
+  - evidence: 'turns a quarter at a time, faster while changes keep arriving' in ui-tests/tests/tab-cue.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: rewrite the file every second for five seconds, assert the tab carries the active class during that time and loses it within a few seconds after the last write
   - test-tags: E2E
+  - mechanism: 2026-09-06T17:49:03Z @kj one keyframe rotating the ::before marker by a full turn in four steps; 2 s a turn with jp-AdvancedMd-tabUpdated alone, 0.8 s while jp-AdvancedMd-tabActive is also on the tab, which the controller keeps for a fixed quiet period of 3 s after the last change
+  - mechanism: 2026-09-06T17:31:24Z @kj the icon pulses while changes arrive and stops after a fixed quiet period of 3 s; the period no longer derives from the poll interval, which is now the fallback interval and would have held the pulse for 20 s
   - mechanism: 2026-09-04T22:42:07Z @kj each applied change sets an active class on the tab title and resets a quiet timer; the timer swaps the tab to the static updated state
   - log: 2026-09-04T22:42:07Z @kj added
-- [ ] `ACC-CUE-72` **Tab animation respects reduced motion** - MEDIUM; when the reader has asked the system for reduced motion, the tab icon does not animate and the static marker alone shows the change
-  - test: emulate prefers-reduced-motion, rewrite the file, assert no animation on the tab icon and the marker present
+  - log: 2026-09-06T17:49:03Z @kj edited text
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-CUE-72` **Tab animation respects reduced motion** - MEDIUM; when the reader has asked the system for reduced motion none of the three tab markers moves, and the static circle, square or cross alone shows the state
+  - evidence: 'stand still and keep their shapes' in ui-tests/tests/tab-cue.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
+  - mechanism: 2026-09-06T21:08:32Z @kj the reduced-motion query removes the animation from all three markers and leaves the shapes; together with the tabCue setting, which hides the marker altogether, these are the pause, stop or hide mechanisms WCAG 2.2.2 requires of moving content that starts on its own, runs beyond five seconds and sits beside the content being read
+  - test: emulate prefers-reduced-motion for a document taking changes, one holding a change over unsaved edits and one whose file is gone; assert each marker is present and carries no animation
   - test-tags: E2E
   - log: 2026-09-04T22:42:07Z @kj added
+  - log: 2026-09-06T17:49:03Z @kj edited text
+  - log: 2026-09-06T21:08:32Z @kj edited text
+  - log: 2026-09-06T21:08:32Z @kj edited test (replaced)
+  - log: 2026-09-06T22:05:04Z @kj closed
 
 ## Settings `CONFIG`
 
 User settings in schema/plugin.json
 
 - [x] `ACC-CONFIG-33` **Extension can be disabled** - HIGH; an enabled setting, default true, stops all watching, applying, highlighting and cues when false, without a restart
+  - related: DEF-CONFIG-23
   - evidence: Galata 'the extension turned off > does not update the preview at all' (18/18 on the installed build v0.6.8, logs/galata.log 2026-09-05); unit test 'a settings change during a fade ends the fade and the next change fades in' covers the controller side; DEF-CONFIG-2 closed on the same mechanism
+  - mechanism: 2026-09-07T03:39:23Z @kj the switch is tested in the one function that reads the file and writes the document, at entry and again after the read, so the event path, the refresh a marker write asks for, the check after the document loads and the check when a held change stops being blocked all obey it; turning the switch off also lets a held change go, so nothing waits behind it, and turning it back on reads the file and reports the change again
   - mechanism: 2026-09-05T16:05:16Z @kj schema key enabled (boolean, default true) read by readSettings; the controller passes it to FileWatcher.enabled, which stops or starts the Lumino poll without a restart, and clears decorations and tab marker when false; nothing is watched, applied, highlighted or cued until it is true again
   - test: set enabled false, rewrite the file, assert no update; set true, assert updates resume
   - test-tags: UNIT, E2E
   - log: 2026-09-04T17:47:05Z @kj added
   - log: 2026-09-05T16:05:16Z @kj closed
-- [ ] `ACC-CONFIG-34` **Settings are validated** - MEDIUM; the schema declares pollInterval, fadeDuration, highlight, tabCue and enabled with types, defaults and minimums, so an invalid value is rejected by the settings editor
-  - test: enter pollInterval 0 in the settings editor, assert the validation error
-  - test-tags: MANUAL
+- [x] `ACC-CONFIG-34` **Settings are validated** - MEDIUM; the schema declares pollInterval, fadeDuration, highlight, tabCue and enabled with types, defaults and minimums, so an invalid value is rejected by the settings editor
+  - evidence: unit test 'gives every numeric setting the lowest value the code accepts' in `src/__tests__/schema.spec.ts`, which reads the minimums from src/index.ts rather than restating them, with the three other schema tests; and the two settings-editor tests in ui-tests/tests/settings.spec.ts, which fail when the declared minimum is removed from the schema the lab serves; green on build 0.6.19
+  - test: enter pollInterval 0 in the settings editor, assert the error under the field and that the stored setting keeps its value
+  - test-tags: UNIT, E2E
   - log: 2026-09-04T17:47:05Z @kj added
+  - log: 2026-09-06T22:05:03Z @kj closed
+  - log: 2026-09-06T22:05:17Z @kj edited test (replaced)
+  - log: 2026-09-06T22:05:17Z @kj edited test-tags (replaced)
 
 ## Sibling extension compatibility `COMPAT`
 
 The live update keeps the other Stellars Markdown extensions working; survey of 2026-09-04 in the journal
 
-- [ ] `ACC-COMPAT-35` **GitHub alerts re-render** - CRITICAL; an external change inside or around a GitHub alert block renders the alert through the standard IMarkdownParser path; no render path bypasses the parser
+- [x] `ACC-COMPAT-35` **GitHub alerts re-render** - CRITICAL; an external change inside or around a GitHub alert block renders the alert through the standard IMarkdownParser path; no render path bypasses the parser
+  - evidence: 'renders a changed alert block through the Markdown parser again' in ui-tests/tests/siblings.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: rewrite a > [!NOTE] block from a terminal, assert .markdown-alert in the rendered view
   - test-tags: E2E
   - log: 2026-09-04T17:47:05Z @kj added
-- [ ] `ACC-COMPAT-36` **Edit-at-content jump keeps working** - HIGH; after a live update the rendered view has the same number of direct children as the source has blocks, so the edit-at-content context menu still opens the editor at the clicked block
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-COMPAT-36` **Edit-at-content jump keeps working** - HIGH; after a live update the rendered view has the same number of direct children as the source has blocks, so the edit-at-content context menu still opens the editor at the clicked block
+  - evidence: Galata 'adds no direct child to the render root' in ui-tests/tests/live-view.spec.ts counts the render root's direct children before the write and asserts exactly one more afterwards, the one block the rewrite appended
   - test: rewrite the file, right-click a paragraph, choose edit at content, assert the editor opens at that line
   - test-tags: E2E
   - mechanism: 2026-09-04T17:47:06Z @kj highlight spans are inline inside existing blocks; no banner, wrapper or summary node is added to .jp-RenderedMarkdown
   - log: 2026-09-04T17:47:06Z @kj added
-- [ ] `ACC-COMPAT-37` **No anchor jump on live render** - HIGH; with a heading anchor in the URL hash, a live update does not scroll the view back to that anchor
+  - log: 2026-09-06T18:14:20Z @kj closed
+- [x] `ACC-COMPAT-37` **No anchor jump on live render** - HIGH; with a heading anchor in the URL hash, a live update does not scroll the view back to that anchor
+  - evidence: Galata 'stays where the reader scrolled to when another extension scrolls to the URL hash' in ui-tests/tests/live-view.spec.ts installs the table-of-contents fix's own motion - a scroll to the heading 100 ms after every rendered signal, on the same element - scrolls the reader away, applies an external change
   - test: navigate to #heading, scroll away, rewrite the file, assert scrollTop unchanged
   - test-tags: E2E
   - mechanism: 2026-09-05T07:40:06Z @kj handled in this extension: the controller's late scroll restore (150 ms after rendered) lands after the TOC fix's hash scroll (100 ms) and cancels it; a scroll during the restore that no wheel, pointer or key event preceded within 500 ms is another extension's and is not taken for the reader's, so the sibling needs no change
   - mechanism: 2026-09-04T17:47:06Z @kj the markdown viewer TOC fix scrolls to the hash on every rendered signal (its src/index.ts:193-198); that sibling is changed to scroll only when the hash changed since its last scroll
   - log: 2026-09-04T17:47:06Z @kj added
-- [ ] `ACC-COMPAT-38` **Local whole-document writes are not external** - HIGH; a setSource by another extension, such as markdown insert content numbering or TOC update, produces no highlight, no cue and no merge
+  - log: 2026-09-06T18:14:20Z @kj closed
+- [x] `ACC-COMPAT-38` **Local whole-document writes are not external** - HIGH; a setSource by another extension, such as markdown insert content numbering or TOC update, produces no highlight, no cue and no merge
+  - evidence: 'takes a whole-document write by another extension for local' in `src/__tests__/watcher.spec.ts`; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: run markdown-insert:update-numbering, assert no highlight class and no tab marker
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-04T17:47:06Z @kj external changes are recognised by disk last_modified, never by model contentChanged; the extension's own transaction origin marks the hunks to highlight
   - log: 2026-09-04T17:47:06Z @kj added
-- [ ] `ACC-COMPAT-39` **Export sees what the user sees** - MEDIUM; live updates are held while an export-markdown command is in flight, and an export of a document holding an unsaved merge exports the on-screen content
+  - log: 2026-09-06T22:05:03Z @kj closed
+- [-] `ACC-COMPAT-39` **Export sees what the user sees** - MEDIUM; live updates are held while an export-markdown command is in flight, and an export of a document holding an unsaved merge exports the on-screen content
   - test: start a PDF export of a 50-image file, rewrite the file during the export, assert the export completes with the pre-rewrite content and the update lands afterwards
   - test-tags: E2E
   - mechanism: 2026-09-04T17:47:06Z @kj commands.commandExecuted gates the apply step for export-markdown:*; the export extension reads the file from disk, so a merged document is saved before export or the export server accepts the in-memory source - a change to the export sibling
   - log: 2026-09-04T17:47:06Z @kj added
-- [ ] `ACC-COMPAT-40` **Refresh view does not discard merged edits** - MEDIUM; the refresh view command on a dirty Markdown document warns before reverting or delegates to the live-update merge
+  - log: 2026-09-06T16:01:41Z @kj rejected: superseded: block-until-clean leaves no unsaved merge to export; replaced by the save-before-export criterion
+- [x] `ACC-COMPAT-40` **Refresh view does not discard merged edits** - MEDIUM; the refresh view command on a dirty Markdown document warns before reverting or delegates to the live-update merge
+  - evidence: 'asks before it discards unsaved edits, and reverts only when told to' in ui-tests/tests/siblings.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: make an unsaved edit, run refresh view, assert a prompt or a merge, never a silent revert
   - test-tags: E2E
   - mechanism: 2026-09-04T17:47:06Z @kj change to the jupyterlab_refresh_view_extension sibling: its context.revert() at src/index.ts:155 prompts when the model is dirty
   - log: 2026-09-04T17:47:06Z @kj added
-- [ ] `ACC-COMPAT-41` **Tab colours survive the cue** - MEDIUM; the tab cue and the colourful tab extension coexist; the tab keeps its colour and the marker shows
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-COMPAT-41` **Tab colours survive the cue** - MEDIUM; the tab cue and the colourful tab extension coexist; the tab keeps its colour and the marker shows
+  - evidence: 'keeps the colour it gave the tab while the marker shows' in ui-tests/tests/siblings.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
   - test: with colourful tabs enabled, rewrite the file, assert both the colour and the marker
   - test-tags: E2E
   - log: 2026-09-04T17:47:06Z @kj added
-- [ ] `ACC-COMPAT-42` **Switch-tab scroll guard cooperates** - MEDIUM; a live update within 3 s of a tab activation neither fights nor is reverted by the switch-tab scrolling fix guard
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-COMPAT-42` **Switch-tab scroll guard cooperates** - MEDIUM; a live update within 3 s of a tab activation neither fights nor is reverted by the switch-tab scrolling fix guard
+  - evidence: two tests in ui-tests/tests/siblings.spec.ts, both needed: 'holds its scroll restore exactly as long as the sibling guard holds' for the settled position, which fails at line 762 with 1000 expected and 49 received when only the three second timer stands, and 'writes no scroll position of its own while the sibling guard holds' for the passivity, which fails when the guard attribute is never read; the settled position alone cannot tell a viewer that yields from one that does not, because the sibling's held position and the viewer's restore target are the same number, so passivity is proved by attributing each scroll write to the bundle whose stack made it; both green on build 0.6.19
   - test: switch to the tab, rewrite the file within 1 s, assert a single stable scroll position
   - test-tags: E2E
+  - mechanism: 2026-09-06T20:55:43Z @kj the switch-tab scrolling fix marks the widget it holds with data-jp-scroll-guard and clears it when it lets go; the viewer reads that attribute rather than assuming the sibling's window, staying passive only while the mark is there, and falls back to a 3 s timer only until the first mark has been seen in the lab
   - mechanism: 2026-09-04T17:47:06Z @kj change to the switch-tab scrolling fix sibling: expose a guard-active signal, and cover the rendered signal too, so one guard owns a widget at a time
   - log: 2026-09-04T17:47:06Z @kj added
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-COMPAT-107` **Export reads the text the user sees** - MEDIUM; the export-markdown sibling saves a dirty document before its server-side read of the file, so an export always carries the on-screen text; a clean document is exported as it is with no extra write
+  - evidence: 'saves a dirty document so the export carries the text on screen' in ui-tests/tests/siblings.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
+  - test: type in a Markdown document without saving, run the PDF export, assert the file on disk holds the typed text and the document is clean
+  - test-tags: E2E
+  - mechanism: 2026-09-06T16:01:41Z @kj jupyterlab_export_markdown_extension src/index.ts executor calls await context.save() when context.model.dirty before posting the path
+  - log: 2026-09-06T16:01:41Z @kj added
+  - log: 2026-09-06T22:05:04Z @kj closed
+- [x] `ACC-COMPAT-108` **Siblings tolerate the forced render** - HIGH; an applied change renders twice, once forced so the change is on screen within half a second and once by the viewer's own pending render; every sibling listening on the rendered signal runs twice per change and none of them misbehaves, in particular the table of contents fix does not scroll to an anchor on the second render
+  - evidence: 'runs every listener twice for one change without a sibling misbehaving' in ui-tests/tests/siblings.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
+  - test: apply an external change to a document with a heading anchor in the hash, count the sibling's anchor scrolls, assert two renders and no scroll
+  - test-tags: E2E
+  - mechanism: 2026-09-06T17:31:38Z @kj the controller calls widget.content.update() when the watcher reports an applied change; the viewer's own render timeout cannot be cancelled from outside, so the same text renders again about a second later
+  - log: 2026-09-06T17:31:38Z @kj added
+  - log: 2026-09-06T22:05:04Z @kj closed
 
 ## Comments `NOTES`
 
 Reader comments anchored to a block of text, stored in the Markdown file as HTML comments so a plain renderer ignores them
 
-- [ ] `ACC-NOTES-44` **Add a comment from a selection** - CRITICAL; selecting text in the rendered preview and choosing Add Comment from the context menu creates a comment anchored to that text
+- [x] `ACC-NOTES-44` **Add a comment from a selection** - CRITICAL; selecting text in the rendered preview and choosing Add Comment from the context menu creates a comment anchored to that text
+  - evidence: Galata 'ACC-NOTES-44 adds a note from a selection through the context menu' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: select a paragraph, right-click, choose Add Comment, type and confirm; assert the comment appears in the panel
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-45` **Menu entry appears only with a selection** - HIGH; the Add Comment context-menu entry is offered only when the pointer is over rendered Markdown and text is selected
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-45` **Menu entry appears only with a selection** - HIGH; the Add Comment context-menu entry is offered only when the pointer is over rendered Markdown and text is selected
+  - evidence: Galata 'ACC-NOTES-45 offers the marking entries only with a selection' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: right-click with no selection and assert the entry is hidden; a hidden Lumino item is still in the DOM, so assert hidden rather than absent
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-46` **Comment is stored in the Markdown file** - CRITICAL; a comment and its anchor are written into the document as HTML comments, so the file alone carries them and no sidecar store is needed
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-46` **Comment is stored in the Markdown file** - CRITICAL; a comment and its anchor are written into the document as HTML comments, so the file alone carries them and no sidecar store is needed
+  - evidence: Galata 'ACC-NOTES-46 writes the note and both markers into the file' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: add a comment, read the file from disk, assert the comment text and both markers are present
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-04T22:37:49Z @kj an opening marker before the anchored block and a closing marker after it, both carrying the same identifier, with the comment body in the opening marker
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-47` **Anchor markers share one identifier** - CRITICAL; the opening and closing marker of one comment carry the same identifier, and that identifier appears exactly twice in the document
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-47` **Anchor markers share one identifier** - CRITICAL; the opening and closing marker of one comment carry the same identifier, and that identifier appears exactly twice in the document
+  - evidence: Galata 'ACC-NOTES-47 gives each mark an identifier that occurs exactly twice' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: add three comments, assert each identifier occurs exactly twice and no identifier is shared between comments
   - test-tags: UNIT
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-48` **Identifier is a UUID** - HIGH; each comment identifier is a version 4 UUID, so identifiers stay unique across documents, sessions and authors with no coordination
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-48` **Identifier is a UUID** - HIGH; each comment identifier is a version 4 UUID, so identifiers stay unique across documents, sessions and authors with no coordination
+  - evidence: Galata 'ACC-NOTES-48 writes a version 4 UUID as the identifier' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: add a comment, assert the identifier matches the version 4 UUID form
   - test-tags: UNIT
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-49` **Markers are invisible without the extension** - CRITICAL; a document carrying comments renders identically to the same document without them in any standard Markdown renderer
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-49` **Markers are invisible without the extension** - CRITICAL; a document carrying comments renders identically to the same document without them in any standard Markdown renderer
+  - evidence: Galata 'ACC-NOTES-49 renders a marked document as the plain one' (notes turned off) in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: render a commented document with the extension disabled, assert no marker text is visible and the rendered text equals the uncommented render
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-50` **Panel opens on the first comment** - HIGH; adding a comment to a document that had none opens the comments panel without further action
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-50` **Panel opens on the first comment** - HIGH; adding a comment to a document that had none opens the comments panel without further action
+  - evidence: Galata 'ACC-NOTES-50 opens the panel on the first mark' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: add the first comment, assert the panel becomes visible
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-51` **Panel opens for a document that already has comments** - HIGH; opening a document that already carries comments shows the panel listing them
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-51` **Panel opens for a document that already has comments** - HIGH; opening a document that already carries comments shows the panel listing them
+  - evidence: Galata 'ACC-NOTES-51 opens the panel listing the marks it holds' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: open a document holding two comments, assert the panel is visible and lists both
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-52` **Panel can be closed and reopened** - HIGH; the panel carries a visible control that closes it, and a visible control reopens it with no comment lost
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-52` **Panel can be closed and reopened** - HIGH; the panel carries a visible control that closes it, and a visible control reopens it with no comment lost
+  - evidence: Galata 'ACC-NOTES-52 closes the panel and brings it back with no mark lost' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: close the panel, assert it is hidden and the reopen control visible; reopen and assert the same comments are listed
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-53` **Panel is a narrow strip beside the document** - MEDIUM; the panel occupies a narrow column on the right of the preview and the document keeps the remaining width, with no overlap
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-53` **Panel is a narrow strip beside the document** - MEDIUM; the panel occupies a narrow column on the right of the preview and the document keeps the remaining width, with no overlap
+  - evidence: Galata 'ACC-NOTES-53 is a narrow strip beside the preview with no overlap' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: open the panel, assert the rendered Markdown and the panel do not overlap and the panel is the narrower of the two
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-54` **Comments expand and collapse** - MEDIUM; each comment shows a short form in the panel and expands to its full text, independently of the others
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-54` **Comments expand and collapse** - MEDIUM; each comment shows a short form in the panel and expands to its full text, independently of the others
+  - evidence: Galata 'ACC-NOTES-54 shows a note collapsed and expands it whole' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: add a long comment, assert the panel shows it collapsed, expand it and assert the full text
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-55` **Selecting a comment reveals its text** - HIGH; choosing a comment in the panel scrolls the preview so the text it is anchored to is in view
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-55` **Selecting a comment reveals its text** - HIGH; choosing a comment in the panel scrolls the preview so the text it is anchored to is in view
+  - evidence: Galata 'ACC-NOTES-55 scrolls the preview to the passage of the chosen mark' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: add a comment near the end of a long document, scroll to the top, select the comment, assert the anchored text is in the viewport
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-56` **Commented text is marked in the document** - HIGH; text carrying a comment is visibly marked in the rendered preview, so a reader scrolling the document sees which passages have comments
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-56` **Commented text is marked in the document** - HIGH; text carrying a comment is visibly marked in the rendered preview, so a reader scrolling the document sees which passages have comments
+  - evidence: Galata 'ACC-NOTES-56 marks every commented passage in the rendered view' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: scroll through a document with three comments, assert each anchored passage carries the marker
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-57` **Comment can be removed** - MEDIUM; a comment can be deleted from the panel, which removes both of its markers and leaves the anchored text unchanged
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-57` **Comment can be removed** - MEDIUM; a comment can be deleted from the panel, which removes both of its markers and leaves the anchored text unchanged
+  - evidence: Galata 'ACC-NOTES-57 removes both markers and leaves the text' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: add a comment, delete it, assert the file holds neither marker and the text is unchanged
   - test-tags: E2E
   - log: 2026-09-04T22:37:49Z @kj added
-- [ ] `ACC-NOTES-58` **Comments survive an external rewrite** - HIGH; a live update that does not touch a commented passage leaves that comment anchored and listed
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-58` **Comments survive an external rewrite** - HIGH; a live update that does not touch a commented passage leaves that comment anchored and listed
+  - evidence: Galata 'ACC-NOTES-58 keeps a mark anchored through a change elsewhere' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: add a comment to paragraph one, rewrite paragraph three on disk, assert the comment is still anchored to paragraph one
   - test-tags: E2E
   - log: 2026-09-04T22:37:50Z @kj added
-- [ ] `ACC-NOTES-59` **Edge: anchor destroyed by an external rewrite** - MEDIUM; when an external rewrite removes one or both markers, the comment is listed as unanchored rather than dropped silently and the panel says so
+  - log: 2026-09-07T00:39:23Z @kj closed
+- [x] `ACC-NOTES-59` **Edge: anchor destroyed by an external rewrite** - MEDIUM; when an external rewrite removes one or both markers, the comment is listed as unanchored rather than dropped silently and the panel says so
+  - evidence: Galata 'ACC-NOTES-59 lists a mark whose markers a rewrite removed' in ui-tests/tests/notes.spec.ts, now the single-mark case the criterion describes; it fails when the panel-state fix is reverted in the installed bundle while both controls pass; green on build 0.6.21 with Galata 86 of 86
+  - blocked-by: DEF-NOTES-16
   - test: add a comment, rewrite the file on disk without its markers, assert the comment is shown unanchored
   - test-tags: E2E
   - log: 2026-09-04T22:37:50Z @kj added
-- [ ] `ACC-NOTES-60` **Edge: selection spanning several blocks** - MEDIUM; a selection crossing block boundaries anchors the comment to the whole run of blocks it covers, with the markers placed outside them
+  - log: 2026-09-07T01:31:53Z @kj closed
+- [x] `ACC-NOTES-60` **Edge: selection spanning several blocks** - MEDIUM; a selection crossing block boundaries anchors the comment to the whole run of blocks it covers, with the markers placed outside them
+  - evidence: Galata 'ACC-NOTES-60 marks a selection that crosses a block boundary' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: select from the middle of one paragraph to the middle of the next, add a comment, assert both paragraphs are marked
   - test-tags: E2E
   - log: 2026-09-04T22:37:50Z @kj added
-- [ ] `ACC-NOTES-61` **Edge: overlapping comments** - MEDIUM; two comments whose anchored passages overlap are both kept, both listed and both marked, and neither corrupts the other's markers
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-61` **Edge: overlapping comments** - MEDIUM; two comments whose anchored passages overlap are both kept, both listed and both marked, and neither corrupts the other's markers
+  - evidence: Galata 'ACC-NOTES-61 keeps two overlapping marks and all four markers' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: comment on paragraphs one and two, then on paragraphs two and three, assert both are listed and all four markers intact
   - test-tags: UNIT, E2E
   - log: 2026-09-04T22:37:50Z @kj added
-- [ ] `ACC-NOTES-62` **Edge: empty comment is refused** - MEDIUM; confirming a comment with no text makes no change to the document
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [-] `ACC-NOTES-62` **Edge: empty comment is refused** - MEDIUM; confirming a comment with no text makes no change to the document
   - test: open the comment entry, confirm an empty body, assert the file is unchanged
   - test-tags: E2E
   - log: 2026-09-04T22:37:50Z @kj added
-- [ ] `ACC-NOTES-63` **Comments can be turned off** - LOW; a setting hides the panel, the marks and the context-menu entry, and leaves existing markers in the document untouched
+  - log: 2026-09-06T15:41:20Z @kj rejected: superseded by the mark-first model: an empty note on a selection is a bare mark, see the criterion 'Empty note leaves a bare mark'
+- [x] `ACC-NOTES-63` **Comments can be turned off** - LOW; a setting hides the panel, the marks and the context-menu entry, and leaves existing markers in the document untouched
+  - evidence: Galata 'ACC-NOTES-63 hides the panel, the marks and the menu entries' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: disable comments, assert no panel, no marks and no menu entry, and that the file still holds its markers
   - test-tags: E2E
   - log: 2026-09-04T22:37:50Z @kj added
-- [ ] `ACC-NOTES-64` **Panel is shown and hidden from the context menu** - HIGH; the context menu in the rendered preview offers showing and hiding the comments panel, whether or not the document has comments
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-64` **Panel is shown and hidden from the context menu** - HIGH; the context menu in the rendered preview offers showing and hiding the comments panel, whether or not the document has comments
+  - evidence: Galata 'ACC-NOTES-64 shows and hides the panel from the context menu' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: right-click with the panel open, choose Hide Comments, assert it is hidden; right-click again and choose Show Comments
   - test-tags: E2E
   - log: 2026-09-04T22:39:35Z @kj added
-- [ ] `ACC-NOTES-65` **Panel has three states** - HIGH; the panel is expanded, minimap or hidden; expanded shows comment text, minimap shows only where comments sit in the document, hidden shows nothing
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-65` **Panel has three states** - HIGH; the panel is expanded, minimap or hidden; expanded shows comment text, minimap shows only where comments sit in the document, hidden shows nothing
+  - evidence: Galata 'ACC-NOTES-65 shows text, then ticks, then nothing' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: cycle the three states from the context menu and assert what each shows
   - test-tags: E2E
   - log: 2026-09-04T22:39:35Z @kj added
-- [ ] `ACC-NOTES-66` **Panel state is stored in the document** - HIGH; the panel state is written into the Markdown file in a settings HTML comment, so the document reopens the way it was left
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-66` **Panel state is stored in the document** - HIGH; the panel state is written into the Markdown file in a settings HTML comment, so the document reopens the way it was left
+  - evidence: Galata 'ACC-NOTES-66 reopens the document in the state it was left' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: set the panel to minimap, close and reopen the document, assert it opens in minimap
   - test-tags: E2E
   - mechanism: 2026-09-04T22:39:35Z @kj one settings marker per document, distinct from the comment anchors, holding the extension's per-document state
   - log: 2026-09-04T22:39:35Z @kj added
-- [ ] `ACC-NOTES-67` **Settings marker is rewritten whole** - CRITICAL; changing any stored setting replaces the entire settings marker, so a key this extension no longer writes disappears from the document rather than accumulating
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-67` **Settings marker is rewritten whole** - CRITICAL; changing any stored setting replaces the entire settings marker, so a key this extension no longer writes disappears from the document rather than accumulating
+  - evidence: Galata 'ACC-NOTES-67 replaces the whole settings marker, obsolete keys and all' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: hand-write a settings marker carrying an obsolete key, change the panel state, assert the obsolete key is gone
   - test-tags: UNIT, E2E
   - log: 2026-09-04T22:39:35Z @kj added
-- [ ] `ACC-NOTES-68` **There is exactly one settings marker** - MEDIUM; a document holds at most one settings marker whatever the sequence of changes, and a document that had none gains one only when a setting is first stored
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-68` **There is exactly one settings marker** - MEDIUM; a document holds at most one settings marker whatever the sequence of changes, and a document that had none gains one only when a setting is first stored
+  - evidence: Galata asserted inside 'ACC-NOTES-65 shows text, then ticks, then nothing' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: change the panel state three times, assert the settings marker occurs once
   - test-tags: UNIT
   - log: 2026-09-04T22:39:36Z @kj added
-- [ ] `ACC-NOTES-69` **Edge: malformed settings marker** - MEDIUM; a settings marker that cannot be read is ignored, the panel falls back to its default state, and the marker is replaced on the next change rather than left broken
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-69` **Edge: malformed settings marker** - MEDIUM; a settings marker that cannot be read is ignored, the panel falls back to its default state, and the marker is replaced on the next change rather than left broken
+  - evidence: Galata 'ACC-NOTES-69 ignores a settings marker it cannot read' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: hand-write a settings marker with invalid content, open the document, assert the default state and no error dialog
   - test-tags: UNIT, E2E
   - log: 2026-09-04T22:39:36Z @kj added
-- [ ] `ACC-NOTES-70` **Storing a setting does not disturb the reader** - MEDIUM; writing the settings marker leaves the rendered text unchanged and does not scroll the preview
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-70` **Storing a setting does not disturb the reader** - MEDIUM; writing the settings marker leaves the rendered text unchanged and does not scroll the preview
+  - evidence: Galata 'ACC-NOTES-70 leaves the text and the scroll where they were' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: scroll to the middle, change the panel state, assert the scroll position and rendered text are unchanged
   - test-tags: E2E
   - log: 2026-09-04T22:39:36Z @kj added
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-95` **A mark exists without a note** - CRITICAL; selecting text in the rendered preview and choosing Mark writes the marker pair around it with no note, the Kindle model: mark first, note second; the panel lists the bare mark by its quoted passage
+  - evidence: Galata 'ACC-NOTES-95 writes a bare mark with no note line' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: select a sentence, choose Mark, read the file, assert both markers with no note between the identifier and the marker end; assert the panel lists the passage
+  - test-tags: UNIT, E2E
+  - mechanism: 2026-09-06T15:44:03Z @kj opening marker <!-- mark:<uuid> <type> <key>=<value>... --> before the passage and <!-- /mark:<uuid> --> after it; the type token follows the id, note today; attributes are key=value pairs after the type, colour among them; note lines inside the opening marker are @<author> <ISO stamp>: <text>, one per entry, so a reply is a further line and the thread reads as plain text
+  - mechanism: 2026-09-06T15:41:20Z @kj opening marker <!-- mark:<uuid> <colour> --> before the passage and <!-- /mark:<uuid> --> after it; a note is a line inside the opening marker of the form @<author> <ISO stamp>: <text>, one line per entry, so a reply is a further line and the whole thread reads as plain text
+  - log: 2026-09-06T15:41:20Z @kj added
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-96` **Note is added to an existing mark** - CRITICAL; choosing a mark in the panel or clicking the marked passage opens the note entry, and confirming rewrites the opening marker with the note line; the closing marker and the passage are untouched
+  - evidence: Galata 'ACC-NOTES-96 adds a note from the marked passage and leaves it whole' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: mark a sentence, add a note from the panel, read the file, assert the note line inside the opening marker and the passage byte-identical
+  - test-tags: UNIT, E2E
+  - log: 2026-09-06T15:41:20Z @kj added
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-97` **Empty note leaves a bare mark** - MEDIUM; confirming an empty note on a mark keeps the mark and writes no note line; the document changes only by the markers already present
+  - evidence: Galata 'ACC-NOTES-97 writes no note line when the entry is confirmed empty' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: mark a sentence, open the note entry, confirm empty, assert the opening marker carries no note line
+  - test-tags: E2E
+  - log: 2026-09-06T15:41:20Z @kj added
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-98` **Mark colours** - MEDIUM; a mark has one of four colours, yellow, blue, pink and orange as on a Kindle, chosen when marking and changeable from the panel; the colour is stored in the opening marker and the rendered highlight uses it; none of the four resembles the change green or red
+  - evidence: Galata 'ACC-NOTES-98 writes each colour into the marker and paints it' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: mark with each colour, assert the colour token in the marker and the matching background on the passage
+  - test-tags: UNIT, E2E
+  - log: 2026-09-06T15:41:20Z @kj added
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-99` **A reply written by another author shows in the thread** - HIGH; a note line added to the opening marker by another author, an agent rewriting the file included, shows under the earlier lines in the panel with its author and time, so the file is the whole conversation and an agent answers by editing it
+  - evidence: Galata 'ACC-NOTES-99 shows a note another author added to the file' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: mark and note, rewrite the file on disk with a second note line @agent, assert the panel shows both entries in order
+  - test-tags: UNIT, E2E
+  - log: 2026-09-06T15:41:20Z @kj added
+  - log: 2026-09-07T00:39:24Z @kj closed
+- [x] `ACC-NOTES-100` **Writing a marker saves the document** - CRITICAL; a mark written while a change is arriving neither loses the change nor raises a dialog: the change on disk is applied first, then the markers are written into the document, and the document is saved - except where it already held the reader's own unsaved edits, which are never saved on their behalf; there the markers are written into the document and reach disk with the reader's next save
+  - evidence: Galata 'ACC-NOTES-100 saves the mark and a change written a moment before' and 'ACC-NOTES-100 applies the change, marks, and saves without a dialog' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: write the file externally, then mark a sentence before the poll; assert the external change is applied, the save succeeds without a dialog and the file holds both
+  - test-tags: UNIT, E2E
+  - log: 2026-09-06T15:41:20Z @kj added
+  - log: 2026-09-07T00:39:25Z @kj closed
+  - log: 2026-09-07T03:39:23Z @kj edited text
+- [x] `ACC-NOTES-101` **Markers never break Markdown syntax** - HIGH; markers are placed at word boundaries inside a block or at block boundaries around a run of blocks, never inside a fenced or indented code block, a heading, a link or an emphasis span; a selection that starts or ends inside one of these is widened to its boundary
+  - evidence: Galata 'ACC-NOTES-101 keeps a heading whole when the selection starts inside it' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: select text that starts inside a heading and ends in the paragraph below, assert the heading line is unchanged, the opening marker sits alone on a line before it, and the closing marker is inline in the paragraph
+  - test-tags: UNIT, E2E
+  - log: 2026-09-06T15:41:20Z @kj added
+  - log: 2026-09-07T00:38:59Z @kj edited test (replaced)
+  - log: 2026-09-07T00:39:25Z @kj closed
+- [x] `ACC-NOTES-102` **Mark carries a type** - HIGH; the token after the identifier in the opening marker is the mark type; note is the only type this version writes, and the type is what later versions extend; a mark of a type the extension does not know is preserved byte for byte, listed in the panel by its passage and type, and offered no editing
+  - evidence: Galata 'ACC-NOTES-102 lists an unknown type and offers it no editing' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: hand-write a mark of type task, open the document, assert it is listed with its type, that the note entry is not offered, and that a change to another mark leaves its marker unchanged
+  - test-tags: UNIT, E2E
+  - log: 2026-09-06T15:44:03Z @kj added
+  - log: 2026-09-07T00:39:25Z @kj closed
+- [x] `ACC-NOTES-103` **Mark carries attributes** - HIGH; after the type the opening marker holds any number of key=value attributes; the extension reads the ones it defines, colour today, and preserves every other attribute in its order and spelling whenever it rewrites the marker, so a design or an agent can attach data the extension does not yet interpret
+  - evidence: Galata 'ACC-NOTES-103 keeps unknown attributes in order when it rewrites' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: hand-write a mark with owner=agent and due=2026-09-30 after the colour, add a note to it, assert the rewritten marker still carries both attributes in order
+  - test-tags: UNIT, E2E
+  - mechanism: 2026-09-06T15:44:03Z @kj attribute grammar: key is [a-z][a-z0-9-]*, value is a bare token without whitespace or a double-quoted string; parsing stops at the first newline, the rest of the marker is note lines
+  - log: 2026-09-06T15:44:03Z @kj added
+  - log: 2026-09-07T00:39:25Z @kj closed
+- [x] `ACC-NOTES-104` **Every note line names its author** - HIGH; the @ token that opens a note line is the handle of whoever wrote that line; the extension writes the JupyterLab user identity, the hub login name where there is one, and reader where there is none; an agent writes its own handle, claude or codex; a line inside the marker that does not start with @ continues the entry above it, so a note can span lines
+  - evidence: Galata 'ACC-NOTES-104 reads a two-line entry as one note under its author' and 'ACC-NOTES-104 signs a note line with the identity username' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: add a note while logged in as kj, assert the line opens with @kj; hand-write a two-line entry from @claude and assert the panel shows one entry with both lines under that author
+  - test-tags: UNIT, E2E
+  - mechanism: 2026-09-07T01:31:54Z @kj the author is the author setting when it is not empty; failing that the first of the identity username, its name and its display name that does not read as a generated identifier, meaning eight characters or more of hexadecimal digits and hyphens carrying at least one digit; failing all three, reader; whitespace and every other character a handle cannot carry becomes a hyphen, so a hub login name is written unchanged and a generated username falls through to the person's name
+  - mechanism: 2026-09-06T15:47:05Z @kj author from app.serviceManager.user identity.username, fallback reader; stamp is UTC ISO 8601 to the second
+  - log: 2026-09-06T15:47:05Z @kj added
+  - log: 2026-09-07T00:39:25Z @kj closed
+- [x] `ACC-NOTES-106` **Author setting overrides the identity** - MEDIUM; the author setting names the handle a note line opens with; where it is empty the identity username is written if it reads as a login name, and the name the lab reports for the reader otherwise
+  - evidence: Galata 'ACC-NOTES-106 signs with the default handle when nothing names the reader' and 'ACC-NOTES-106 signs note lines with the handle the setting names' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+  - test: set author to kj, add a note, assert the line opens with @kj; clear the setting on a lab without a hub, add a note, assert @reader
+  - test-tags: UNIT, E2E
+  - mechanism: 2026-09-06T15:55:35Z @kj readSettings reads author; the note writer takes author when non-empty, else identity.username unless identity.anonymous, else reader
+  - log: 2026-09-06T15:55:35Z @kj added
+  - log: 2026-09-07T00:39:25Z @kj closed
+  - log: 2026-09-07T01:31:54Z @kj edited text
+- [x] `ACC-NOTES-111` **Markers survive Windows line endings** - MEDIUM; MEDIUM; a marker whose attributes or note lines run over more than one line parses the same in a file written with carriage-return line endings as in one written without, leaving no carriage return inside an attribute value or a note line
+  - evidence: the CRLF round-trip test in `src/__tests__/marks.spec.ts`, written while building the grammar; it failed against the first implementation, which left a carriage return in the attribute value, and passes against the shipped parser
+  - test: parse a mark with a two-line note from a source using CRLF endings, assert the attribute values and the note text carry no carriage return
+  - test-tags: UNIT
+  - log: 2026-09-06T22:37:21Z @kj added
+  - log: 2026-09-06T22:37:27Z @kj closed
+- [x] `ACC-NOTES-112` **A mark with live updates off leaves the other process's work alone** - MEDIUM; MEDIUM; with live updates turned off and the file rewritten by another process, the save a marker write asks for meets JupyterLab's own File Changed dialog rather than overwriting that work, and reverting takes the document to the file on disk and drops the mark
+  - evidence: measured in the browser during the DEF-APPLY-22 round: one dialog open, the file on disk still holding the other process's text with no marker in it, and Revert taking the document to the file and dropping the mark; green on build 0.6.24 with Galata 94 of 94
+  - test: turn live updates off, rewrite the file externally, mark a passage, assert the dialog appears, the file on disk still holds the other process's text, and Revert takes the document to it
+  - test-tags: E2E
+  - mechanism: 2026-09-07T03:39:23Z @kj with the switch off nothing moves the document's record of the revision, so the platform's own conflict check sees a different file and asks
+  - log: 2026-09-07T03:39:23Z @kj added
+  - log: 2026-09-07T03:39:30Z @kj closed
 
 ## Change animation `ANIM`
 
@@ -424,16 +705,132 @@ How an applied change is played out in the rendered view over time, so the reade
   - evidence: unit tests 'leaves a decoration inside a heading complete' (animate.spec), 'never animates a heading' and 'shows a heading renamed by a write complete on the first frame' (controller.spec), 'moves a given ghost out of a heading like any other' (highlight.spec); the watcher suite is unchanged; 132/132 unit tests via make test, Galata 18/18 on the installed build v0.6.8 (logs/galata.log 2026-09-05), adversarial review (architect, ux-designer, bug-hunter) rounds 4 and 5 clean, SHIP
   - test: change a heading on disk: heading textContent equals the new text on the first frame and its id is unchanged; model text equals disk text immediately
   - test-tags: UNIT
-  - mechanism: 2026-09-05T15:00:13Z @kj ChangeAnimator.start skips every decoration inside a heading (element.closest on h1 to h6), so heading text is complete on the first frame; decorate places a removal ghost outside the heading (ghostAnchor), never inside it; the watcher's apply is unchanged and the model receives the whole write at once
+  - mechanism: 2026-09-06T16:24:18Z @kj schema/plugin.json key animationSpeed (integer, minimum 0, default 10, was 200 until 0.6.10) read by readSettings into ILiveViewSettings; the controller passes it to ChangeAnimator.start on every render and to the running animator on a settings change; 0 makes start record nothing so the DOM is the pre-animation one
   - mechanism: 2026-09-05T08:59:25Z @kj decorate marks spans inside heading elements as not animatable; the watcher's apply is unchanged
   - log: 2026-09-05T08:59:25Z @kj added
   - log: 2026-09-05T15:00:13Z @kj closed
   - log: 2026-09-05T15:01:12Z @kj reopened: reopened to correct the evidence line: a cited test name did not exist; evidence retired: unit tests 'leaves a heading's text complete on the first frame' (animate.spec) and 'moves a given ghost out of a heading like any other' (highlight.spec); the watcher suite unchanged (62 original tests still pass); 132/132 unit tests via make test, Galata 18/18 on the installed build v0.6.8 (logs/galata.log 2026-09-05), adversarial review (architect, ux-designer, bug-hunter) rounds 4 and 5 clean, SHIP
   - log: 2026-09-05T15:01:12Z @kj closed
 - [x] `ACC-ANIM-80` **Animation can be disabled** - MEDIUM; the setting animation, on by default, turns the typing and deletion animation off; off, a change lands at once as before the animation existed, while live updates, highlighting and the tab cue keep working; intent: a reader who wants the plain highlight keeps it with one switch, without touching the speed
-  - evidence: unit tests 'lands the change at once when the animation is turned off' and 'turning the animation off mid-typing completes every run on the next frame' in src/**tests**/controller.spec.ts (134 passing); Galata 'animation turned off > shows the whole change at once' in ui-tests/tests/live-view.spec.ts (18 passed on installed 0.6.8)
+  - evidence: unit tests 'lands the change at once when the animation is turned off' and 'turning the animation off mid-typing completes every run on the next frame' in `src/__tests__/controller.spec.ts` (134 passing); Galata 'animation turned off > shows the whole change at once' in ui-tests/tests/live-view.spec.ts (18 passed on installed 0.6.8)
   - test: set animation=false, rewrite the file: the added span is complete on the first frame and carries no typing class; set it back to true: the next write types
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-05T16:01:49Z @kj schema/plugin.json key animation (boolean, default true) read by readSettings; LiveViewController._speed returns 0 when it is false, the same path as reduced motion and animationSpeed 0, and a settings change re-applies the speed to the running animator
   - log: 2026-09-05T16:01:49Z @kj added
   - log: 2026-09-05T16:10:28Z @kj closed
+
+## Change detection by file events `EVENT`
+
+External changes reach the preview through operating-system file events pushed by the server, with a slow batched poll only where events cannot arrive
+
+- [x] `ACC-EVENT-81` **Server watches registered documents with file events** - CRITICAL; the server extension watches the directory of every registered document through the operating system's file-event API and reports a change to the file without reading or hashing it on a timer; intent: ten open documents must not cost ten reads a second
+  - evidence: pytest test_write_reports_one_change_within_200ms and test_status_reports_events in jupyterlab_advanced_markdown_viewer_extension/tests/test_routes.py: a registered path reports one change event within 200 ms of the write, with no read of the file on a timer; 21 passed
+  - test: register a path, write the file, assert one change event is reported within 200 ms and that no read of the file happened before the write
+  - test-tags: INTEGRATION, E2E
+  - mechanism: 2026-09-06T17:31:23Z @kj watchdog observer per distinct directory, inotify on Linux, FSEvents on macOS, ReadDirectoryChangesW on Windows; the watch is scheduled on the realpath of the directory and a path is refused when its abspath is not under the root, because watchdog sets IN_DONT_FOLLOW and a watch on a link path reports nothing; events matched to registered paths by name; the 200 ms bound is the 100 ms coalescing window plus the machine
+  - mechanism: 2026-09-06T15:40:43Z @kj watchdog observer per distinct directory, inotify on Linux, FSEvents on macOS, ReadDirectoryChangesW on Windows; events matched to registered paths by name
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T21:02:08Z @kj closed
+- [x] `ACC-EVENT-82` **One channel carries the events of every open document** - CRITICAL; all change events for all documents of one browser session travel over one WebSocket opened by the extension, and opening more documents adds registrations, not connections or timers; with the server side installed the only periodic traffic while nothing changes is one batched stat request per fallback interval covering every open document together, whatever their number
+  - evidence: Galata 'ten quiet previews > share one connection and send no request while nothing changes' in ui-tests/tests/events.spec.ts, with jest 'opens one authenticated connection for many registrations' in `src/__tests__/channel.spec.ts`
+  - test: open ten previews, count HTTP requests and WebSocket connections over ten quiet seconds; assert one connection and zero requests beyond the registrations
+  - test-tags: E2E
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T17:12:11Z @kj edited text
+  - log: 2026-09-06T17:31:38Z @kj edited text
+  - log: 2026-09-06T21:02:09Z @kj closed
+- [x] `ACC-EVENT-83` **Documents are registered on open and released on close** - HIGH; a preview registers its path when it opens and releases it when it closes; the server drops a watch when its last registration is gone, and a second browser tab or a second preview on the same path shares the existing watch
+  - evidence: Galata 'keeps the watch while a second preview holds it, and asks for it back after both are closed'; pytest test_two_subscribers_share_a_watch; jest 'tells the server about a path on its first registration and last release only'
+  - test: open two previews of one file in two tabs, close one, assert the watch is still held; close the other, assert the server holds no watch for the path
+  - test-tags: INTEGRATION, E2E
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T21:02:09Z @kj closed
+- [x] `ACC-EVENT-84` **A change is visible within half a second** - HIGH; an external write appears in the rendered view within 500 ms, against up to a full poll interval before; intent: the typing follows the agent at the agent's own pace
+  - evidence: Galata 'shows a change within half a second of the write' in ui-tests/tests/events.spec.ts, sampling the rendered text until the change is present
+  - mechanism: 2026-09-06T17:31:23Z @kj the coalescing window is 100 ms but is never held longer than 400 ms after its first event, so a writer that never pauses is delivered about every 400 ms instead of once when it stops; a streaming agent therefore reaches the view while it writes
+  - test: write the file, sample the rendered text every 50 ms, assert the change is present within 500 ms
+  - test-tags: E2E
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T21:02:09Z @kj closed
+- [x] `ACC-EVENT-85` **Burst writes are coalesced** - HIGH; an editor's truncate-then-write or an agent's two writes within 100 ms produce one read and one applied change, so the preview never shows a half-written file
+  - evidence: pytest test_burst_writes_coalesce and test_continuous_writer_is_reported_while_it_writes; Galata 'applies two writes fifty milliseconds apart as one change'
+  - mechanism: 2026-09-06T17:31:23Z @kj per-path 100 ms window restarted on every event, last kind wins, delete followed by create inside the window reports changed; the window is capped at 400 ms from its first event so a continuous writer is never starved
+  - test: write the file twice within 50 ms, assert one applied signal and that the rendered text equals the second write
+  - test-tags: UNIT, INTEGRATION
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T21:02:09Z @kj closed
+- [x] `ACC-EVENT-86` **Write by temporary file and rename is detected** - HIGH; a writer that creates a temporary file and renames it over the document, the atomic-replace pattern of most agentic tools and editors, triggers a change event like an in-place write
+  - evidence: pytest test_temp_file_and_rename; Galata 'applies a write made by temporary file and rename'
+  - test: write the new content to a temporary file in the same directory and rename it over the document; assert the change is applied
+  - test-tags: INTEGRATION, E2E
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T21:02:09Z @kj closed
+- [x] `ACC-EVENT-87` **Identical content applies nothing** - MEDIUM; an event whose read returns the content the document already holds, a touch or a rewrite with the same bytes, applies no change, raises no tab cue and creates no decoration
+  - evidence: Galata 'applies nothing for a touch or a rewrite with the same bytes': no applied change, no tab class, no decoration
+  - test: touch the file and rewrite it with the same bytes, assert no applied signal and no tab class
+  - test-tags: UNIT, INTEGRATION
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T21:02:09Z @kj closed
+- [x] `ACC-EVENT-88` **Fallback poll where events cannot arrive** - CRITICAL; network and bind-mounted filesystems raise no file events (NFS, SMB, Windows drives under WSL2, Docker volumes on macOS); one batched request per fallback interval sends every open path and the server answers with a stat per path, no hashing, no content; a path whose change the fallback found and the watcher did not report is marked eventless and polled at one second from then on
+  - evidence: jest 'falls back to the batched check when the server reports no events', 'sends one batched request per interval with every registered path' and 'marks a path whose change came without an event as eventless and checks it every second' in `src/__tests__/channel.spec.ts`; Galata 'a filesystem that raises no events > finds the change by the fallback and checks that path every second'
+  - test: stub the watcher to stay silent, write the file, assert the change arrives by the fallback within one interval and that the path is polled at one second afterwards
+  - test-tags: UNIT, INTEGRATION, E2E
+  - mechanism: 2026-09-06T17:31:23Z @kj one POST with the open paths per interval; server returns mtime and size per path from os.stat; the frontend reads content only for a path whose stat moved; a silent move marks the path eventless only after one second without a change message, so a message still in the coalescing window does not condemn the path
+  - mechanism: 2026-09-06T15:40:43Z @kj one POST with the open paths per interval; server returns mtime and size per path from os.stat; the frontend reads content only for a path whose stat moved
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T21:02:21Z @kj closed
+- [x] `ACC-EVENT-89` **The event channel reconnects and catches up** - HIGH; when the WebSocket drops the extension reconnects with backoff, re-registers its documents and performs one batched stat on reconnect, so a write during the gap is not lost
+  - evidence: jest 'reconnects with backoff, registers again and checks the files once' and 'catches up a write made while the socket was down after an earlier event'; Galata 'a dropped event connection > applies a write made while the connection was down' and the same test for a write after an earlier change, which fails against the pre-fix channel
+  - test: close the socket from the server side, write the file during the gap, assert the change is applied after reconnect
+  - test-tags: INTEGRATION, E2E
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T21:02:21Z @kj closed
+- [x] `ACC-EVENT-90` **Missing server side degrades to the poll** - HIGH; when the server extension is absent or the watchdog package is not installed the extension runs the batched fallback poll for every document at the fallback interval and logs one warning, without any other loss of function
+  - evidence: Galata 'the server extension absent > warns once and keeps the preview current through the contents API'; jest 'checks the files through the contents API when the server extension is missing' and 'warns once when the connection is refused again and again'; pytest test_without_watchdog covers the server installed without the watchdog package
+  - mechanism: 2026-09-07T04:37:00Z @kj where the server extension is absent the fallback compares through JupyterLab's own contents interface, and only for paths that interface can answer for: a document on another drive is left out, because a not-found answer there means both a missing file and a path the interface does not recognise
+  - mechanism: 2026-09-06T17:31:24Z @kj with the server side absent the status route answers 404 and the channel falls back to JupyterLab's own contents API, one metadata request per open path per fallback interval rather than one batched request, because the batched route belongs to the missing extension
+  - test: run the lab without the server extension enabled, assert one console warning and that a change is applied within the fallback interval
+  - test-tags: INTEGRATION, E2E
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T21:02:22Z @kj closed
+- [x] `ACC-EVENT-91` **Downstream behaviour is unchanged** - CRITICAL; an event-driven change is applied through the same path as a polled one: one tagged shared-model transaction, the unsaved-edits policy, the contents-model sync, the tab cue, highlight and animation; the source of the change is invisible past the watcher, and the APPLY, HILITE, CUE and ANIM suites pass unchanged except where a test recorded the poll's own latency
+  - evidence: the whole suite passes on the event-driven build with no test relaxed: jest 178 of 178 in 8 suites, pytest 21 of 21, Galata 44 of 44 against build 0.6.18; the APPLY, HILITE, CUE and ANIM tests are the same tests that ran against the poll
+  - test: run the existing APPLY, HILITE, CUE and ANIM suites against the event-driven build with no test changed
+  - test-tags: UNIT, E2E
+  - log: 2026-09-06T15:40:43Z @kj added
+  - log: 2026-09-06T17:31:38Z @kj edited text
+  - log: 2026-09-06T21:02:22Z @kj closed
+- [x] `ACC-EVENT-92` **Deleted and recreated file** - MEDIUM; deleting the document reports the blocked reason missing, and recreating it under the same name reports and applies the new content; the directory watch survives the file's absence
+  - evidence: pytest test_delete_then_recreate; Galata 'marks a deleted file and applies it once it is recreated', which asserts the missing marker and then the applied content
+  - test: delete the file, assert the blocked cue; recreate it with new content, assert the content is applied
+  - test-tags: INTEGRATION, E2E
+  - log: 2026-09-06T15:40:44Z @kj added
+  - log: 2026-09-06T21:02:22Z @kj closed
+- [x] `ACC-EVENT-93` **Watch cost scales with directories, not documents** - MEDIUM; fifty open previews in one directory hold one observer on the server, and the server keeps a registry keyed by path with a count per path
+  - evidence: pytest test_fifty_paths_share_one_watch: fifty registrations in one directory hold one observer and fifty registry entries, and releasing all of them leaves none
+  - test: register fifty paths in one directory, assert one observer and fifty registry entries; release all, assert zero
+  - test-tags: INTEGRATION
+  - log: 2026-09-06T15:40:44Z @kj added
+  - log: 2026-09-06T21:02:22Z @kj closed
+- [x] `ACC-EVENT-94` **Fallback interval setting** - MEDIUM; the setting pollInterval becomes the fallback interval in seconds, default 10, with its description saying that events are the primary path; an eventless path is checked every second, except at a fallback interval of one second where the main poll already serves it
+  - evidence: jest 'sends one batched request per interval with every registered path' at channel.interval 3 and 'leaves the one second check to the poll at a one second interval'; the schema default of 10 and its description are asserted by `src/__tests__/schema.spec.ts`
+  - test: set pollInterval to 3, stub the watcher silent, assert the batched request every 3 s
+  - test-tags: UNIT, E2E
+  - log: 2026-09-06T15:40:44Z @kj added
+  - log: 2026-09-06T17:31:38Z @kj edited text
+  - log: 2026-09-06T21:02:22Z @kj closed
+- [x] `ACC-EVENT-109` **A repointed symbolic link keeps raising events** - MEDIUM; MEDIUM; when a document is reached through a symbolic link and the link is pointed at a different file, the watch follows it and the document keeps raising change events without being reopened
+  - evidence: pytest test_retargeted_symlink_is_watched_again in jupyterlab_advanced_markdown_viewer_extension/tests/test_routes.py: it times out against the same source with the one-line _drop_watch fix reverted, and passes with it; the five watch-lifecycle tests were repeated five times with no flake
+  - test: register a path behind a symbolic link, repoint the link at another file, write to the new target and assert a change is reported
+  - test-tags: INTEGRATION
+  - mechanism: 2026-09-06T21:08:18Z @kj the directory handler filters events by the target it resolved when it was built, so dropping a watch also drops its handler and the next schedule builds one against the current target
+  - log: 2026-09-06T21:08:18Z @kj added
+  - log: 2026-09-06T21:08:23Z @kj closed
+- [x] `ACC-EVENT-113` **A change lost in the moments after a preview opens is applied at the next one** - LOW; LOW; a write that happens between a document being registered and its first fallback check, and whose file event is also lost, is not applied on its own; the next write moves the file's stamp off the recorded one and is reported, and the read then brings the whole current file, so the document catches up one write later; a deletion in that window is reported at once, because it cannot be caught up this way
+  - evidence: unit test 'applies a write lost before the first check at the write after it' in `src/__tests__/channel.spec.ts`; it states behaviour that already held, so it is pinned by mutation instead - removing the baseline branch turns its first assertion red and making the comparison always equal turns its second red
+  - related: DEF-DETECT-20
+  - test: register a path on a standing connection, change the file without an event, assert nothing is applied, then change it again and assert the current content arrives
+  - test-tags: UNIT
+  - mechanism: 2026-09-07T03:57:49Z @kj the fallback compares each reading against the last, so the lost write becomes the baseline; closing the gap would need either a request for every document opened, which the one-connection criterion forbids, or seeding the baseline from the read the watcher already makes, whose timestamps come from a different source and would report a false change
+  - log: 2026-09-07T03:57:49Z @kj added
+  - log: 2026-09-07T04:19:55Z @kj closed

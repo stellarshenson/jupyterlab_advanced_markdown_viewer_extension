@@ -12,16 +12,15 @@
 :root {
   --jp-AdvancedMd-added-bg: rgb(46 160 67 / 30%);
   --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 26%);
-  --jp-AdvancedMd-cue: rgb(46 160 67);
   --jp-AdvancedMd-cue-blocked: rgb(218 54 51);
-  --jp-AdvancedMd-fade-duration: 4000ms;
-  --jp-AdvancedMd-fade-in: 300ms;
+  --jp-AdvancedMd-fade-duration: 3000ms;
+  --jp-AdvancedMd-fade-in: 500ms;
+  --jp-AdvancedMd-fade-out: 750ms;
 }
 
 body[data-jp-theme-light='false'] {
   --jp-AdvancedMd-added-bg: rgb(63 185 80 / 26%);
   --jp-AdvancedMd-removed-bg: rgb(248 81 73 / 24%);
-  --jp-AdvancedMd-cue: rgb(63 185 80);
   --jp-AdvancedMd-cue-blocked: rgb(248 81 73);
 }
 
@@ -29,13 +28,29 @@ body[data-jp-theme-light='false'] {
   border-radius: 2px;
   animation:
     jp-AdvancedMd-fade-in var(--jp-AdvancedMd-fade-in) ease-out,
-    jp-AdvancedMd-fade-out var(--jp-AdvancedMd-fade-duration) ease-in
-      var(--jp-AdvancedMd-fade-in) forwards;
+    jp-AdvancedMd-fade-out var(--jp-AdvancedMd-fade-out) ease-in
+      max(
+        0ms,
+        calc(
+          var(--jp-AdvancedMd-fade-in) + var(--jp-AdvancedMd-fade-duration) -
+            var(--jp-AdvancedMd-fade-out)
+        )
+      )
+      forwards;
 }
 
 .jp-AdvancedMd-added {
   background-color: var(--jp-AdvancedMd-added-bg);
 }
+
+/*
+ | A decoration rises to its full colour, stands there, and leaves over the
+ | last part of its life. The fade duration is the whole time a decoration is
+ | on screen after it has risen, and the fade-out is the final stretch of it,
+ | so the reader sees a settled highlight rather than a colour draining from
+ | the first moment. The delay is clamped at zero for a fade duration shorter
+ | than the fade-out, where the colour then drains from the start.
+ */
 
 /*
  | Removed text is not part of the document, so its ghost fades to invisible
@@ -96,51 +111,336 @@ body[data-jp-theme-light='false'] {
 }
 
 /*
- | Tab marker. A dot before the label, so the tab's own colour and title stay
- | as whatever set them.
+ | Tab marker. A half-filled circle before the label, turning a quarter at a
+ | time, so a tab with a change on it moves in the corner of the eye and says
+ | so by motion rather than by a colour the reader has to be able to tell
+ | apart. It takes the tab's own text colour, so the tab keeps whatever colour
+ | another extension gave it, and the turn is faster while a writer is still
+ | working than once it has gone quiet.
  */
 
-.lm-TabBar-tab.jp-AdvancedMd-tabUpdated .lm-TabBar-tabLabel::before,
-.lm-TabBar-tab.jp-AdvancedMd-tabBlocked .lm-TabBar-tabLabel::before {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 5px;
-  vertical-align: middle;
-  border-radius: 50%;
-  content: '';
-}
-
 .lm-TabBar-tab.jp-AdvancedMd-tabUpdated .lm-TabBar-tabLabel::before {
-  background-color: var(--jp-AdvancedMd-cue);
+  display: inline-block;
+  margin-right: 5px;
+  content: '\25D0';
+  animation: jp-AdvancedMd-tab-turn 2s steps(4, end) infinite;
 }
 
-.lm-TabBar-tab.jp-AdvancedMd-tabBlocked .lm-TabBar-tabLabel::before {
-  background-color: var(--jp-AdvancedMd-cue-blocked);
+.lm-TabBar-tab.jp-AdvancedMd-tabActive .lm-TabBar-tabLabel::before {
+  animation-duration: 0.8s;
 }
 
 /*
- | While changes keep arriving, the tab icon pulses. It settles once the writer
- | goes quiet, leaving the static marker until the reader looks at the document.
+ | A held change is not arriving, it is waiting for the reader to save or
+ | revert. Nothing is progressing, so its marker does not move as though
+ | something were: it stands still and nudges once every eight seconds, the
+ | pattern applications use for a state that needs the reader rather than one
+ | that is working. Continuous motion of any kind, a pulse included, reads as
+ | progress and tires the eye over a long session. The square differs from the
+ | turning circle in shape, in colour and in whether the tab moves at all, so
+ | a reader who cannot tell the colours apart still has two of the three. It is
+ | written after the arriving marker, so a tab that is both shows the one that
+ | needs the reader.
  */
 
-.lm-TabBar-tab.jp-AdvancedMd-tabActive .lm-TabBar-tabIcon {
-  animation: jp-AdvancedMd-tab-pulse 1.2s ease-in-out infinite;
+.lm-TabBar-tab.jp-AdvancedMd-tabBlocked .lm-TabBar-tabLabel::before {
+  display: inline-block;
+  margin-right: 5px;
+  color: var(--jp-AdvancedMd-cue-blocked);
+  content: '\25FC';
+  animation: jp-AdvancedMd-tab-nudge 8s ease-in-out infinite;
 }
 
-@keyframes jp-AdvancedMd-tab-pulse {
+/*
+ | A file gone from disk is the third state, and it asks the reader for the
+ | opposite of what the held change asks for: restore or close the file rather
+ | than save or revert the document. It is a cross, so the three states differ
+ | by shape before they differ by anything else, and it never moves. The held
+ | change nudges because something is waiting to land as soon as the reader
+ | acts; nothing is waiting behind a file that is gone, so its marker reports
+ | and does not ask. Continuous motion would be the worst reading of all, a
+ | claim that the state is progressing. The three markers therefore carry
+ | three amounts of movement: continuous, occasional, none.
+ */
+
+.lm-TabBar-tab.jp-AdvancedMd-tabMissing .lm-TabBar-tabLabel::before {
+  display: inline-block;
+  margin-right: 5px;
+  color: var(--jp-AdvancedMd-cue-blocked);
+  content: '\2715';
+}
+
+@keyframes jp-AdvancedMd-tab-turn {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes jp-AdvancedMd-tab-nudge {
   0%,
+  5%,
   100% {
-    opacity: 1;
+    transform: translateX(0);
   }
 
+  1.2% {
+    transform: translateX(-2px);
+  }
+
+  2.6% {
+    transform: translateX(2px);
+  }
+
+  4% {
+    transform: translateX(-1px);
+  }
+}
+
+/*
+ | Every marker is named here, the still one included, so the rule covers the
+ | whole set whatever motion any of them is given later.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .lm-TabBar-tab.jp-AdvancedMd-tabUpdated .lm-TabBar-tabLabel::before,
+  .lm-TabBar-tab.jp-AdvancedMd-tabBlocked .lm-TabBar-tabLabel::before,
+  .lm-TabBar-tab.jp-AdvancedMd-tabMissing .lm-TabBar-tabLabel::before {
+    animation: none;
+  }
+}
+
+/*
+ | Marks, and the notes panel beside the preview.
+ |
+ | A mark decoration sets only a background colour and the transition into it,
+ | so the text of the document keeps its own colour and a mark inside a fenced
+ | block leaves the syntax colouring alone. The four colours are the set a
+ | Kindle offers. Each is a wash pale enough in the light theme, and dark
+ | enough in the dark theme, to read the text through, and each stands more
+ | than 20 CIE Lab units from the green and the red a change is highlighted in,
+ | so a mark is never read as a change that has just landed.
+ */
+
+.jp-AdvancedMd-mark {
+  transition: background-color 150ms ease-out;
+}
+
+.jp-AdvancedMd-mark-yellow {
+  background-color: rgb(255 224 0 / 42%);
+}
+
+.jp-AdvancedMd-mark-blue {
+  background-color: rgb(0 110 255 / 24%);
+}
+
+.jp-AdvancedMd-mark-pink {
+  background-color: rgb(255 40 180 / 30%);
+}
+
+.jp-AdvancedMd-mark-orange {
+  background-color: rgb(255 150 20 / 38%);
+}
+
+body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-yellow {
+  background-color: rgb(255 224 0 / 30%);
+}
+
+body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-blue {
+  background-color: rgb(56 139 253 / 36%);
+}
+
+body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-pink {
+  background-color: rgb(255 60 180 / 32%);
+}
+
+body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
+  background-color: rgb(255 150 20 / 32%);
+}
+
+/*
+ | A row selected in the panel scrolls its passage into view and flashes it
+ | twice, so the eye finds the passage after the scroll. The flash is a
+ | background colour, so nothing moves in the layout, and it is a neutral grey
+ | rather than a fifth colour, which would read as a mark of its own. The
+ | animation runs for as long as the panel keeps the class on the passage.
+ */
+
+.jp-AdvancedMd-markFlash {
+  animation: jp-AdvancedMd-mark-flash 900ms ease-in-out 2;
+}
+
+@keyframes jp-AdvancedMd-mark-flash {
   50% {
-    opacity: 0.3;
+    background-color: rgb(128 128 128 / 55%);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lm-TabBar-tab.jp-AdvancedMd-tabActive .lm-TabBar-tabIcon {
+  .jp-AdvancedMd-markFlash {
     animation: none;
   }
+}
+
+/*
+ | The panel is a column of a fixed width, expanded or minimap. The width is
+ | set here rather than by the layout, so the box that holds the preview and
+ | the panel side by side gives the panel exactly this and the rendered
+ | Markdown keeps the whole of the rest.
+ */
+
+.jp-AdvancedMd-notes {
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--jp-ui-font-color1);
+  font-size: var(--jp-ui-font-size1);
+  background-color: var(--jp-layout-color1);
+  border-left: 1px solid var(--jp-border-color2);
+}
+
+.jp-AdvancedMd-notes.jp-AdvancedMd-notes-minimap {
+  min-width: 28px;
+  max-width: 28px;
+}
+
+.jp-AdvancedMd-notesHeader {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--jp-border-color2);
+}
+
+.jp-AdvancedMd-notesCount {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesCount {
+  display: none;
+}
+
+.jp-AdvancedMd-notesClose,
+.jp-AdvancedMd-notesToggle {
+  padding: 0 4px;
+  color: inherit;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.jp-AdvancedMd-notesButton {
+  padding: 1px 6px;
+  color: inherit;
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--jp-border-color2);
+  border-radius: 2px;
+}
+
+.jp-AdvancedMd-notesList {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.jp-AdvancedMd-notesRow {
+  padding: 6px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--jp-border-color2);
+}
+
+.jp-AdvancedMd-notesRow-selected {
+  background-color: var(--jp-layout-color2);
+}
+
+.jp-AdvancedMd-notesHead {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+}
+
+.jp-AdvancedMd-notesSwatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.jp-AdvancedMd-notesPassage {
+  flex: 1 1 auto;
+  overflow: hidden;
+  font-style: italic;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.jp-AdvancedMd-notesState {
+  color: var(--jp-ui-font-color2);
+  font-size: var(--jp-ui-font-size0);
+}
+
+.jp-AdvancedMd-notesEntry {
+  margin-top: 4px;
+}
+
+.jp-AdvancedMd-notesAuthor {
+  font-weight: bold;
+}
+
+.jp-AdvancedMd-notesStamp {
+  margin-left: 4px;
+  color: var(--jp-ui-font-color2);
+  font-size: var(--jp-ui-font-size0);
+}
+
+.jp-AdvancedMd-notesText {
+  white-space: pre-wrap;
+}
+
+.jp-AdvancedMd-notesControls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.jp-AdvancedMd-notesDot {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  cursor: pointer;
+  border: 1px solid var(--jp-border-color1);
+  border-radius: 50%;
+}
+
+.jp-AdvancedMd-notesForm {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.jp-AdvancedMd-notesForm textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/*
+ | The minimap keeps only where the marks sit: one tick per mark, in the mark's
+ | own colour, at the mark's own place down the document.
+ */
+
+.jp-AdvancedMd-notesMap {
+  position: relative;
+  flex: 1 1 auto;
+}
+
+.jp-AdvancedMd-notesTick {
+  position: absolute;
+  right: 6px;
+  left: 6px;
+  height: 8px;
+  cursor: pointer;
+  border-radius: 2px;
 }

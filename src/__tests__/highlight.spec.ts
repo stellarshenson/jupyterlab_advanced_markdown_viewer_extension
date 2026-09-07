@@ -27,7 +27,20 @@ afterEach(() => {
 
 describe('captureText', () => {
   it('reads text in document order', () => {
-    const root = render('<p>alpha</p><p>beta</p>');
+    const root = render('<p>alpha</p>\n<p>beta</p>');
+    expect(captureText(root).text).toBe('alpha\nbeta');
+  });
+
+  it('breaks between two blocks the renderer left nothing between', () => {
+    // The renderer puts no whitespace between a fenced block and the
+    // paragraph after it. Without a break the two words abut and the diff
+    // reads them as one token.
+    const root = render('<pre><code>x = 1</code></pre><p>After.</p>');
+    expect(captureText(root).text).toBe('x = 1\nAfter.');
+  });
+
+  it('keeps the text of one block whole across the elements inside it', () => {
+    const root = render('<p>alpha<strong>beta</strong></p>');
     expect(captureText(root).text).toBe('alphabeta');
   });
 
@@ -52,7 +65,7 @@ describe('captureText', () => {
         '<foreignObject><div xmlns="http://www.w3.org/1999/xhtml">html</div>' +
         '</foreignObject></svg>'
     );
-    expect(captureText(root).text).toBe('beforehtml');
+    expect(captureText(root).text).toBe('before\nhtml');
   });
 
   it('skips decorations left from an earlier change', () => {
@@ -406,6 +419,72 @@ describe('decorate', () => {
     decorate(root, snapshot, ranges, 1000);
     expect(root.querySelector('pre code')).not.toBeNull();
     expect(root.textContent).toContain('let x =');
+  });
+
+  it('keeps a ghost inside a fenced block clear of the paragraph after it', () => {
+    // The rendered view of the document this stands in for holds no
+    // whitespace between the fenced block and the paragraph: the code element
+    // ends at 'second = 2' and the next text is 'After the block.'.
+    const root = render(
+      '<h1 id="Report">Report</h1><p>Before the block.</p>' +
+        '<pre><code class="language-python">first = 1\nsecond = 33</code></pre>' +
+        '<p>After the block.</p>'
+    );
+    const snapshot = captureText(root);
+    const previous = snapshot.text.replace('second = 33', 'second = 2');
+    const ranges = changeRanges(diffWords(previous, snapshot.text));
+    decorate(root, snapshot, ranges, 1000);
+    const texts = (selector: string) =>
+      Array.from(root.querySelectorAll(selector)).map(
+        element => element.textContent
+      );
+    expect(texts(`.${REMOVED_CLASS}`)).toEqual(['2']);
+    expect(texts(`.${ADDED_CLASS}`)).toEqual(['33']);
+    // The block reads as its own code for the whole fade.
+    expect(root.querySelector('code')?.textContent).toBe(
+      'first = 1\nsecond = 233'
+    );
+    expect(root.querySelector('p:last-of-type')?.textContent).toBe(
+      'After the block.'
+    );
+  });
+
+  it('shows no ghost when the change left the render with no block', () => {
+    // Nothing survived the change, so the only place a ghost could go is a new
+    // direct child of the render root, which another extension counts. The
+    // reader sees an empty page and the tab cue instead.
+    const root = render('');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('gone words here', snapshot.text));
+    expect(decorate(root, snapshot, ranges, 1000)).toEqual([]);
+    expect(root.childNodes.length).toBe(0);
+  });
+
+  it('puts the ghost of all the text in the block that survived it', () => {
+    const root = render('<p><img src="a.png"></p>');
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('gone words here', snapshot.text));
+    const created = decorate(root, snapshot, ranges, 1000);
+    expect(created.map(element => element.textContent)).toEqual([
+      'gone words here'
+    ]);
+    expect(created[0].parentElement).toBe(root.querySelector('p'));
+    expect(root.children.length).toBe(1);
+  });
+
+  it('passes over a heading when only headings and a block survived', () => {
+    const root = render(
+      '<h1 id="a"><img src="a.png"></h1><p><img src="b.png"></p>'
+    );
+    const snapshot = captureText(root);
+    const ranges = changeRanges(diffWords('gone words here', snapshot.text));
+    const created = decorate(root, snapshot, ranges, 1000);
+    expect(created.map(element => element.parentElement?.tagName)).toEqual([
+      'P'
+    ]);
+    const heading = root.querySelector('h1') as HTMLElement;
+    expect(heading.textContent).toBe('');
+    expect(heading.id).toBe('a');
   });
 });
 

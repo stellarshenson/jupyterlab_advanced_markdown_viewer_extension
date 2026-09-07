@@ -2,6 +2,35 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [0.6.28] - 2026-09-07
+
+### Added
+
+- Marks and notes kept in the Markdown file itself: select a passage in the rendered view and mark it in one of four colours, with notes attached to it. A mark is a pair of HTML comments around the passage, so any other renderer shows the document with no trace of it
+- A notes panel beside the preview listing the marks of the open document, each with its passage and its notes; a narrow strip of ticks instead, or hidden. The state is written into the file, so a document opens the way it was left
+- Settings `notes` (on by default) and `author`, the handle a note line opens with; empty, the name the lab reports for the reader is used
+- Change detection through operating-system file events: one WebSocket shared by every open preview, one watch per directory on the server, and a batched check for filesystems that raise no events. A change now appears within half a second instead of within a poll interval
+- A still cross on the tab for a document whose file has been deleted, distinct from the held-change square by shape and by movement
+- A tooltip naming the state of a tab that carries a held change or a missing file
+
+### Changed
+
+- The tab marker for an arriving change is a half-filled circle that turns, faster while changes keep arriving than after the writer has gone quiet, replacing the dot that pulsed
+- The highlight rises over half a second, holds its colour, then drains over the last three quarters of a second, instead of vanishing at nearly full colour
+- `pollInterval` is now the fallback interval for filesystems that raise no events; `animationSpeed` defaults to 10 characters per second
+- A change held back because the document has unsaved edits is applied through the switch-tab scrolling fix sibling's own guard marker rather than a fixed three-second guess
+- Marking a passage in a document that holds unsaved edits no longer saves them: the marker reaches disk with the reader's own next save
+
+### Fixed
+
+- With live updates turned off, a change on disk could still replace the text in the preview through the refresh a marker write asks for, or when a held change became clean; the switch is now tested where the file is read
+- A removal ghost inside a fenced code block could carry text from the paragraph after the block
+- A change that emptied a document showed no record of what went; the ghost is now placed in the first surviving block, and a render left with no block at all shows none by design
+- A deletion in the moments after a preview opened could be taken for the baseline and never reported
+- A document served from another drive could show the file-gone marker although the file was there
+- A document reached through a symbolic link stopped raising events when the link was repointed
+- A burst of writes from a process still writing is now reported while it writes, instead of only once it stops
+
 ## [0.6.10] - 2026-09-06
 
 ### Added

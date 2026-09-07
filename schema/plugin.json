@@ -6,23 +6,23 @@
   "properties": {
     "enabled": {
       "title": "Enabled",
-      "description": "Keep open Markdown previews live: a change made to the file outside JupyterLab is applied to the preview without a reload. Off, the preview keeps what it showed until the document is reloaded, and nothing else in this extension runs.",
+      "description": "Keep open Markdown previews live: a change made to the file outside JupyterLab is applied to the preview without a reload. Off, the preview keeps what it showed until the document is reloaded, and no file is watched, applied, highlighted or cued. Marks and notes are not covered by this switch and have their own setting.",
       "type": "boolean",
       "default": true
     },
     "pollInterval": {
-      "title": "Poll interval (seconds)",
-      "description": "How often an open preview checks its file for changes.",
+      "title": "Fallback check interval (seconds)",
+      "description": "File events reported by the server are the primary path: a change is applied as soon as the file is written. This is how often every open file is checked in one batched request for filesystems that raise no events, such as network and bind-mounted drives.",
       "type": "number",
       "minimum": 1,
-      "default": 2
+      "default": 10
     },
     "fadeDuration": {
       "title": "Highlight duration (milliseconds)",
-      "description": "How long the highlight on changed text takes to fade away.",
+      "description": "How long the highlight stays on changed text before it is gone. It rises over half a second, holds its colour, and fades away over the last three quarters of a second.",
       "type": "number",
       "minimum": 0,
-      "default": 4000
+      "default": 3000
     },
     "animation": {
       "title": "Animate changes",
@@ -35,7 +35,7 @@
       "description": "How fast added text is typed in and removed text is deleted from its end in the rendered view. 0 shows a change at once.",
       "type": "integer",
       "minimum": 0,
-      "default": 200
+      "default": 10
     },
     "highlight": {
       "title": "Highlight changes",
@@ -45,9 +45,21 @@
     },
     "tabCue": {
       "title": "Mark the document tab",
-      "description": "Put a dot on the tab of a document that received a change.",
+      "description": "Mark the tab of a document with what happened to its file: a half-filled circle that turns for a change that was applied, faster while changes keep arriving; a square for a change held back by unsaved edits; a cross for a file that is gone from disk. Off, no tab is marked.",
       "type": "boolean",
       "default": true
+    },
+    "notes": {
+      "title": "Marks and notes",
+      "description": "Mark passages of a Markdown document and write notes on them, stored in the file itself as HTML comments. Off, no passage is painted, the panel stays hidden and the context menu offers nothing; the markers already in a document are left exactly as they are.",
+      "type": "boolean",
+      "default": true
+    },
+    "author": {
+      "title": "Note author",
+      "description": "The handle written on every note line you add, without the leading @. Empty takes the JupyterLab user name, and reader where the lab hands out an anonymous identity.",
+      "type": "string",
+      "default": ""
     }
   },
   "additionalProperties": false
