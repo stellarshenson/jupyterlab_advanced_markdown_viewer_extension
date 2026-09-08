@@ -343,7 +343,15 @@ export class FileWatcher implements IDisposable {
     if (this._disposed || !this._enabled) {
       return;
     }
-    const disk = typeof full.content === 'string' ? full.content : '';
+    // The Context holds a CRLF or CR file as LF and puts the line ending
+    // back on save, so the document is compared with and written from the
+    // same LF text; the file keeps its line endings on disk. The revision
+    // recorded below stays the raw one, whose hash is the server's hash of
+    // the raw bytes.
+    const disk = (typeof full.content === 'string' ? full.content : '').replace(
+      /\r\n?/g,
+      '\n'
+    );
     this._record(full);
 
     if (disk === this._shadow) {

@@ -1,15 +1,19 @@
-"""Tests of the status, stat and events routes and of the file-watch registry.
+"""Tests of the status, stat, write and events routes and of the file-watch registry.
 
 The tests that need file events run only with watchdog installed; the rest hold either way.
 """
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import shutil
+import threading
 import time
 
 import pytest
+from jupyter_server.auth.authorizer import Authorizer
+from tornado.httpclient import HTTPClientError
 
 from jupyterlab_advanced_markdown_viewer_extension import watch
 from jupyterlab_advanced_markdown_viewer_extension.routes import NAMESPACE, SETTINGS_KEY
@@ -66,6 +70,20 @@ async def test_stat(jp_fetch, jp_root_dir, registry):
     assert "../outside.md" not in paths
 
 
+async def test_stat_needs_read_on_contents(jp_fetch, jp_serverapp, registry, monkeypatch):
+    """The HTTP routes ask the authorizer the same question the events socket asks."""
+
+    class NoContents(Authorizer):
+        def is_authorized(self, handler, user, action, resource):
+            return not (action == "read" and resource == "contents")
+
+    monkeypatch.setitem(jp_serverapp.web_app.settings, "authorizer", NoContents())
+    body = json.dumps({"paths": ["doc.md"]})
+    with pytest.raises(HTTPClientError) as refused:
+        await jp_fetch(NAMESPACE, "stat", method="POST", body=body)
+    assert refused.value.code == 403
+
+
 async def test_stat_leaves_out_a_path_it_cannot_serve(jp_fetch, jp_root_dir, registry):
     """A path this registry cannot serve is left out of the answer; a file that is not there
     is answered null. A client reads null as a document deleted from disk, and a document on
@@ -90,6 +108,106 @@ def test_drive_path_is_ignored(registry):
     registry.register("RTC:doc.md", object())
     assert registry.paths == {}
     assert registry.watches == {}
+
+
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+async def contents_hash(jp_fetch, path):
+    """The hash the contents API reports for `path`, which is what the Context holds."""
+    response = await jp_fetch("api", "contents", path, params={"content": "0", "hash": "1"})
+    return json.loads(response.body)["hash"]
+
+
+async def write(jp_fetch, path, expected, content):
+    body = json.dumps({"path": path, "expected": expected, "content": content})
+    return await jp_fetch(NAMESPACE, "write", method="POST", body=body)
+
+
+async def test_write_lands_when_expected_matches(jp_fetch, jp_ws_fetch, jp_root_dir, registry):
+    """DEF-NOTES-33: the hash the client passes back is the one the contents API gave it, the
+    write is reported to the events channel like any other change, and the answer carries
+    the hash the file has afterwards."""
+    pytest.importorskip("watchdog")
+    doc = jp_root_dir / "doc.md"
+    doc.write_text("# one\n")
+    ws = await open_channel(jp_ws_fetch, "doc.md")
+    held = await contents_hash(jp_fetch, "doc.md")
+    response = await write(jp_fetch, "doc.md", held, "# one\r\n<!-- m -->\n")
+    assert response.code == 200
+    assert doc.read_bytes() == b"# one\r\n<!-- m -->\n"
+    assert json.loads(response.body) == {"hash": sha256(doc.read_bytes())}
+    assert json.loads(response.body)["hash"] == await contents_hash(jp_fetch, "doc.md")
+    assert await next_message(ws, 1.0) == {"type": "change", "path": "doc.md", "event": "changed"}
+    ws.close()
+
+
+async def test_write_with_stale_expected_answers_409(jp_fetch, jp_root_dir, registry):
+    doc = jp_root_dir / "doc.md"
+    doc.write_text("# one\n")
+    stale = sha256(b"# zero\n")
+    before = os.stat(doc)
+    with pytest.raises(HTTPClientError) as refused:
+        await write(jp_fetch, "doc.md", stale, "# one\n<!-- m -->\n")
+    assert refused.value.code == 409
+    current = json.loads(refused.value.response.body)
+    assert current == {"content": "# one\n", "hash": sha256(b"# one\n")}
+    assert doc.read_bytes() == b"# one\n"
+    assert os.stat(doc).st_mtime_ns == before.st_mtime_ns
+
+
+async def test_concurrent_writes_one_lands(jp_fetch, jp_root_dir, registry, monkeypatch):
+    """Two writes carrying the same expected hash race on the per-path lock: one lands and
+    the other finds the file changed. The window between read and write is widened with a
+    barrier so that, without the lock, both reads happen before either write."""
+    doc = jp_root_dir / "doc.md"
+    doc.write_text("# one\n")
+    expected = sha256(b"# one\n")
+    barrier = threading.Barrier(2)
+    read_bytes = watch._read_bytes
+
+    def slow_read(os_path):
+        data = read_bytes(os_path)
+        with contextlib.suppress(threading.BrokenBarrierError):
+            barrier.wait(0.3)
+        return data
+
+    monkeypatch.setattr(watch, "_read_bytes", slow_read)
+
+    async def attempt(content):
+        try:
+            return (await write(jp_fetch, "doc.md", expected, content)).code
+        except HTTPClientError as error:
+            return error.code
+
+    codes = await asyncio.gather(attempt("# one\n<!-- a -->\n"), attempt("# one\n<!-- b -->\n"))
+    assert sorted(codes) == [200, 409]
+    assert doc.read_text() in ("# one\n<!-- a -->\n", "# one\n<!-- b -->\n")
+
+
+async def test_write_keeps_the_inode(jp_fetch, jp_root_dir, registry):
+    """An agent appending to the file holds it open; a rename would send its next line to
+    the unlinked inode, so the write goes into the file that is there."""
+    doc = jp_root_dir / "doc.md"
+    doc.write_text("# one\n")
+    inode = os.stat(doc).st_ino
+    with open(doc, "a") as appender:
+        response = await write(jp_fetch, "doc.md", sha256(b"# one\n"), "# one\n<!-- m -->\n")
+        assert response.code == 200
+        assert os.stat(doc).st_ino == inode
+        appender.write("next\n")
+    assert doc.read_text() == "# one\n<!-- m -->\nnext\n"
+
+
+async def test_write_outside_the_root_is_refused(jp_fetch, jp_root_dir, registry):
+    outside = jp_root_dir.parent / "outside.md"
+    outside.write_text("# outside\n")
+    with pytest.raises(HTTPClientError) as refused:
+        await write(jp_fetch, "../outside.md", sha256(b"# outside\n"), "# replaced\n")
+    assert refused.value.code == 404
+    assert json.loads(refused.value.response.body)["message"] == "path not served"
+    assert outside.read_text() == "# outside\n"
 
 
 async def test_write_reports_one_change_within_200ms(

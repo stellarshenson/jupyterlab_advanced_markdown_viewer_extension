@@ -2,13 +2,15 @@
  * The tab cue: when the updated marker goes by itself, and how the two states
  * the reader has to act on are told apart.
  *
- * Covers the second clause of ACC-CUE-29, the tooltip of ACC-CUE-30 and
- * DEF-CUE-13. The stylesheet is read as text because jsdom computes nothing
- * for a ::before, so the shapes themselves are asserted here only against the
- * class names the controller sets; the rendered glyphs are a browser test.
+ * Covers the second clause of ACC-CUE-29, the tooltip of ACC-CUE-30,
+ * DEF-CUE-13 and DEF-CUE-30. The stylesheet is
+ * read as text because jsdom computes nothing for a ::before, so the shapes
+ * themselves are asserted here only against the class names the controller
+ * sets; the rendered glyphs are a browser test.
  */
 
 import { Signal } from '@lumino/signaling';
+import { Title } from '@lumino/widgets';
 
 // The test compiler options carry the jest types alone, so the two things
 // this file needs from the module system are declared where they are used.
@@ -99,7 +101,7 @@ function makeWidget() {
   const content = {};
   const widget: any = {
     node,
-    title: { className: '', caption: CAPTION },
+    title: new Title({ owner: {}, label: CAPTION, caption: CAPTION }),
     isVisible: true,
     context: { path: CAPTION },
     content: Object.assign(content, {
@@ -147,7 +149,7 @@ describe('tab cue', () => {
 
   afterEach(() => {
     controller.dispose();
-    document.body.innerHTML = '';
+    widget.node.remove();
     jest.useRealTimers();
   });
 
@@ -186,6 +188,34 @@ describe('tab cue', () => {
       attention();
       expect(tabClasses()).not.toContain(TAB_UPDATED_CLASS);
     });
+
+    it('names the change in words for as long as it stands, then gives the caption back', () => {
+      applied();
+      expect(widget.title.caption).toMatch(/changed on disk/);
+      // The document's own caption stays on the tab under the words, because
+      // other extensions read it there: the colourful tab sibling finds a
+      // file tab by the Path line of its tooltip.
+      expect(widget.title.caption).toContain(CAPTION);
+      jest.advanceTimersByTime(life - 1);
+      expect(widget.title.caption).toMatch(/changed on disk/);
+      jest.advanceTimersByTime(1);
+      expect(widget.title.caption).toBe(CAPTION);
+    });
+
+    it('keeps the change in words when the document manager rewrites the caption, and gives that caption back', () => {
+      applied();
+      // The applied change reaches the Context, whose file-changed signal
+      // makes the document manager write a fresh caption onto the tab a
+      // moment later; the marker's words stay, and the fresh caption is what
+      // comes back when the marker goes.
+      widget.title.caption = 'Name: live.md\nPath: later\nLast Saved: later';
+      expect(widget.title.caption).toMatch(/changed on disk/);
+      expect(widget.title.caption).toContain('Path: later');
+      jest.advanceTimersByTime(life);
+      expect(widget.title.caption).toBe(
+        'Name: live.md\nPath: later\nLast Saved: later'
+      );
+    });
   });
 
   describe('a change the reader has to act on', () => {
@@ -211,12 +241,12 @@ describe('tab cue', () => {
       expect(tabClasses()).toEqual([]);
     });
 
-    it('names the held change on the tab and gives the caption back when it lands', () => {
+    it('names the held change on the tab, and the change that landed once it does', () => {
       watcher.blocked.emit('dirty');
       expect(widget.title.caption).not.toBe(CAPTION);
       expect(widget.title.caption).toMatch(/unsaved edits/);
       applied();
-      expect(widget.title.caption).toBe(CAPTION);
+      expect(widget.title.caption).toMatch(/changed on disk/);
     });
 
     it('names a missing file in words of its own', () => {
@@ -271,7 +301,7 @@ describe('the settled marker at the shipped defaults', () => {
 
   afterEach(() => {
     controller.dispose();
-    document.body.innerHTML = '';
+    widget.node.remove();
     jest.useRealTimers();
   });
 

@@ -13,9 +13,10 @@
 import { Signal } from '@lumino/signaling';
 import { BoxLayout, Widget } from '@lumino/widgets';
 
-// The plugin declares its types from these three packages and calls nothing in
-// them, and one of the three ships JavaScript jest cannot parse.
+// The plugin declares its types from these four packages and calls nothing in
+// them, and two of the four ship JavaScript jest cannot parse.
 jest.mock('@jupyterlab/application', () => ({}));
+jest.mock('@jupyterlab/apputils', () => ({}));
 jest.mock('@jupyterlab/markdownviewer', () => ({}));
 jest.mock('@jupyterlab/settingregistry', () => ({}));
 
@@ -59,12 +60,27 @@ jest.mock('../watcher', () => {
   return { FileWatcher, EXTERNAL_ORIGIN: 'external', __instances: instances };
 });
 
+/**
+ * The write route is a request to the server. The stand-in answers every
+ * write as landed, so the chain from the command to the route can be watched.
+ */
+jest.mock('../request', () => ({
+  fetchAPI: jest.fn(async () => ({
+    response: { status: 200, ok: true },
+    data: { hash: 'h1' }
+  }))
+}));
+
 import { ISelectionRange } from '../anchor';
 import { DEFAULT_SETTINGS } from '../controller';
 import { MARK_COLOURS, parseMarks, parseSettings } from '../marks';
 import { MARK_ORIGIN } from '../notes';
 import { CLOSE_CLASS, ROW_CLASS } from '../notes-panel';
+import { fetchAPI } from '../request';
 import plugin, { COMMANDS } from '../index';
+
+/** The write route stand-in. */
+const route = fetchAPI as jest.Mock;
 
 /** The watcher instances the mock has built, newest last. */
 const watchers = (): any[] =>
@@ -87,6 +103,9 @@ class Commands {
   }
   isVisible(id: string, args: any = {}): boolean {
     return this.declared.get(id).isVisible(args);
+  }
+  isEnabled(id: string, args: any = {}): boolean {
+    return this.declared.get(id).isEnabled(args);
   }
   execute(id: string, args: any = {}): Promise<void> {
     return Promise.resolve(this.declared.get(id).execute(args));
@@ -141,7 +160,9 @@ class Document extends Widget {
     model.contentChanged = new Signal<any, void>(model);
     this.context = {
       ready: Promise.resolve(),
+      path: 'live.md',
       model,
+      contentsModel: { hash: 'h0' },
       save: async () => {
         this.order.push('save');
       }
@@ -173,12 +194,14 @@ class Document extends Widget {
 function activate(source: string, composite: Record<string, unknown> = {}) {
   const commands = new Commands();
   const menu: any[] = [];
+  const palette: any[] = [];
   const widget = new Document(source);
   widget.rendered.className = 'jp-RenderedMarkdown';
   widget.content.rendered = new Signal<any, void>(widget.content);
 
-  // The hit test walks up from the node the context menu was opened over. A
-  // test says which node that was, or none for a menu opened elsewhere.
+  // The hit test walks up from the node the context menu was opened over, as
+  // the lab's does. A test says which node that was, or none for a menu
+  // opened elsewhere.
   let hit: HTMLElement | null = widget.rendered;
   const app: any = {
     serviceManager: {
@@ -188,14 +211,23 @@ function activate(source: string, composite: Record<string, unknown> = {}) {
     },
     commands,
     contextMenu: { addItem: (item: any) => menu.push(item) },
-    contextMenuHitTest: (test: (node: HTMLElement) => boolean) =>
-      hit && test(hit) ? hit : undefined
+    contextMenuHitTest: (test: (node: HTMLElement) => boolean) => {
+      let node: HTMLElement | null = hit;
+      while (node) {
+        if (test(node)) {
+          return node;
+        }
+        node = node.parentElement;
+      }
+      return undefined;
+    }
   };
 
   const widgetAdded = new Signal<any, any>({});
   const tracker: any = {
     forEach: (fn: (found: any) => void) => fn(widget),
-    widgetAdded
+    widgetAdded,
+    currentWidget: widget
   };
 
   const changed = new Signal<any, void>({});
@@ -205,11 +237,14 @@ function activate(source: string, composite: Record<string, unknown> = {}) {
   };
   const registry: any = { load: async () => settings };
 
-  plugin.activate(app, tracker, registry, null);
+  plugin.activate(app, tracker, registry, null, {
+    addItem: (item: any) => palette.push(item)
+  });
 
   return {
     commands,
     menu,
+    palette,
     widget,
     settings,
     /** Let the settings load and the notes controller read the document. */
@@ -253,12 +288,21 @@ function textNodes(root: HTMLElement): Text[] {
 }
 
 /**
+ * Make the window answer with this selection, and tell the document the
+ * selection changed, which is what the notes controller records.
+ */
+function stubSelection(value: unknown): void {
+  (window as any).getSelection = () => value;
+  document.dispatchEvent(new Event('selectionchange'));
+}
+
+/**
  * Make the reader's selection: from the first occurrence of `from` to the end
  * of the first occurrence of `to` at or after it.
  *
  * JupyterLab's jest shim replaces `document.createRange` with a stub holding
- * no boundaries, so the selection is built as the members the plugin reads of
- * a range and handed over as the window's selection.
+ * no boundaries, so the selection is built as the members the controller reads
+ * of a range and handed over as the window's selection.
  */
 function select(root: HTMLElement, from: string, to: string): void {
   const nodes = textNodes(root);
@@ -294,10 +338,20 @@ function select(root: HTMLElement, from: string, to: string): void {
     commonAncestorContainer: root,
     toString: () => 'selected'
   };
-  (window as any).getSelection = () => ({
-    isCollapsed: false,
+  // A live range whose nodes a render took out collapses onto their parent,
+  // which is what the browser's selection reports after a render.
+  const first = start.node;
+  stubSelection({
+    get isCollapsed() {
+      return !first.isConnected;
+    },
     rangeCount: 1,
-    getRangeAt: () => range
+    get anchorNode() {
+      return first.isConnected ? first : root;
+    },
+    getRangeAt: () => range,
+    removeAllRanges: () => undefined,
+    addRange: () => undefined
   });
 }
 
@@ -308,9 +362,10 @@ function select(root: HTMLElement, from: string, to: string): void {
 function blankSelection(): void {
   const previous = (window as any).getSelection();
   const range = previous.getRangeAt(0);
-  (window as any).getSelection = () => ({
+  stubSelection({
     isCollapsed: false,
     rangeCount: 1,
+    anchorNode: range.startContainer,
     getRangeAt: () => ({ ...range, toString: () => '  \n ' })
   });
 }
@@ -323,18 +378,20 @@ function elsewhereSelection(): void {
   const range = previous.getRangeAt(0);
   const outside = document.createElement('div');
   document.body.appendChild(outside);
-  (window as any).getSelection = () => ({
+  stubSelection({
     isCollapsed: false,
     rangeCount: 1,
+    anchorNode: range.startContainer,
     getRangeAt: () => ({ ...range, commonAncestorContainer: outside })
   });
 }
 
-/** Nothing is selected. */
+/** Nothing is selected: the reader clicked in the text. */
 function selectNothing(): void {
-  (window as any).getSelection = () => ({
+  stubSelection({
     isCollapsed: true,
     rangeCount: 0,
+    anchorNode: document.body.firstChild,
     getRangeAt: () => null
   });
 }
@@ -480,17 +537,29 @@ describe('the plugin', () => {
       ).toEqual(['Mark yellow', 'Mark blue', 'Mark pink', 'Mark orange']);
     });
 
-    it('writes the file through a transaction of its own and saves', async () => {
+    it('writes the file through the route and a transaction of its own', async () => {
       const lab = await start(SOURCE);
       lab.widget.render(HTML);
       select(lab.widget.rendered, 'beta', 'gamma');
+      route.mockClear();
 
       await lab.commands.execute(COMMANDS.mark, { colour: 'yellow' });
 
-      // The refresh reaches the watcher, so a change already on disk lands
-      // before the write and the save cannot report the file as changed.
-      expect(watchers()[watchers().length - 1].refresh).toHaveBeenCalled();
-      expect(lab.widget.order).toEqual(['transact', 'save']);
+      // The refresh reaches the watcher before the write, so a change already
+      // on disk lands first, and again after it, so the watcher finds the
+      // file equal to the document and syncs the revision. The route is asked
+      // once per mark, with the revision the document holds, and the context
+      // is not asked to save.
+      const watcher = watchers()[watchers().length - 1];
+      expect(watcher.refresh).toHaveBeenCalledTimes(2);
+      expect(route).toHaveBeenCalledTimes(1);
+      expect(route.mock.calls[0][0]).toBe('write');
+      expect(JSON.parse(route.mock.calls[0][2].body)).toEqual({
+        path: 'live.md',
+        expected: 'h0',
+        content: lab.widget.text
+      });
+      expect(lab.widget.order).toEqual(['transact']);
       expect(lab.widget.transactions).toEqual([
         { undoable: false, origin: MARK_ORIGIN }
       ]);
@@ -523,12 +592,64 @@ describe('the plugin', () => {
       );
       expect(lab.commands.isVisible(COMMANDS.addNote)).toBe(true);
 
-      // The same selection, but the menu was opened somewhere else.
+      // The same selection, and the menu was opened over nothing the hit
+      // test reaches: the preview in front holds the selection, so it is the
+      // one marked. The menu itself lists the entries only over a preview,
+      // through their selector.
       lab.openedOver(null);
       expect(lab.commands.isVisible(COMMANDS.mark, { colour: 'yellow' })).toBe(
-        false
+        true
       );
-      expect(lab.commands.isVisible(COMMANDS.addNote)).toBe(false);
+      expect(lab.commands.isVisible(COMMANDS.addNote)).toBe(true);
+    });
+
+    it('executes the mark after the hit node was detached', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render(HTML);
+      select(lab.widget.rendered, 'beta', 'gamma');
+      // The menu was opened over the paragraph; a write from disk then
+      // re-rendered, which replaced every node under the host, so walking up
+      // from the paragraph the menu remembers no longer reaches the host.
+      lab.openedOver(lab.widget.rendered.firstElementChild as HTMLElement);
+      lab.widget.render(HTML);
+
+      await lab.commands.execute(COMMANDS.mark, { colour: 'yellow' });
+
+      const marks = parseMarks(lab.widget.text);
+      expect(marks).toHaveLength(1);
+      expect(
+        lab.widget.text.slice(marks[0].passage!.start, marks[0].passage!.end)
+      ).toBe('beta gamma');
+    });
+
+    it('the mark-selection command is enabled only while the current preview holds a selection', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render(HTML);
+      expect(lab.commands.label(COMMANDS.markSelection)).toBe(
+        'Mark the selected passage'
+      );
+
+      selectNothing();
+      expect(lab.commands.isEnabled(COMMANDS.markSelection)).toBe(false);
+
+      select(lab.widget.rendered, 'beta', 'gamma');
+      expect(lab.commands.isEnabled(COMMANDS.markSelection)).toBe(true);
+
+      await lab.commands.execute(COMMANDS.markSelection);
+
+      const marks = parseMarks(lab.widget.text);
+      expect(marks).toHaveLength(1);
+      expect(marks[0].colour).toBe(MARK_COLOURS[0]);
+      expect(
+        lab.widget.text.slice(marks[0].passage!.start, marks[0].passage!.end)
+      ).toBe('beta gamma');
+    });
+
+    it('lists the mark-selection command in the palette', async () => {
+      const lab = await start(SOURCE);
+      expect(lab.palette).toEqual([
+        { command: COMMANDS.markSelection, category: 'Markdown Viewer' }
+      ]);
     });
 
     it('is not offered for a selection holding only whitespace', async () => {
@@ -709,6 +830,23 @@ describe('the plugin', () => {
 
       expect(lab.panel().selected).toBe(ID);
       expect(lab.panel().node.querySelector('textarea')).not.toBeNull();
+    });
+
+    it('expands a minimap panel when the note entry is asked for', async () => {
+      const lab = await start(
+        `${MARKED}<!-- marks:settings panel=minimap -->\n`
+      );
+      lab.widget.render(MARKED_HTML);
+      expect(lab.panel().state).toBe('minimap');
+
+      lab.panel().selectMark(ID, true);
+
+      expect(lab.panel().state).toBe('expanded');
+      const area = lab
+        .panel()
+        .node.querySelector('.jp-AdvancedMd-notesForm textarea');
+      expect(area).not.toBeNull();
+      expect(document.activeElement).toBe(area);
     });
   });
 

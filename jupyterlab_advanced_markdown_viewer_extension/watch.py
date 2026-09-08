@@ -13,11 +13,20 @@ root is watched instead of being silently refused. The watch itself is set on th
 directory, because watchdog asks inotify not to follow links.
 
 watchdog is a declared dependency, but the registry imports without it: `available` is then
-False, register schedules nothing and only `stat` answers, so the frontend falls back to its
-batched poll.
+False, register schedules nothing and only `stat` and `swap` answer, so the frontend falls
+back to its batched poll.
+
+`swap` is the compare-and-write behind the write route: the browser passes back the hash the
+contents API gave it for the document, and the file is rewritten only while it still carries
+that hash, under a per-path lock, so two writes of one path from this server are serialised.
+The hash is computed the way the contents manager computes it,
+over the file's bytes with its configured algorithm, so the value the browser holds and the
+value compared here come from one function.
 """
+import hashlib
 import os
 import posixpath
+import threading
 
 try:
     from watchdog.events import (
@@ -67,6 +76,11 @@ def _api_path(path):
     return normalized
 
 
+def _read_bytes(os_path):
+    with open(os_path, "rb") as source:
+        return source.read()
+
+
 class _DirectoryHandler(FileSystemEventHandler):
     """Matches the events of one watched directory against the registered names in it."""
 
@@ -114,10 +128,16 @@ class FileWatchRegistry:
     an `on_change(path, kind)` method, called on the IOLoop with kind "changed" or "deleted".
     """
 
-    def __init__(self, root_dir, loop):
+    def __init__(self, root_dir, loop, hash_algorithm="sha256"):
         self._root = root_dir
         self._abs_root = os.path.abspath(root_dir)
         self._loop = loop
+        # The contents manager's algorithm, so a hash the browser got from the contents API
+        # compares equal to one computed here over the same bytes.
+        self._hash_algorithm = hash_algorithm
+        # API path -> the lock one swap of that path holds; never dropped, because a lock
+        # dropped while another swap is about to take it would let two writes through.
+        self._locks = {}
         self.paths = {}
         self.watches = {}
         self._observer = None
@@ -210,6 +230,35 @@ class FileWatchRegistry:
             result[path] = None if st is None else {"mtime": st.st_mtime, "size": st.st_size}
         return result
 
+    def swap(self, path, expected, content):
+        """Write `content` over the file at `path` if its bytes still hash to `expected`.
+
+        Returns {"hash": ...} of the written bytes when the write landed, or {"hash", "content"}
+        of the file as it is when it no longer matches, so the caller can rebase on it and try
+        again. None for a path this registry cannot serve, and FileNotFoundError for a file
+        that is not there, both as `stat` tells them apart.
+
+        The write runs under a per-path lock and in place: the existing file is opened for
+        writing and truncated, keeping its inode, because an agent that holds the file open
+        for appending keeps writing to that inode - a temporary file renamed over it would
+        send the agent's next line to the unlinked file. The watcher reports this write to
+        the subscribers like any other change; the frontend reads the file back and finds
+        it equal to what it wrote.
+        """
+        normalized = _api_path(path)
+        os_path = None if normalized is None else self._os_path(normalized)
+        if os_path is None:
+            return None
+        data = content.encode("utf-8")
+        with self._locks.setdefault(normalized, threading.Lock()):
+            current = _read_bytes(os_path)
+            if self._hash(current) != expected:
+                return {"hash": self._hash(current), "content": current.decode("utf-8")}
+            with open(os_path, "r+b") as target:
+                target.truncate(0)
+                target.write(data)
+        return {"hash": self._hash(data)}
+
     def stop(self):
         """Stop the observer thread and drop every pending window; used by tests."""
         for path in list(self._pending):
@@ -220,6 +269,9 @@ class FileWatchRegistry:
             self._observer = None
             self.watches.clear()
             self._identities.clear()
+
+    def _hash(self, data):
+        return hashlib.new(self._hash_algorithm, data).hexdigest()
 
     def _os_path(self, path):
         os_path = os.path.join(self._root, *path.split("/"))

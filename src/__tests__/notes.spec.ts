@@ -1,4 +1,5 @@
 import { Signal } from '@lumino/signaling';
+import { Title } from '@lumino/widgets';
 
 /**
  * The live controller owns a file watcher that polls a server; the one test
@@ -41,17 +42,32 @@ jest.mock('../highlight', () => {
   return { ...actual, captureText: jest.fn(actual.captureText) };
 });
 
+/**
+ * The write route is a request to the server, which no unit test has. The
+ * stand-in answers what a test tells it to; by default the route is absent,
+ * the way a lab without the server extension answers, so every write that
+ * does not say otherwise takes the context's save path.
+ */
+jest.mock('../request', () => ({ fetchAPI: jest.fn() }));
+
 import { ISelectionRange, tokeniseSource } from '../anchor';
 import { DEFAULT_SETTINGS, LiveViewController } from '../controller';
 import { ADDED_CLASS, captureText } from '../highlight';
 import { MARK_COLOURS, parseMarks } from '../marks';
-import {
-  FLASH_MS,
-  MARK_CLASS,
-  MARK_FLASH_CLASS,
-  MARK_ORIGIN,
-  NotesController
-} from '../notes';
+import { MARK_CLASS, MARK_ORIGIN, NotesController } from '../notes';
+import { fetchAPI } from '../request';
+
+/** The write route stand-in. */
+const route = fetchAPI as jest.Mock;
+
+/** What the route answers: a status and the body, parsed where it is JSON. */
+const answer = (status: number, data: unknown) => ({
+  response: { status, ok: status < 400 } as Response,
+  data
+});
+
+/** The answer of a lab without the server extension: a 404 with an HTML body. */
+const ABSENT = answer(404, '<html>Not Found</html>');
 
 /** Identifiers of the marks the hand-written sources carry. */
 const ONE = '0d4b0d0a-4a4e-4f6a-9d8c-1d6b0a3c2e11';
@@ -113,6 +129,9 @@ function harness(initial: string, identity: unknown = null) {
       updateSource: (start: number, end: number, value: string) => {
         open?.edits.push({ start, end, text: value });
         text = text.slice(0, start) + value + text.slice(end);
+        // A real shared model reports the edit to its document model, which
+        // marks itself dirty.
+        model.dirty = true;
       }
     }
   };
@@ -120,7 +139,10 @@ function harness(initial: string, identity: unknown = null) {
 
   const context: any = {
     ready: Promise.resolve(),
+    path: 'live.md',
     model,
+    // The revision the document holds, as the watcher last synced it.
+    contentsModel: { hash: 'h0' },
     save: async () => {
       order.push('save');
       saves.push(text);
@@ -135,7 +157,7 @@ function harness(initial: string, identity: unknown = null) {
     context,
     content,
     isVisible: true,
-    title: { className: '' }
+    title: new Title({ owner: {} })
   };
   widget.disposed = new Signal<any, void>(widget);
 
@@ -151,8 +173,9 @@ function harness(initial: string, identity: unknown = null) {
     widget,
     settled,
     refresh,
+    serverSettings: {} as any,
     user: identity === null ? null : ({ identity } as any),
-    settings: { notes: true, author: '' }
+    settings: { enabled: true, notes: true, author: '' }
   });
 
   return {
@@ -172,8 +195,9 @@ function harness(initial: string, identity: unknown = null) {
       model.dirty = true;
     },
     /** Rewrite the document the way a change from disk would. */
-    external: (value: string) => {
+    external: (value: string, hash = 'h0') => {
       text = value;
+      context.contentsModel = { hash };
       model.contentChanged.emit(undefined);
     },
     /** Run something inside the next refresh, as a change landing would. */
@@ -264,6 +288,60 @@ function selectText(root: HTMLElement, from: string, to: string) {
   } as ISelectionRange;
 }
 
+/** Make the window answer with this selection from now on. */
+function stubSelection(value: unknown): void {
+  (window as any).getSelection = () => value;
+}
+
+/**
+ * Make the reader's selection the way the browser reports it: the window's
+ * selection answers with the range and the document says the selection
+ * changed, which is what the controller records.
+ */
+function selectRange(
+  root: HTMLElement,
+  from: string,
+  to: string,
+  notify = true
+): void {
+  const range = selectText(root, from, to);
+  // A live range whose nodes a render took out collapses onto their parent,
+  // which is what the browser's selection reports after a render.
+  const first = range.startContainer;
+  stubSelection({
+    get isCollapsed() {
+      return !first.isConnected;
+    },
+    rangeCount: 1,
+    get anchorNode() {
+      return first.isConnected ? first : root;
+    },
+    getRangeAt: () => ({
+      ...range,
+      commonAncestorContainer: root,
+      toString: () => `${from}..${to}`
+    }),
+    removeAllRanges: jest.fn(),
+    addRange: jest.fn()
+  });
+  if (notify) {
+    document.dispatchEvent(new Event('selectionchange'));
+  }
+}
+
+/**
+ * The selection collapsed onto a node, as a focus move or a click leaves it.
+ */
+function collapseSelection(anchorNode: Node): void {
+  stubSelection({
+    isCollapsed: true,
+    rangeCount: 1,
+    anchorNode,
+    getRangeAt: () => null
+  });
+  document.dispatchEvent(new Event('selectionchange'));
+}
+
 /** The mark spans of a render, in document order. */
 const painted = (root: HTMLElement): HTMLElement[] =>
   Array.from(root.querySelectorAll<HTMLElement>(`.${MARK_CLASS}`));
@@ -287,8 +365,13 @@ describe('NotesController', () => {
     return built;
   };
 
+  const originalSelection = (window as any).getSelection;
+  const originalCreateRange = document.createRange;
+
   beforeEach(() => {
     jest.useFakeTimers();
+    route.mockReset();
+    route.mockResolvedValue(ABSENT);
   });
 
   afterEach(() => {
@@ -297,6 +380,8 @@ describe('NotesController', () => {
     }
     harnesses = [];
     document.body.innerHTML = '';
+    (window as any).getSelection = originalSelection;
+    document.createRange = originalCreateRange;
     jest.useRealTimers();
   });
 
@@ -306,10 +391,8 @@ describe('NotesController', () => {
       await ready();
       h.render(BARE_HTML);
 
-      const id = await h.controller.mark(
-        selectText(h.root, 'beta', 'gamma'),
-        'yellow'
-      );
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
 
       expect(id).not.toBeNull();
       expect(h.transactions).toHaveLength(1);
@@ -338,10 +421,8 @@ describe('NotesController', () => {
       await ready();
       h.render(BARE_HTML);
 
-      const id = await h.controller.mark(
-        selectText(h.root, 'beta', 'gamma'),
-        'blue'
-      );
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('blue');
 
       expect(id).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -354,10 +435,8 @@ describe('NotesController', () => {
         const h = open(BARE);
         await ready();
         h.render(BARE_HTML);
-        const id = await h.controller.mark(
-          selectText(h.root, 'beta', 'gamma'),
-          colour
-        );
+        selectRange(h.root, 'beta', 'gamma');
+        const id = await h.controller.mark(colour);
         expect(h.source()).toContain(`mark:${id} note colour=${colour} -->`);
       }
     });
@@ -370,10 +449,8 @@ describe('NotesController', () => {
       // between the reader selecting the words and choosing the command.
       h.duringRefresh(() => h.external(`First line.\n\n${BARE}`));
 
-      const id = await h.controller.mark(
-        selectText(h.root, 'beta', 'gamma'),
-        'yellow'
-      );
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
 
       expect(h.order).toEqual(['refresh', 'transact', 'save']);
       expect(h.source()).toBe(
@@ -387,10 +464,8 @@ describe('NotesController', () => {
       await ready();
       h.render('<p>Words the source does not hold.</p>');
 
-      const id = await h.controller.mark(
-        selectText(h.root, 'Words', 'hold'),
-        'yellow'
-      );
+      selectRange(h.root, 'Words', 'hold');
+      const id = await h.controller.mark('yellow');
 
       expect(id).toBeNull();
       expect(h.transactions).toHaveLength(0);
@@ -405,10 +480,8 @@ describe('NotesController', () => {
       // editor leaves the model dirty.
       h.edit();
 
-      const id = await h.controller.mark(
-        selectText(h.root, 'beta', 'gamma'),
-        'yellow'
-      );
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
 
       // The mark is written, so the reader sees it; the typed text is not
       // committed to disk on their behalf, and the marker goes with their own
@@ -416,6 +489,258 @@ describe('NotesController', () => {
       expect(h.source()).toContain(`<!-- mark:${id} note colour=yellow -->`);
       expect(h.saves).toHaveLength(0);
       expect(h.dirty()).toBe(true);
+    });
+  });
+
+  describe('the write route', () => {
+    it('writes a mark through the server route when it exists', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      route.mockImplementation(async () => {
+        h.order.push('write');
+        return answer(200, { hash: 'h1' });
+      });
+
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
+
+      const written = `Alpha <!-- mark:${id} note colour=yellow -->beta gamma<!-- /mark:${id} --> delta.\n`;
+      expect(route).toHaveBeenCalledTimes(1);
+      const [endPoint, , init] = route.mock.calls[0];
+      expect(endPoint).toBe('write');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual({
+        path: 'live.md',
+        expected: 'h0',
+        content: written
+      });
+      // The file is written first, then the same edits go into the document,
+      // which is clean because disk and document are equal, and the refresh
+      // that follows finds them equal and syncs the revision: no save.
+      expect(h.order).toEqual(['refresh', 'write', 'transact', 'refresh']);
+      expect(h.source()).toBe(written);
+      expect(h.transactions[0].origin).toBe(MARK_ORIGIN);
+      expect(h.dirty()).toBe(false);
+      expect(h.saves).toHaveLength(0);
+    });
+
+    it('retries a write the server refused and lands the second', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      const newer = `First line.\n\n${BARE}`;
+      route.mockImplementationOnce(async () => {
+        // The refusal carries the file as it is; the refresh that follows
+        // brings it into the document through the watcher's normal path.
+        h.duringRefresh(() => {
+          h.external(newer, 'h1');
+          h.render(`<p>First line.</p>${BARE_HTML}`);
+          h.duringRefresh(() => undefined);
+        });
+        return answer(409, { content: newer, hash: 'h1' });
+      });
+      route.mockImplementationOnce(async () => answer(200, { hash: 'h2' }));
+
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
+
+      const written = `First line.\n\nAlpha <!-- mark:${id} note colour=yellow -->beta gamma<!-- /mark:${id} --> delta.\n`;
+      expect(route).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(route.mock.calls[0][2].body)).toEqual(
+        expect.objectContaining({ expected: 'h0' })
+      );
+      expect(JSON.parse(route.mock.calls[1][2].body)).toEqual({
+        path: 'live.md',
+        expected: 'h1',
+        content: written
+      });
+      expect(h.source()).toBe(written);
+      expect(h.transactions).toHaveLength(1);
+      expect(h.saves).toHaveLength(0);
+    });
+
+    it('takes the save path after three refusals', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      // The file on disk keeps a revision the refresh does not bring in, so
+      // the route refuses the same revision every time. The write then goes the way it
+      // went before the route: into the document and through the Context's
+      // save, whose own conflict check is what tells the reader.
+      route.mockResolvedValue(answer(409, { content: BARE, hash: 'h0' }));
+
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
+
+      expect(id).not.toBeNull();
+      expect(route).toHaveBeenCalledTimes(3);
+      expect(h.order).toEqual([
+        'refresh',
+        'refresh',
+        'refresh',
+        'transact',
+        'save'
+      ]);
+      expect(h.source()).toContain(`<!-- mark:${id} note colour=yellow -->`);
+      expect(h.saves).toEqual([h.source()]);
+    });
+
+    it('keeps the context save path where the route is absent', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+
+      selectRange(h.root, 'beta', 'gamma');
+      const first = await h.controller.mark('yellow');
+      expect(route).toHaveBeenCalledTimes(1);
+      expect(h.saves).toEqual([h.source()]);
+      expect(h.source()).toContain(`<!-- mark:${first} note`);
+
+      // The absence is remembered for the session: the next write asks the
+      // route nothing and saves through the context again.
+      h.render(markedHtml(first as string));
+      selectRange(h.root, 'Alpha', 'Alpha');
+      const second = await h.controller.mark('blue');
+      expect(second).not.toBeNull();
+      expect(route).toHaveBeenCalledTimes(1);
+      expect(h.saves).toHaveLength(2);
+    });
+
+    it('writes the file with the line ending the context loaded it with', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      // The Context holds a CRLF file as LF and remembers the ending for
+      // its own save; a write that goes round the save puts it back too.
+      h.widget.context._lineEnding = '\r\n';
+      route.mockResolvedValue(answer(200, { hash: 'h1' }));
+
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
+
+      expect(JSON.parse(route.mock.calls[0][2].body).content).toBe(
+        `Alpha <!-- mark:${id} note colour=yellow -->beta gamma<!-- /mark:${id} --> delta.\r\n`
+      );
+      // The document itself stays LF, as the Context keeps it.
+      expect(h.source()).not.toContain('\r');
+    });
+
+    it('takes the save path for a document holding unsaved edits', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      route.mockResolvedValue(answer(200, { hash: 'h1' }));
+      h.edit();
+
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
+
+      // Nothing reaches disk while the document is dirty, by the route or by
+      // a save; the markers wait for the reader's own next save.
+      expect(route).not.toHaveBeenCalled();
+      expect(h.source()).toContain(`<!-- mark:${id} note colour=yellow -->`);
+      expect(h.saves).toHaveLength(0);
+      expect(h.dirty()).toBe(true);
+    });
+
+    it('keeps the context save path while live updates are off', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      // With live updates off the refresh after a 200 reads nothing, so the
+      // Context would keep the old revision and refuse the next save; the
+      // write goes the way it went before the route.
+      h.controller.updateSettings({ enabled: false, notes: true, author: '' });
+      route.mockResolvedValue(answer(200, { hash: 'h1' }));
+
+      selectRange(h.root, 'beta', 'gamma');
+      await h.controller.mark('yellow');
+
+      expect(route).not.toHaveBeenCalled();
+      expect(h.order).toEqual(['refresh', 'transact', 'save']);
+      expect(h.saves).toHaveLength(1);
+    });
+
+    it('leaves the document alone when the watcher applied the written file before the 200', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      let written = '';
+      route.mockImplementation(async (_: string, __: unknown, init: any) => {
+        h.order.push('write');
+        // The watcher's read of the written file lands before the answer
+        // does: the document already holds the markers the route wrote.
+        written = JSON.parse(init.body).content;
+        h.external(written, 'h1');
+        return answer(200, { hash: 'h1' });
+      });
+
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
+
+      expect(id).not.toBeNull();
+      expect(written).toContain(`<!-- mark:${id} note colour=yellow -->`);
+      expect(h.order).toEqual(['refresh', 'write', 'refresh']);
+      expect(h.source()).toBe(written);
+      expect(h.source().match(/<!-- mark:/g)).toHaveLength(1);
+      expect(h.dirty()).toBe(false);
+      expect(h.saves).toHaveLength(0);
+      // The caller is handed an id and a command acts on it straight away, so
+      // the list has to hold the mark by the time mark() resolves - on this
+      // path as much as on the one that transacts.
+      expect(h.controller.marks.map(mark => mark.id)).toContain(id);
+      // And the render is asked for here too, or the note box opens over a
+      // passage the reader cannot see until the viewer's own timeout runs.
+      expect(h.content.update).toHaveBeenCalled();
+    });
+
+    it("keeps the reader's edits when they typed while the route wrote", async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      const typed = `${BARE}Typed.\n`;
+      route.mockImplementation(async () => {
+        // The reader typed while the POST was in flight: the document moved
+        // and holds unsaved edits the watcher keeps its read back behind.
+        h.external(typed, 'h0');
+        h.edit();
+        return answer(200, { hash: 'h1' });
+      });
+
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
+
+      expect(h.order).not.toContain('transact');
+      expect(h.dirty()).toBe(true);
+      expect(h.source()).toBe(typed);
+      expect(h.saves).toHaveLength(0);
+      // The mark is on disk and not in the document. Answering the caller
+      // otherwise is what makes the panel throw a typed note away over a
+      // write the document never took.
+      expect(id).toBeNull();
+    });
+
+    it('answers no when a second external write landed inside the route write', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      const agent = 'The agent replaced the whole document.\n';
+      route.mockImplementation(async () => {
+        // Not the file the route wrote: another writer got there between the
+        // server's write and the answer, and the watcher brought that in.
+        h.external(agent, 'h2');
+        return answer(200, { hash: 'h1' });
+      });
+
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
+
+      expect(id).toBeNull();
+      expect(h.source()).toBe(agent);
+      expect(h.controller.marks).toEqual([]);
+      expect(h.order).not.toContain('transact');
+      expect(h.saves).toHaveLength(0);
     });
   });
 
@@ -493,6 +818,23 @@ describe('NotesController', () => {
       expect(h.source()).toContain('-->beta gamma<!-- /mark:');
       expect(parseMarks(h.source())[0].notes[0].text).toBe('Still in place.');
     });
+
+    it('addNote says whether the markers were found', async () => {
+      const h = open(marked());
+      await ready();
+
+      expect(await h.controller.addNote(ONE, 'On a live mark.')).toBe(true);
+
+      // A rewrite from disk took the markers away, so there is nothing to
+      // write the note into, and the caller is told so rather than left to
+      // assume the note landed.
+      h.external(BARE);
+      jest.advanceTimersByTime(20);
+      expect(await h.controller.addNote(ONE, 'On a vanished mark.')).toBe(
+        false
+      );
+      expect(h.source()).toBe(BARE);
+    });
   });
 
   describe('author', () => {
@@ -502,7 +844,7 @@ describe('NotesController', () => {
     ): Promise<string> => {
       const h = open(marked(), identity);
       await ready();
-      h.controller.updateSettings({ notes: true, author });
+      h.controller.updateSettings({ enabled: true, notes: true, author });
       await h.controller.addNote(ONE, 'A note.');
       return parseMarks(h.source())[0].notes[0].author;
     };
@@ -811,7 +1153,7 @@ describe('NotesController', () => {
       h.render(markedHtml());
       expect(painted(h.root)).toHaveLength(1);
 
-      h.controller.updateSettings({ notes: false, author: '' });
+      h.controller.updateSettings({ enabled: true, notes: false, author: '' });
 
       expect(painted(h.root)).toHaveLength(0);
       expect(h.root.textContent).toBe('Alpha beta gamma delta.');
@@ -848,10 +1190,8 @@ describe('NotesController', () => {
       const h = open(BARE);
       await ready();
       h.render(BARE_HTML);
-      const id = await h.controller.mark(
-        selectText(h.root, 'beta', 'gamma'),
-        'pink'
-      );
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('pink');
 
       // The render arrives before the deferred read of the document would
       // have run, so the read is made first and the new mark is painted.
@@ -901,47 +1241,116 @@ describe('NotesController', () => {
     });
   });
 
-  describe('reveal and activation', () => {
-    it('brings a passage into view and flashes it', async () => {
-      const h = open(marked());
+  describe('the selection it records', () => {
+    it('carries the selection through a render and past a change before it', async () => {
+      const h = open(BARE);
       await ready();
-      h.render(markedHtml());
-      const span = painted(h.root)[0];
-      const scrolled = jest.fn();
-      span.scrollIntoView = scrolled;
+      h.render(BARE_HTML);
+      selectRange(h.root, 'beta', 'gamma');
+      const before = h.controller.selection!;
+      expect(captureText(h.root).text.slice(before.start, before.end)).toBe(
+        'beta gamma'
+      );
 
-      expect(h.controller.reveal(ONE)).toBe(true);
+      // A change from disk put a paragraph in front of the selected one, so
+      // the render rebuilt every node the selection sat in.
+      h.render(`<p>Inserted words first.</p>${BARE_HTML}`);
 
-      expect(scrolled).toHaveBeenCalled();
-      expect(span.classList.contains(MARK_FLASH_CLASS)).toBe(true);
-      jest.advanceTimersByTime(FLASH_MS);
-      expect(span.classList.contains(MARK_FLASH_CLASS)).toBe(false);
+      const after = h.controller.selection!;
+      expect(after.start).toBeGreaterThan(before.start);
+      expect(captureText(h.root).text.slice(after.start, after.end)).toBe(
+        'beta gamma'
+      );
     });
 
-    it('holds the flash of a passage revealed twice until the second is over', async () => {
-      const h = open(marked());
+    it('marks the recorded selection after a refresh that re-rendered', async () => {
+      const h = open(BARE);
       await ready();
-      h.render(markedHtml());
-      const span = painted(h.root)[0];
+      h.render(BARE_HTML);
+      selectRange(h.root, 'beta', 'gamma');
+      // The refresh applies a change that re-renders, which detaches every
+      // node the live selection pointed at.
+      h.duringRefresh(() => {
+        h.external(`First line.\n\n${BARE}`);
+        h.render(`<p>First line.</p>${BARE_HTML}`);
+      });
 
-      h.controller.reveal(ONE);
-      jest.advanceTimersByTime(FLASH_MS - 100);
-      h.controller.reveal(ONE);
-      jest.advanceTimersByTime(200);
+      const id = await h.controller.mark('yellow');
 
-      expect(span.classList.contains(MARK_FLASH_CLASS)).toBe(true);
-      jest.advanceTimersByTime(FLASH_MS);
-      expect(span.classList.contains(MARK_FLASH_CLASS)).toBe(false);
+      expect(id).not.toBeNull();
+      expect(h.source()).toBe(
+        `First line.\n\nAlpha <!-- mark:${id} note colour=yellow -->beta gamma<!-- /mark:${id} --> delta.\n`
+      );
     });
 
-    it('says so when the mark is not painted in this render', async () => {
-      const h = open(marked());
+    it("restores the selection after a render and keeps a focused textarea's caret", async () => {
+      const h = open(BARE);
       await ready();
-      h.render('<p>Another document entirely.</p>');
+      h.render(BARE_HTML);
+      const bounds: Array<[Node, number]> = [];
+      document.createRange = () =>
+        ({
+          setStart: (node: Node, offset: number) => bounds.push([node, offset]),
+          setEnd: (node: Node, offset: number) => bounds.push([node, offset])
+        }) as any;
+      selectRange(h.root, 'beta', 'gamma');
+      const selection = (window as any).getSelection();
 
-      expect(h.controller.reveal(ONE)).toBe(false);
+      h.render(BARE_HTML);
+
+      // The body is active, so the selection goes back over the same words of
+      // the new nodes.
+      expect(selection.removeAllRanges).toHaveBeenCalledTimes(1);
+      expect(selection.addRange).toHaveBeenCalledTimes(1);
+      const text = textNodes(h.root)[0];
+      expect(bounds).toEqual([
+        [text, 6],
+        [text, 16]
+      ]);
+
+      // A textarea has the focus: putting the selection back would reset its
+      // caret, so the record is kept and nothing is restored.
+      const area = document.createElement('textarea');
+      document.body.appendChild(area);
+      area.focus();
+      h.render(BARE_HTML);
+
+      expect(selection.addRange).toHaveBeenCalledTimes(1);
+      expect(h.controller.selection).not.toBeNull();
     });
 
+    it('keeps the record on a focus move and drops it for a caret in text', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      selectRange(h.root, 'beta', 'gamma');
+      expect(h.controller.selection).not.toBeNull();
+
+      // Focusing a control collapses the selection onto an element; the
+      // reader still means the words they selected.
+      collapseSelection(document.body);
+      expect(h.controller.selection).not.toBeNull();
+
+      // A caret in text is the reader's own click, which is a deselection.
+      collapseSelection(textNodes(h.root)[0]);
+      expect(h.controller.selection).toBeNull();
+    });
+
+    it('reads a selection made since the last selectionchange event', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      // Chromium fires selectionchange a frame or more after the selection
+      // moved, and a context menu opened at once asks before it has: the
+      // window is read on the ask as well as on the event.
+      selectRange(h.root, 'beta', 'gamma', false);
+      expect(h.controller.selection).toEqual(
+        expect.objectContaining({ start: 6, end: 16 })
+      );
+    });
+  });
+
+  describe('activation', () => {
     it('emits the identifier of a marked passage that is clicked', async () => {
       const h = open(marked());
       await ready();
@@ -1108,7 +1517,6 @@ describe('NotesController', () => {
       const h = open(marked());
       await ready();
       h.render(markedHtml());
-      h.controller.reveal(ONE);
 
       h.widget.disposed.emit(undefined);
 

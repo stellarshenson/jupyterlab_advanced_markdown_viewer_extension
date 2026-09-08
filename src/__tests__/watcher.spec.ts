@@ -448,6 +448,32 @@ describe('FileWatcher', () => {
     expect(events).toEqual(['applied']);
   });
 
+  it('applies nothing when a CRLF file holds what the document holds as LF', async () => {
+    watcher.dispose();
+    events.length = 0;
+    // The Context loads a CRLF file as LF and puts the CR back on save, so
+    // the document and the file agree even though their bytes differ.
+    fixture = makeFixture('# one\n\ntwo\n');
+    await create();
+    fixture.write('# one\r\n\r\ntwo\r\n', 'h1');
+    await change();
+    expect(fixture.transactions()).toBe(0);
+    expect(events).toEqual([]);
+    expect(fixture.source()).toBe('# one\n\ntwo\n');
+  });
+
+  it('applies a CRLF write as LF text', async () => {
+    watcher.dispose();
+    events.length = 0;
+    fixture = makeFixture('# one\n');
+    await create();
+    fixture.write('# one\r\n\r\ntwo\r\n', 'h2');
+    await change();
+    expect(fixture.source()).toBe('# one\n\ntwo\n');
+    expect(fixture.source()).not.toContain('\r');
+    expect(events).toEqual(['applied']);
+  });
+
   it('applies a change to a five thousand line document in under 100 ms', async () => {
     watcher.dispose();
     events.length = 0;

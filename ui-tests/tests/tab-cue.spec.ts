@@ -112,7 +112,7 @@ test.describe('the marker of a change that arrived', () => {
     await openPreview(page, `${tmpPath}/${FILE}`);
   });
 
-  test('is a half-filled circle in the tab own text colour', async ({
+  test('is a half-filled circle in the tab own text colour, with a tooltip', async ({
     page,
     tmpPath
   }) => {
@@ -126,6 +126,16 @@ test.describe('the marker of a change that arrived', () => {
     // Written in currentColor, so a colour another extension gave the tab is
     // what the marker shows too.
     expect(marker.color).toBe(marker.labelColor);
+
+    // The commonest marker names its state in words as well, so it does not
+    // read as a loading glyph to a first-time reader (DEF-CUE-30). Read past
+    // the caption the document manager writes once the applied change has
+    // reached the Context, so the words are shown to hold through it.
+    await page.waitForTimeout(1500);
+    const tooltip = await page
+      .locator(`.lm-TabBar-tab.${UPDATED}`)
+      .getAttribute('title');
+    expect(tooltip).toContain('changed on disk');
   });
 
   test('turns a quarter at a time, faster while changes keep arriving', async ({

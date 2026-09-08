@@ -1,4 +1,5 @@
 import { Signal } from '@lumino/signaling';
+import { Title } from '@lumino/widgets';
 
 /**
  * The watcher polls a server; here it is a pair of signals the test fires.
@@ -51,7 +52,7 @@ function makeWidget() {
   const content = {};
   const widget: any = {
     node,
-    title: { className: '' },
+    title: new Title({ owner: {} }),
     isVisible: true,
     context: { path: 'live.md' },
     content: Object.assign(content, {

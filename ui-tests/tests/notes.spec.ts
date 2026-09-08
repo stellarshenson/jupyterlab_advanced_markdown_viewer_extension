@@ -1,11 +1,18 @@
 import { expect, test } from '@jupyterlab/galata';
-import * as fs from 'fs';
-import * as path from 'path';
 
 import {
+  choose,
+  entry,
   FILE,
+  fileText,
+  IPoint,
   labFixtures,
+  mark,
+  menu,
+  onDisk,
+  openMenu,
   openPreview,
+  select,
   settings,
   typeInEditor
 } from './helpers';
@@ -178,16 +185,6 @@ const MANY_MARKS = [
   ''
 ].join('\n');
 
-/** Where the test server keeps a contents-API path on disk. */
-const onDisk = (apiPath: string): string =>
-  path.join(__dirname, '..', ...apiPath.split('/'));
-
-/** What the file holds right now. */
-const fileText = (apiPath: string): string =>
-  fs.existsSync(onDisk(apiPath))
-    ? fs.readFileSync(onDisk(apiPath), 'utf8')
-    : '';
-
 /**
  * Wait until the file on disk says what the test waits for, and answer with
  * it. A write is finished when the save has landed, not when the panel has
@@ -211,88 +208,9 @@ const openingIds = (text: string): string[] =>
 const closingIds = (text: string): string[] =>
   [...text.matchAll(/<!-- \/mark:([0-9a-f-]{36}) -->/g)].map(match => match[1]);
 
-/** Where on the screen a right click lands. */
-interface IPoint {
-  x: number;
-  y: number;
-}
-
-/**
- * Select rendered text and answer with a point inside the selection.
- *
- * The range runs from the first character of `from` to the last character of
- * `to`, each found in the first text node holding it, so a selection crosses
- * blocks by naming a word in each. The point is the middle of the selection's
- * first rectangle, which is inside the selected text: Chromium keeps a
- * selection when the right click falls inside it.
- */
-async function select(page: any, from: string, to?: string): Promise<IPoint> {
-  return page.evaluate(
-    ([first, last]: [string, string | null]) => {
-      const roots = Array.from(
-        document.querySelectorAll<HTMLElement>('.jp-RenderedMarkdown')
-      );
-      const root = roots.find(node => node.offsetParent !== null) ?? roots[0];
-      if (!root) {
-        throw new Error('no rendered Markdown is on screen');
-      }
-      const find = (needle: string): { node: Node; at: number } => {
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        let node = walker.nextNode();
-        while (node) {
-          const at = (node.textContent ?? '').indexOf(needle);
-          if (at >= 0) {
-            return { node, at };
-          }
-          node = walker.nextNode();
-        }
-        throw new Error(`no rendered text node holds "${needle}"`);
-      };
-      const start = find(first);
-      const end = last === null ? start : find(last);
-      (start.node.parentElement as HTMLElement).scrollIntoView({
-        block: 'center'
-      });
-      const range = document.createRange();
-      range.setStart(start.node, start.at);
-      range.setEnd(end.node, end.at + (last ?? first).length);
-      const selection = window.getSelection();
-      if (!selection) {
-        throw new Error('the document has no selection');
-      }
-      selection.removeAllRanges();
-      selection.addRange(range);
-      const box = range.getClientRects()[0];
-      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-    },
-    [from, to ?? null]
-  );
-}
-
 /** Drop the selection, for the tests that need the menu without one. */
 const clearSelection = (page: any): Promise<void> =>
   page.evaluate(() => window.getSelection()?.removeAllRanges());
-
-/** The open context menu. */
-const menu = (page: any) => page.locator('.lm-Menu-content');
-
-/**
- * One entry of the open context menu, by its whole label. An entry that is
- * not offered is still in the DOM carrying `lm-mod-hidden`, so this finds it
- * either way and the class is what says whether it is offered.
- */
-const entry = (page: any, label: string) =>
-  page.locator('.lm-Menu-item', {
-    has: page.locator('.lm-Menu-itemLabel', {
-      hasText: new RegExp(`^${label}$`)
-    })
-  });
-
-/** Right click at a point and wait for the menu. */
-async function openMenu(page: any, at: IPoint): Promise<void> {
-  await page.mouse.click(at.x, at.y, { button: 'right' });
-  await expect(menu(page).first()).toBeVisible();
-}
 
 /** The middle of the rendered preview, which is always on screen. */
 async function previewCentre(page: any): Promise<IPoint> {
@@ -304,23 +222,6 @@ async function previewCentre(page: any): Promise<IPoint> {
 async function openMenuOnPreview(page: any): Promise<void> {
   await clearSelection(page);
   await openMenu(page, await previewCentre(page));
-}
-
-/** Choose an entry of the open menu and wait for the menu to go. */
-async function choose(page: any, label: string): Promise<void> {
-  await entry(page, label).click();
-  await expect(menu(page)).toHaveCount(0);
-}
-
-/** Select a passage and mark it in a colour. */
-async function mark(
-  page: any,
-  from: string,
-  to?: string,
-  colour = 'yellow'
-): Promise<void> {
-  await openMenu(page, await select(page, from, to));
-  await choose(page, `Mark ${colour}`);
 }
 
 /** The panel of the preview in front, absent while the panel is hidden. */
@@ -701,6 +602,9 @@ test.describe('marking a passage', () => {
     expect(text).toContain(FIRST);
     await expect(painted(page)).toHaveCount(0);
     await expect(rows(page)).toHaveCount(0);
+    await expect(panel(page).locator('.jp-AdvancedMd-notesCount')).toHaveText(
+      'No marks'
+    );
   });
 
   test('ACC-NOTES-50 opens the panel on the first mark', async ({ page }) => {
@@ -732,6 +636,49 @@ test.describe('marking a passage', () => {
     expect(text).toContain('quinces and medlars');
     expect(text).not.toContain('cherries and figs');
     expect(text).toContain(`${opening(openingIds(text)[0])}${P1}`);
+    await savedCleanly(page);
+  });
+
+  test("DEF-NOTES-36 applies the route's edits once when the watcher read the file back first", async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    // Only the answer is held back: the server writes the file at once, the
+    // watcher reads it back into the document, and the 200 reaches the page
+    // after the document already holds the markers.
+    let delivered = false;
+    await page.route(/\/write(\?.*)?$/, async (route: any) => {
+      const response = await route.fetch();
+      await new Promise(resolve => setTimeout(resolve, 400));
+      await route.fulfill({ response });
+      delivered = true;
+    });
+
+    await mark(page, 'apples');
+
+    await expect.poll(() => delivered, { timeout: 15000 }).toBe(true);
+    await expect
+      .poll(() => openingIds(fileText(target)).length, { timeout: 15000 })
+      .toBe(1);
+    // The refresh after the 200 has run by now; what the document holds is
+    // what stays.
+    await page.waitForTimeout(500);
+    const document = await page.evaluate((path: string) => {
+      const open = Array.from(
+        (window as any).jupyterapp.shell.widgets('main')
+      ) as any[];
+      const widget = open.find(w => w.context && w.context.path === path);
+      return {
+        model: widget.context.model.toString() as string,
+        dirty: widget.context.model.dirty as boolean
+      };
+    }, target);
+    expect(openingIds(document.model)).toHaveLength(1);
+    expect(closingIds(document.model)).toHaveLength(1);
+    expect(openingIds(fileText(target))).toHaveLength(1);
+    expect(document.model).toBe(fileText(target));
+    expect(document.dirty).toBe(false);
     await savedCleanly(page);
   });
 
@@ -1083,6 +1030,75 @@ test.describe('a marker written by hand inside a word', () => {
     // the passage and the full stop that word ends with.
     await expect(painted(page)).toHaveCount(1);
     await expect(painted(page).first()).toHaveText(P1);
+  });
+});
+
+test.describe('a document whose panel opens as a minimap', () => {
+  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+
+  test.beforeEach(async ({ page, tmpPath }) => {
+    await page.contents.uploadContent(
+      `${DOC}<!-- marks:settings panel=minimap -->\n`,
+      'text',
+      `${tmpPath}/${FILE}`
+    );
+    await openPreview(page, `${tmpPath}/${FILE}`, FIRST);
+  });
+
+  test('DEF-NOTES-28 opens the note entry from the marked passage', async ({
+    page,
+    tmpPath
+  }) => {
+    await mark(page, P1);
+    const before = await fileWhen(
+      `${tmpPath}/${FILE}`,
+      holds => openingIds(holds).length === 1
+    );
+    const id = openingIds(before)[0];
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-minimap/);
+
+    // The minimap renders no rows, so the entry needs the expanded state.
+    await painted(page).first().click();
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-expanded/);
+    await writeNote(page, 'Say which orchard.');
+
+    const text = await fileWhen(`${tmpPath}/${FILE}`, holds =>
+      holds.includes('Say which orchard.')
+    );
+    expect(text).toContain(`-->${P1}${closing(id)}`);
+    expect(text).toContain('<!-- marks:settings panel=expanded -->');
+  });
+});
+
+test.describe('a file with CRLF line endings', () => {
+  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+
+  test('DEF-APPLY-27 keeps one carriage return per line through two marks', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    const crlf = DOC.replace(/\n/g, '\r\n');
+    await page.contents.uploadContent(crlf, 'text', target);
+    expect(fileText(target)).toBe(crlf);
+    await openPreview(page, target, FIRST);
+
+    await mark(page, P1);
+    await fileWhen(target, holds => openingIds(holds).length === 1);
+    await mark(page, P3);
+    const text = await fileWhen(
+      target,
+      holds => openingIds(holds).length === 2
+    );
+
+    // The Context loads a CRLF file as LF and puts the CR back on each save;
+    // the watcher compares and applies in LF as well, so the open applies
+    // nothing and no save adds a CR on top of the one put back.
+    const [first, third] = openingIds(text);
+    expect(text).toContain(`-->${P1}${closing(first)}`);
+    expect(text).toContain(`-->${P3}${closing(third)}`);
+    expect(text).not.toContain('\r\r');
+    expect(text.split('\r\n').length).toBe(text.split('\n').length);
   });
 });
 
@@ -1633,6 +1649,76 @@ test.describe('typing a note into a row', () => {
       /jp-AdvancedMd-notesRow-selected/
     );
   });
+
+  test('DEF-NOTES-29 keeps the caret where it was through an external write', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(MARKED, 'text', target);
+    await openPreview(page, target, FIRST);
+
+    await rows(page).first().locator('.jp-AdvancedMd-notesToggle').click();
+    await panelButton(page, 'Add note').click();
+    const box = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(box).toBeVisible();
+    await box.click();
+    await page.keyboard.type('hello world');
+    for (let step = 0; step < 6; step++) {
+      await page.keyboard.press('ArrowLeft');
+    }
+
+    // The write rebuilds the panel; the entry is a new textarea carrying the
+    // draft, the focus and the caret, so the next keystroke lands where the
+    // reader left off.
+    await writeExternally(
+      page,
+      target,
+      MARKED.replace('grapes and melons', 'quinces and medlars')
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'quinces and medlars'
+    );
+    await page.keyboard.type('X');
+    await expect(box).toHaveValue('helloX world');
+  });
+
+  test('DEF-NOTES-34 leaves the caret alone while the preview holds a selection', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(MARKED, 'text', target);
+    await openPreview(page, target, FIRST);
+
+    await rows(page).first().locator('.jp-AdvancedMd-notesToggle').click();
+    await panelButton(page, 'Add note').click();
+    const box = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(box).toBeVisible();
+    // The reader selected a passage before turning to the note, so the
+    // controller holds a selection it would put back after the write.
+    await select(page, P2);
+    await box.click();
+    await page.keyboard.type('hello world');
+    for (let step = 0; step < 6; step++) {
+      await page.keyboard.press('ArrowLeft');
+    }
+
+    // Putting the selection back over the preview while the textarea holds
+    // the focus would move the caret, so it is left where it is until the
+    // reader leaves the entry.
+    await writeExternally(
+      page,
+      target,
+      MARKED.replace('grapes and melons', 'quinces and medlars')
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'quinces and medlars'
+    );
+    await page.waitForTimeout(700);
+    await page.keyboard.type('X');
+    await expect(box).toHaveValue('helloX world');
+  });
 });
 
 test.describe('live updates turned off while a change waits on disk', () => {
@@ -1692,5 +1778,342 @@ test.describe('live updates turned off while a change waits on disk', () => {
       { timeout: 10000 }
     );
     expect(openingIds(fileText(target))).toHaveLength(0);
+  });
+});
+
+/**
+ * Start a writer inside the page that rewrites the fourth paragraph once a
+ * second, each write numbered, the way an agent streaming into the file does.
+ */
+async function startWriter(page: any, apiPath: string): Promise<void> {
+  await page.evaluate(
+    ([target, doc]: [string, string]) => {
+      const contents = (window as any).jupyterapp.serviceManager.contents;
+      const writer = { count: 0, timer: 0 };
+      writer.timer = window.setInterval(() => {
+        writer.count += 1;
+        void contents.save(target, {
+          type: 'file',
+          format: 'text',
+          content: doc.replace(
+            'grapes and melons.',
+            `grapes and melons ${writer.count}.`
+          )
+        });
+      }, 1000);
+      (window as any).__streamWriter = writer;
+    },
+    [apiPath, DOC]
+  );
+}
+
+/**
+ * Stop that writer and answer with the number of the last write, once the
+ * preview shows it.
+ */
+async function stopWriter(page: any): Promise<number> {
+  const count: number = await page.evaluate(() => {
+    const writer = (window as any).__streamWriter;
+    window.clearInterval(writer.timer);
+    return writer.count;
+  });
+  await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+    `grapes and melons ${count}.`
+  );
+  return count;
+}
+
+/** The selected text of the page, as the reader sees it highlighted. */
+const selectedText = (page: any): Promise<string> =>
+  page.evaluate(() => window.getSelection()?.toString() ?? '');
+
+test.describe('a stream of writes while the reader marks', () => {
+  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+
+  test.beforeEach(async ({ page, tmpPath }) => {
+    await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`, FIRST);
+  });
+
+  test('DEF-NOTES-34 marks after a write landed between the menu and the choice', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await startWriter(page, target);
+    await openMenu(page, await select(page, P1));
+    // At least one write lands while the menu is open: its render replaces
+    // the nodes the selection and the menu's hit test pointed at.
+    await page.waitForTimeout(1200);
+    const count = await stopWriter(page);
+    await expect(menu(page).first()).toBeVisible();
+
+    await choose(page, 'Mark yellow');
+
+    const text = await fileWhen(
+      target,
+      holds => openingIds(holds).length === 1
+    );
+    expect(text).toContain(`${opening(openingIds(text)[0])}${P1}`);
+    expect(text).toContain(`grapes and melons ${count}.`);
+    await savedCleanly(page);
+  });
+
+  test('DEF-NOTES-34 keeps the selection through a write', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    // A click in the preview focuses the viewer node; the selection is made
+    // by script, so the focus is given the same way.
+    await page.locator('.jp-MarkdownViewer:visible').focus();
+    await select(page, P1);
+    expect(await selectedText(page)).toBe(P1);
+
+    await writeExternally(
+      page,
+      target,
+      DOC.replace('grapes and melons', 'quinces and medlars')
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'quinces and medlars'
+    );
+    await page.waitForTimeout(600);
+
+    expect(await selectedText(page)).toBe(P1);
+  });
+
+  test('DEF-NOTES-34 keeps the selection through a write before it', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.locator('.jp-MarkdownViewer:visible').focus();
+    await select(page, P3);
+    expect(await selectedText(page)).toBe(P3);
+
+    // The change lands in the first paragraph and is longer than the words
+    // it replaces, so the selection's offsets into the rendered text move.
+    await writeExternally(
+      page,
+      target,
+      DOC.replace('apples and pears', 'apples, pears and a great many quinces')
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'a great many quinces'
+    );
+    await page.waitForTimeout(600);
+    expect(await selectedText(page)).toBe(P3);
+
+    await page.keyboard.press('Control+Shift+M');
+    const text = await fileWhen(
+      target,
+      holds => openingIds(holds).length === 1
+    );
+    const id = openingIds(text)[0];
+    expect(text).toContain(`${opening(id)}${P3}${closing(id)}`);
+  });
+});
+
+test.describe('marking from the keyboard', () => {
+  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+
+  test.beforeEach(async ({ page, tmpPath }) => {
+    await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`, FIRST);
+  });
+
+  test('ACC-NOTES-114 marks the selection from the keyboard', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    // A selection made with the keyboard needs caret browsing, which cannot
+    // be driven here, so the selection is made by script and the keystroke is
+    // real.
+    await select(page, P1);
+    await page.locator('.jp-MarkdownViewer:visible').focus();
+    await page.keyboard.press('Control+Shift+M');
+
+    const text = await fileWhen(
+      target,
+      holds => openingIds(holds).length === 1
+    );
+    const id = openingIds(text)[0];
+    expect(id).toMatch(UUID);
+    expect(text).toContain(`${opening(id)}${P1}${closing(id)}`);
+    await savedCleanly(page);
+  });
+
+  test('ACC-NOTES-114 offers the command in the palette', async ({
+    page,
+    tmpPath
+  }) => {
+    await select(page, P1);
+    await page.evaluate(async () => {
+      await (window as any).jupyterapp.commands.execute(
+        'apputils:activate-command-palette'
+      );
+    });
+
+    const item = page.locator('.lm-CommandPalette-item', {
+      has: page.locator('.lm-CommandPalette-itemLabel', {
+        hasText: /^Mark the selected passage$/
+      })
+    });
+    await expect(item).toHaveCount(1);
+    // The palette's input took the focus, which collapses the document's
+    // selection; the command still knows the passage the reader selected.
+    await expect(item).not.toHaveClass(/lm-mod-disabled/);
+
+    // The item is read again when it is chosen, after the focus moved and the
+    // document's selection collapsed, and that read must still mark.
+    await item.click();
+    const text = await fileWhen(
+      `${tmpPath}/${FILE}`,
+      holds => openingIds(holds).length === 1
+    );
+    const id = openingIds(text)[0];
+    expect(text).toContain(`${opening(id)}${P1}${closing(id)}`);
+  });
+});
+
+test.describe('a note saved after the mark vanished', () => {
+  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+
+  test('DEF-NOTES-35 keeps a note whose mark vanished before Save', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(MARKED, 'text', target);
+    await openPreview(page, target, FIRST);
+    await rows(page).first().locator('.jp-AdvancedMd-notesToggle').click();
+    await panelButton(page, 'Add note').click();
+    const box = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(box).toBeVisible();
+
+    // The markers go from the file while the entry is open: the row stays,
+    // unanchored, and so does the entry.
+    await writeExternally(page, target, DOC);
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesState')
+    ).toHaveText('unanchored');
+    await box.fill('Written into a mark that is gone.');
+    await panelButton(page, 'Save').click();
+
+    // Nothing to write the note into: the text stays in front of the reader
+    // instead of vanishing without a word. The draft is read only after the
+    // save round trip has answered, because until then it is there whatever
+    // the answer will be.
+    await page.waitForTimeout(1500);
+    await expect(box).toHaveValue('Written into a mark that is gone.');
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesState')
+    ).toHaveText('unanchored');
+    expect(fileText(target)).not.toContain('Written into a mark');
+  });
+});
+
+test.describe('the list a screen reader moves through', () => {
+  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+
+  test('ACC-CUE-115 lists the marks as list items', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`, FIRST);
+    await mark(page, P1);
+
+    await expect(
+      panel(page).locator('.jp-AdvancedMd-notesList')
+    ).toHaveAttribute('role', 'list');
+    await expect(rows(page).first()).toHaveAttribute('role', 'listitem');
+    await expect(rows(page).first()).not.toHaveAttribute('aria-current');
+
+    await rows(page).first().locator('.jp-AdvancedMd-notesHead').click();
+    await expect(rows(page).first()).toHaveAttribute('aria-current', 'true');
+  });
+
+  test('ACC-CUE-115 names the colour of each swatch', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(MARKED, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`, FIRST);
+    await expect(rows(page)).toHaveCount(3);
+
+    // The swatch is the only place a row shows its colour, so a screen
+    // reader is told the colour by name.
+    const swatches = rows(page).locator('.jp-AdvancedMd-notesSwatch');
+    for (let i = 0; i < 3; i++) {
+      await expect(swatches.nth(i)).toHaveAttribute('role', 'img');
+    }
+    await expect(swatches.nth(0)).toHaveAttribute('aria-label', 'yellow');
+    await expect(swatches.nth(1)).toHaveAttribute('aria-label', 'blue');
+    await expect(swatches.nth(2)).toHaveAttribute('aria-label', 'pink');
+  });
+
+  test('ACC-CUE-115 names each worded control by the words on it', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`, FIRST);
+    await mark(page, P1);
+    await openRow(page);
+
+    // The accessible name starts with the visible label (WCAG 2.5.3), so a
+    // reader who says "Add note" or "Cancel" reaches the button.
+    await expect(panelButton(page, 'Add note')).toHaveAttribute(
+      'title',
+      'Add note to this mark'
+    );
+    await panelButton(page, 'Add note').click();
+    await expect(panelButton(page, 'Cancel')).toHaveAttribute(
+      'title',
+      'Cancel this note'
+    );
+  });
+});
+
+test.describe('marking with live updates off', () => {
+  test.use({
+    mockSettings: settings({
+      enabled: false,
+      fadeDuration: 500,
+      animation: false
+    })
+  });
+
+  test('ACC-NOTES-112 saves through the Context and not through the route', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(DOC, 'text', target);
+    await openPreview(page, target, FIRST);
+
+    // Every write the page sends from here on: the route's POST, or the PUT
+    // a Context save sends to the contents API.
+    const writes: string[] = [];
+    page.on('response', (response: any) => {
+      const method = response.request().method();
+      if (method === 'POST' || method === 'PUT') {
+        const pathname = decodeURIComponent(new URL(response.url()).pathname);
+        writes.push(`${method} ${pathname} ${response.status()}`);
+      }
+    });
+
+    await mark(page, P1);
+    await fileWhen(target, holds => openingIds(holds).length === 1);
+
+    // With the switch off nothing moves the document's record of the file,
+    // so the route is not taken: the mark goes the way it went before the
+    // route, through one save.
+    expect(writes.filter(entry => entry.includes('/write '))).toEqual([]);
+    expect(writes.filter(entry => entry.startsWith('PUT '))).toHaveLength(1);
+    await savedCleanly(page);
   });
 });

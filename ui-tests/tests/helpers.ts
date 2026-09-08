@@ -8,6 +8,8 @@
  */
 
 import { expect, galata } from '@jupyterlab/galata';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export const PLUGIN_ID = 'jupyterlab_advanced_markdown_viewer_extension:plugin';
 export const FILE = 'live.md';
@@ -157,4 +159,114 @@ export async function openPreview(
   await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
     firstText
   );
+}
+
+/** Where the test server keeps a contents-API path on disk. */
+export const onDisk = (apiPath: string): string =>
+  path.join(__dirname, '..', ...apiPath.split('/'));
+
+/** What the file holds right now. */
+export const fileText = (apiPath: string): string =>
+  fs.existsSync(onDisk(apiPath))
+    ? fs.readFileSync(onDisk(apiPath), 'utf8')
+    : '';
+
+/** Where on the screen a right click lands. */
+export interface IPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Select rendered text and answer with a point inside the selection.
+ *
+ * The range runs from the first character of `from` to the last character of
+ * `to`, each found in the first text node holding it, so a selection crosses
+ * blocks by naming a word in each. The point is the middle of the selection's
+ * first rectangle, which is inside the selected text: Chromium keeps a
+ * selection when the right click falls inside it.
+ */
+export async function select(
+  page: any,
+  from: string,
+  to?: string
+): Promise<IPoint> {
+  return page.evaluate(
+    ([first, last]: [string, string | null]) => {
+      const roots = Array.from(
+        document.querySelectorAll<HTMLElement>('.jp-RenderedMarkdown')
+      );
+      const root = roots.find(node => node.offsetParent !== null) ?? roots[0];
+      if (!root) {
+        throw new Error('no rendered Markdown is on screen');
+      }
+      const find = (needle: string): { node: Node; at: number } => {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let node = walker.nextNode();
+        while (node) {
+          const at = (node.textContent ?? '').indexOf(needle);
+          if (at >= 0) {
+            return { node, at };
+          }
+          node = walker.nextNode();
+        }
+        throw new Error(`no rendered text node holds "${needle}"`);
+      };
+      const start = find(first);
+      const end = last === null ? start : find(last);
+      (start.node.parentElement as HTMLElement).scrollIntoView({
+        block: 'center'
+      });
+      const range = document.createRange();
+      range.setStart(start.node, start.at);
+      range.setEnd(end.node, end.at + (last ?? first).length);
+      const selection = window.getSelection();
+      if (!selection) {
+        throw new Error('the document has no selection');
+      }
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const box = range.getClientRects()[0];
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    },
+    [from, to ?? null]
+  );
+}
+
+/** The open context menu. */
+export const menu = (page: any) => page.locator('.lm-Menu-content');
+
+/**
+ * One entry of the open context menu, by its whole label. An entry that is
+ * not offered is still in the DOM carrying `lm-mod-hidden`, so this finds it
+ * either way and the class is what says whether it is offered.
+ */
+export const entry = (page: any, label: string) =>
+  page.locator('.lm-Menu-item', {
+    has: page.locator('.lm-Menu-itemLabel', {
+      hasText: new RegExp(`^${label}$`)
+    })
+  });
+
+/** Right click at a point and wait for the menu. */
+export async function openMenu(page: any, at: IPoint): Promise<void> {
+  await page.mouse.click(at.x, at.y, { button: 'right' });
+  await expect(menu(page).first()).toBeVisible();
+}
+
+/** Choose an entry of the open menu and wait for the menu to go. */
+export async function choose(page: any, label: string): Promise<void> {
+  await entry(page, label).click();
+  await expect(menu(page)).toHaveCount(0);
+}
+
+/** Select a passage and mark it in a colour. */
+export async function mark(
+  page: any,
+  from: string,
+  to?: string,
+  colour = 'yellow'
+): Promise<void> {
+  await openMenu(page, await select(page, from, to));
+  await choose(page, `Mark ${colour}`);
 }

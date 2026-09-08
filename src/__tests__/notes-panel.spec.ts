@@ -137,8 +137,14 @@ const scrolled: Element[] = [];
 /** What the panel asked the controller to do, in order. */
 let asked: string[] = [];
 
+/** What the controller answers a note with: whether the markers were found. */
+let noteWritten = true;
+
 const handlers: INotesPanelHandlers = {
-  addNote: (id, text) => asked.push(`note ${id} ${text}`),
+  addNote: async (id, text) => {
+    asked.push(`note ${id} ${text}`);
+    return noteWritten;
+  },
   setColour: (id, colour) => asked.push(`colour ${id} ${colour}`),
   removeMark: id => asked.push(`remove ${id}`),
   setState: state => asked.push(`state ${state}`)
@@ -209,6 +215,7 @@ beforeEach(() => {
   jest.useFakeTimers();
   scrolled.length = 0;
   asked = [];
+  noteWritten = true;
   root = document.createElement('div');
   root.className = 'jp-RenderedMarkdown';
   document.body.appendChild(root);
@@ -389,6 +396,47 @@ describe('a row', () => {
     );
   });
 
+  it('lists the marks with list roles and marks the selected one current', () => {
+    const list = panel.node.querySelector(`.${LIST_CLASS}`)!;
+    expect(list.getAttribute('role')).toBe('list');
+    expect(rows().map(row => row.getAttribute('role'))).toEqual([
+      'listitem',
+      'listitem'
+    ]);
+    expect(rows().map(row => row.getAttribute('aria-current'))).toEqual([
+      null,
+      null
+    ]);
+
+    panel.selectMark('b');
+    expect(rows().map(row => row.getAttribute('aria-current'))).toEqual([
+      null,
+      'true'
+    ]);
+
+    // The swatch is the only place a row shows its colour, so a screen
+    // reader is told the colour by name.
+    panel.setMarks([
+      item('a', 'first passage'),
+      item('b', 'second passage', { mark: mark('b', { colour: 'pink' }) })
+    ]);
+    for (const row of rows()) {
+      const swatch = row.querySelector(`.${SWATCH_CLASS}`)!;
+      expect(swatch.getAttribute('role')).toBe('img');
+    }
+    expect(
+      rows().map(row =>
+        row.querySelector(`.${SWATCH_CLASS}`)!.getAttribute('aria-label')
+      )
+    ).toEqual(['yellow', 'pink']);
+
+    // The strip of ticks is not a list a reader moves through.
+    panel.state = 'minimap';
+    expect(
+      panel.node.querySelector(`.${MAP_CLASS}`)!.hasAttribute('role')
+    ).toBe(false);
+  });
+
   it('names the type of a mark it cannot edit and offers no control', () => {
     panel.setMarks([
       item('a', 'first passage', { mark: mark('a', { type: 'task' }) })
@@ -432,6 +480,22 @@ describe('selecting a mark', () => {
     expect(marked.classList.contains(FLASH_CLASS)).toBe(false);
   });
 
+  it('takes the flash off the passage it left when the reader picks another', () => {
+    panel.selectMark('a');
+    jest.advanceTimersByTime(FLASH_MS / 2);
+    panel.selectMark('b');
+
+    const first = root.querySelector<HTMLElement>('[data-mark="a"]')!;
+    const second = root.querySelector<HTMLElement>('[data-mark="b"]')!;
+    // Only one timeout is held, so a class left on the first passage would
+    // outlive every window and flash again whenever the animation restarts,
+    // which hiding and showing the tab does.
+    expect(first.classList.contains(FLASH_CLASS)).toBe(false);
+    expect(second.classList.contains(FLASH_CLASS)).toBe(true);
+    jest.advanceTimersByTime(FLASH_MS + 1);
+    expect(second.classList.contains(FLASH_CLASS)).toBe(false);
+  });
+
   it('selects on Enter, since a row is focusable', () => {
     expect(rows()[1].tabIndex).toBe(0);
     rows()[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
@@ -466,6 +530,23 @@ describe('selecting a mark', () => {
     panel.selectMark('a', true);
     expect(panel.node.querySelector('textarea')).not.toBeNull();
     expect(panel.selected).toBe('a');
+    expect(asked).toEqual([]);
+  });
+
+  it('asks for the expanded state when the entry is opened from the minimap', () => {
+    // A note entry exists only in the expanded state, so a reader who asked
+    // for the entry asked for that state; a plain selection asks for nothing.
+    panel.state = 'minimap';
+    panel.selectMark('a');
+    expect(asked).toEqual([]);
+    panel.selectMark('a', true);
+    expect(asked).toEqual(['state expanded']);
+  });
+
+  it('asks for the expanded state when the entry is opened while hidden', () => {
+    panel.state = 'hidden';
+    panel.selectMark('a', true);
+    expect(asked).toEqual(['state expanded']);
   });
 
   it('scrolls to nothing while the document has not been rendered', () => {
@@ -510,12 +591,28 @@ describe('writing a note', () => {
     box.dispatchEvent(new Event('input'));
   };
 
-  it('writes what was typed', () => {
+  it('writes what was typed', async () => {
     press(rows()[0], 'Add note');
     type('needs a number');
     press(rows()[0], 'Save');
     expect(asked).toEqual(['note a needs a number']);
+    await Promise.resolve();
     expect(panel.node.querySelector('textarea')).toBeNull();
+  });
+
+  it('keeps the draft when the note could not be written', async () => {
+    noteWritten = false;
+    press(rows()[0], 'Add note');
+    type('written too late');
+    press(rows()[0], 'Save');
+    await Promise.resolve();
+
+    // The markers were gone by the time the note was saved, so the text stays
+    // in front of the reader instead of vanishing with the mark.
+    expect(asked).toEqual(['note a written too late']);
+    expect(panel.node.querySelector('textarea')!.value).toBe(
+      'written too late'
+    );
   });
 
   it('writes nothing for an empty note, leaving a bare mark', () => {
@@ -539,6 +636,22 @@ describe('writing a note', () => {
     type('half a thought');
     panel.setMarks([item('a', 'first passage rewritten')]);
     expect(panel.node.querySelector('textarea')!.value).toBe('half a thought');
+  });
+
+  it('keeps the caret where it was through a change of the document', () => {
+    press(rows()[0], 'Add note');
+    type('hello world');
+    const before = panel.node.querySelector('textarea')!;
+    before.focus();
+    before.setSelectionRange(5, 5);
+
+    panel.setMarks([item('a', 'first passage')]);
+
+    const after = panel.node.querySelector('textarea')!;
+    expect(after).not.toBe(before);
+    expect(document.activeElement).toBe(after);
+    expect(after.value).toBe('hello world');
+    expect([after.selectionStart, after.selectionEnd]).toEqual([5, 5]);
   });
 
   it('drops the entry when the mark it belonged to is gone', () => {
@@ -575,6 +688,26 @@ describe('the controls of a row', () => {
   it('asks for the mark to be removed', () => {
     press(rows()[0], 'Remove');
     expect(asked).toEqual(['remove a']);
+  });
+
+  it('names every button for assistive technology by its title', () => {
+    press(rows()[0], 'Add note');
+    const buttons = Array.from(panel.node.querySelectorAll('button'));
+    // The close control, the toggle, Add note, the four dots, Remove, Save
+    // and Cancel.
+    expect(buttons).toHaveLength(10);
+    for (const button of buttons) {
+      expect(button.getAttribute('aria-label')).toBe(button.title);
+      // A button with a worded label is spoken and voice-driven by that
+      // label, so the accessible name starts with it.
+      if (/[A-Za-z]/.test(button.textContent ?? '')) {
+        expect(
+          button
+            .getAttribute('aria-label')!
+            .startsWith(button.textContent!.trim())
+        ).toBe(true);
+      }
+    }
   });
 
   it('paints the swatch in the mark colour', () => {
@@ -768,12 +901,54 @@ describe('the mark colours in the stylesheet', () => {
     }
   });
 
-  it('turns the flash off under reduced motion', () => {
+  it('keeps the flash under reduced motion, and it ramps nothing but a colour', () => {
+    // The flash is what tells the reader which passage the row they chose
+    // belongs to, and a colour ramp is not motion - the same reading that
+    // kept the removal ghost's opacity fade under this preference. Losing it
+    // would leave a reduced-motion reader with a scroll and no locate signal.
+    // Written against the class rather than against a media block, because a
+    // rule put back as the second one inside the existing reduced-motion
+    // block is the likely shape of the regression, and a match bounded by the
+    // first closing brace would step straight over it.
     const guard = new RegExp(
-      '@media \\(prefers-reduced-motion: reduce\\) \\{\\s*' +
-        `\\.${FLASH_CLASS} \\{\\s*animation: none;\\s*\\}`
+      `\\.${FLASH_CLASS}[^{]*\\{[^}]*animation:\\s*none`
     );
-    expect(guard.test(css)).toBe(true);
+    expect(guard.test(css)).toBe(false);
+    const start = css.indexOf('@keyframes jp-AdvancedMd-mark-flash {');
+    expect(start).toBeGreaterThan(-1);
+    const frames = css.slice(start, css.indexOf('\n}', start));
+    expect(frames.match(/^ {4}[a-z-]+:/gm)).toEqual(['    background-color:']);
+  });
+
+  it('flashes light enough to be seen away from where the eye already is', () => {
+    // The eye finds a passage by lightness, not by hue. The keyframe sets
+    // background-color on the mark span itself, so during the flash the
+    // mark's own colour is REPLACED rather than covered: the flash composites
+    // over the page, and what the reader perceives is the step between the
+    // mark at rest and the flash, both taken over the same page. A mid grey
+    // over a dark theme lands within a tenth of a percent of the yellow mark's
+    // own lightness, which is a hue rotation nobody sees outside the point
+    // they are already looking at - the one place the flash is not needed.
+    for (const theme of themes) {
+      const flashed = over(
+        declaration(
+          theme.name === 'dark' ? "body[data-jp-theme-light='false']" : ':root',
+          '--jp-AdvancedMd-mark-flash-bg'
+        ),
+        theme.background
+      );
+      // Readable at the peak, on every theme.
+      expect(contrast(flashed, theme.text)).toBeGreaterThan(4.5);
+      for (const colour of MARK_COLOURS) {
+        const marked = over(
+          declaration(theme.rule(colour), 'background-color'),
+          theme.background
+        );
+        expect(
+          Math.abs(luminance(flashed) - luminance(marked))
+        ).toBeGreaterThan(0.05);
+      }
+    }
   });
 
   it('sets nothing but a background and a transition on a mark', () => {

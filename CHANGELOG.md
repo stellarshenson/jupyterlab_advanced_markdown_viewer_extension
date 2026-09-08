@@ -2,6 +2,35 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [0.6.41] - 2026-09-08
+
+### Added
+
+- A keyboard route to marking: select a passage with caret browsing (F7) and press Accel Shift M, or run Mark the selected passage from the command palette
+- Marks are written through the extension's own server route, which compares the file with what the preview holds and writes under a lock, so marking while an agent streams writes raises no File Changed dialog and the preview keeps following
+- A tooltip on the turning half circle, the marker of the commonest state, naming it in words as the held square and the missing cross already did; every marker tooltip keeps the document's own Name, Path and Last Modified lines below it
+
+### Changed
+
+- The mark flash and the removal ghost's fade keep running when the operating system asks for reduced motion: a colour or opacity ramp is not motion, and suppressing them cost a reader the signal locating a chosen passage and put the layout jump at removal back on screen. The three tab markers, which do move, still stand still under that preference
+- The grey of the mark flash is themed, so choosing a row in the notes panel is visible over a dark theme; the previous grey sat within a tenth of a percent of the yellow mark's own lightness there
+
+### Fixed
+
+- A file with CRLF line endings gained one carriage return per line on every save once the preview had opened it
+- A mark made while writes streamed in faster than one every 200 ms could raise the File Changed dialog, where Overwrite discarded the writer's lines; a line could also be lost with no dialog at all
+- A note typed into the panel could reach no document while the note box closed as though it had been saved, when the reader typed in the editor or a second write landed inside the mark's own write
+- Marking a passage while a write was in flight could apply the mark's edits twice, mark the document clean while it differed from disk, and write the garbled text to the file on the next mark
+- Add note and a click on a passage opened no note entry while the panel was a minimap or hidden, and on the delayed path the mark was written but the note box never opened
+- The note caret jumped to the end of the draft on every external write
+- An applied write collapsed the reader's selection, so a mark could not be made while a document was being written to
+- A note was discarded without a word when the mark's markers had vanished from the file before Save
+- The passage a note was being written about carried no highlight until the viewer's own render timeout had run
+- A passage flashed for an earlier row kept its flash and played it again when the tab was hidden and shown
+- Panel buttons were announced to assistive technology by their glyph instead of their title
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## [0.6.28] - 2026-09-07
 
 ### Added

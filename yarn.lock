@@ -2214,7 +2214,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@jupyterlab/apputils@npm:^4.7.3":
+"@jupyterlab/apputils@npm:^4.0.0, @jupyterlab/apputils@npm:^4.7.3":
   version: 4.7.3
   resolution: "@jupyterlab/apputils@npm:4.7.3"
   dependencies:
@@ -7642,6 +7642,7 @@ __metadata:
     "@jupyter/builder": ^1.2.0
     "@jupyter/eslint-plugin": ^1.1.0
     "@jupyterlab/application": ^4.0.0
+    "@jupyterlab/apputils": ^4.0.0
     "@jupyterlab/coreutils": ^6.0.0
     "@jupyterlab/docregistry": ^4.0.0
     "@jupyterlab/markdownviewer": ^4.0.0

@@ -103,8 +103,12 @@ export interface INotesPanelItem {
  * panel neither parses nor writes the file.
  */
 export interface INotesPanelHandlers {
-  /** Add a note entry to a mark. Called only with text that is not blank. */
-  addNote(id: string, text: string): void;
+  /**
+   * Add a note entry to a mark. Called only with text that is not blank.
+   * Answers whether the note was written, which it is not when the mark's
+   * markers are no longer in the document.
+   */
+  addNote(id: string, text: string): Promise<boolean>;
   /** Give a mark another colour. */
   setColour(id: string, colour: MarkColour): void;
   /** Remove both markers of a mark, leaving the passage as it is. */
@@ -204,6 +208,9 @@ function button(
   element.className = className;
   element.textContent = label;
   element.title = title;
+  // Assistive technology reads the label, which for most of these buttons is
+  // a glyph; the title is what the button does.
+  element.setAttribute('aria-label', title);
   element.addEventListener('click', onClick);
   return element;
 }
@@ -261,8 +268,9 @@ export class NotesPanel extends Widget {
    * Replace the listed marks.
    *
    * Which rows are open, which is selected and a note still being written are
-   * all kept, because the marks are re-read on every change of the document
-   * and a reader typing a note must not lose it to a change elsewhere.
+   * all kept, the caret with the text, because the marks are re-read on every
+   * change of the document and a reader typing a note must not lose it, or
+   * their place in it, to a change elsewhere.
    */
   setMarks(items: INotesPanelItem[]): void {
     this._items = items;
@@ -292,6 +300,11 @@ export class NotesPanel extends Widget {
     if (!this._items.some(item => item.mark.id === id)) {
       return;
     }
+    // A note entry exists only in the expanded state, and a reader who asked
+    // for the entry asked for the state that holds it.
+    if (openNote && this._state !== 'expanded') {
+      this._handlers.setState('expanded');
+    }
     this._selected = id;
     this._open.add(id);
     if (openNote && this._entry?.id !== id) {
@@ -320,14 +333,22 @@ export class NotesPanel extends Widget {
    */
   private _render(): void {
     const active = document.activeElement;
-    const keepFocus =
-      this._focus ||
-      (active instanceof HTMLTextAreaElement && this._body.contains(active));
+    const typing =
+      active instanceof HTMLTextAreaElement && this._body.contains(active);
+    const keepFocus = this._focus || typing;
+    const caret = typing ? [active.selectionStart, active.selectionEnd] : null;
     this._focus = false;
 
     this._count.textContent = countLabel(this._items.length);
     this._body.className = this._state === 'minimap' ? MAP_CLASS : LIST_CLASS;
     this._body.textContent = '';
+    // The rows are a list a screen reader moves through; the strip of ticks
+    // is not.
+    if (this._state === 'expanded') {
+      this._body.setAttribute('role', 'list');
+    } else {
+      this._body.removeAttribute('role');
+    }
     if (this._state === 'hidden') {
       return;
     }
@@ -337,7 +358,11 @@ export class NotesPanel extends Widget {
       );
     }
     if (keepFocus) {
-      this._body.querySelector('textarea')?.focus();
+      const text = this._body.querySelector('textarea');
+      text?.focus();
+      if (text && caret) {
+        text.setSelectionRange(caret[0], caret[1]);
+      }
     }
   }
 
@@ -353,8 +378,10 @@ export class NotesPanel extends Widget {
     row.className = ROW_CLASS;
     row.dataset.mark = mark.id;
     row.tabIndex = 0;
+    row.setAttribute('role', 'listitem');
     if (mark.id === this._selected) {
       row.classList.add(SELECTED_CLASS);
+      row.setAttribute('aria-current', 'true');
     }
     row.addEventListener('keydown', event => {
       // Every control of the row is a descendant of it, so only an Enter
@@ -371,6 +398,9 @@ export class NotesPanel extends Widget {
     head.addEventListener('click', () => this.selectMark(mark.id));
     const swatch = document.createElement('span');
     swatch.className = `${SWATCH_CLASS} ${colourClass(mark.colour)}`;
+    // The swatch is the only place the row shows its colour.
+    swatch.setAttribute('role', 'img');
+    swatch.setAttribute('aria-label', mark.colour);
     const passage = document.createElement('span');
     passage.className = PASSAGE_CLASS;
     passage.textContent = shorten(item.passage);
@@ -428,7 +458,7 @@ export class NotesPanel extends Widget {
     const controls = document.createElement('div');
     controls.className = CONTROLS_CLASS;
     controls.appendChild(
-      button(BUTTON_CLASS, 'Add note', 'Add a note to this mark', () => {
+      button(BUTTON_CLASS, 'Add note', 'Add note to this mark', () => {
         this._entry = { id: mark.id, text: '' };
         this._focus = true;
         this._render();
@@ -453,7 +483,10 @@ export class NotesPanel extends Widget {
    * The note entry: a text box, and the two ways out of it.
    *
    * Saving blank text writes nothing, so a mark stays bare rather than gaining
-   * an empty note line.
+   * an empty note line. The draft stays until the controller says whether the
+   * markers were found: a note on a mark whose markers vanished is kept in
+   * front of the reader, beside the row's unanchored line, rather than
+   * dropped.
    */
   private _form(id: string, draft: string): HTMLElement {
     const form = document.createElement('div');
@@ -467,15 +500,21 @@ export class NotesPanel extends Widget {
     form.appendChild(
       button(BUTTON_CLASS, 'Save', 'Save this note', () => {
         const written = text.value.trim();
-        this._entry = null;
-        this._render();
-        if (written) {
-          this._handlers.addNote(id, written);
+        if (!written) {
+          this._entry = null;
+          this._render();
+          return;
         }
+        void this._handlers.addNote(id, written).then(saved => {
+          if (saved && this._entry?.id === id) {
+            this._entry = null;
+          }
+          this._render();
+        });
       })
     );
     form.appendChild(
-      button(BUTTON_CLASS, 'Cancel', 'Discard this note', () => {
+      button(BUTTON_CLASS, 'Cancel', 'Cancel this note', () => {
         this._entry = null;
         this._render();
       })
@@ -505,17 +544,28 @@ export class NotesPanel extends Widget {
    */
   private _reveal(id: string): void {
     const root = this._root();
-    const marked = root
-      ? Array.from(
-          root.querySelectorAll<HTMLElement>(`[${MARK_ATTRIBUTE}="${id}"]`)
-        )
-      : [];
+    if (!root) {
+      return;
+    }
+    const marked = Array.from(
+      root.querySelectorAll<HTMLElement>(`[${MARK_ATTRIBUTE}="${id}"]`)
+    );
     if (!marked.length) {
       return;
     }
     marked[0].scrollIntoView({ block: 'center' });
     if (this._flash !== null) {
       window.clearTimeout(this._flash);
+    }
+    // A passage flashed for an earlier row keeps the class until its own
+    // timeout, and adding a class an element already carries restarts no
+    // animation. Taking it off every passage first is what makes the flash
+    // start again on the passage the reader chose, and what keeps the earlier
+    // passage from flashing when the tab is hidden and shown.
+    for (const stranded of Array.from(
+      root.querySelectorAll<HTMLElement>(`.${FLASH_CLASS}`)
+    )) {
+      stranded.classList.remove(FLASH_CLASS);
     }
     for (const element of marked) {
       element.classList.add(FLASH_CLASS);

@@ -130,7 +130,7 @@ export interface IPassage {
 }
 
 /**
- * What {@link selectionToSource} reads of a selection.
+ * What {@link selectionOffsets} reads of a selection.
  *
  * A DOM `Range` has these four members, so the caller passes the range of the
  * live selection; nothing else about it is used.
@@ -780,32 +780,24 @@ function boundaryOffset(
 }
 
 /**
- * Translate a selection in the rendered view into the source range a mark's
- * markers are written at.
+ * Where a selection sits in the captured text of the rendered view.
  *
- * The selection is snapped outward to whole words, matched against the words
- * of the source, and each boundary widened out of any span a marker may not
- * sit inside. A selection crossing block boundaries anchors from the first
- * word of the first block to the last word of the last, so the markers stay
- * inline in those two blocks.
+ * Exported apart from {@link renderedToSource} because the two are read at
+ * different moments: the offsets are taken when the selection is made, and
+ * the source range only when the mark is written, by which time the render
+ * may have been replaced and the live selection with it.
  *
  * @param selection - the selected range of the rendered view, usually
  * `window.getSelection()!.getRangeAt(0)`
  * @param root - the rendered Markdown host
- * @param source - the Markdown source behind that render
- * @returns where the two markers go, or null when the selected words cannot
- * be found in the source
+ * @returns the range `[start, end)` of the selection in the text
+ * {@link captureText} reads from `root`, or null when it holds nothing
  */
-export function selectionToSource(
+export function selectionOffsets(
   selection: ISelectionRange,
-  root: HTMLElement,
-  source: string
-): ISourceRange | null {
+  root: HTMLElement
+): IRenderedRange | null {
   const snapshot = captureText(root);
-  const words = renderedWords(snapshot.text);
-  if (!words.length) {
-    return null;
-  }
   const from = boundaryOffset(
     snapshot,
     selection.startContainer,
@@ -818,14 +810,40 @@ export function selectionToSource(
     selection.endOffset,
     'end'
   );
-  if (from === null || to === null || to <= from) {
+  return from === null || to === null || to <= from
+    ? null
+    : { start: from, end: to };
+}
+
+/**
+ * Translate a range of the rendered text into the source range a mark's
+ * markers are written at.
+ *
+ * The range is snapped outward to whole words, matched against the words of
+ * the source, and each boundary widened out of any span a marker may not sit
+ * inside. A range crossing block boundaries anchors from the first word of the
+ * first block to the last word of the last, so the markers stay inline in
+ * those two blocks.
+ *
+ * @param range - offsets into the text {@link captureText} reads from `root`
+ * @param root - the rendered Markdown host
+ * @param source - the Markdown source behind that render
+ * @returns where the two markers go, or null when the words in the range
+ * cannot be found in the source
+ */
+export function renderedToSource(
+  range: IRenderedRange,
+  root: HTMLElement,
+  source: string
+): ISourceRange | null {
+  const words = renderedWords(captureText(root).text);
+  if (!words.length) {
     return null;
   }
-
-  const first = words.findIndex(word => word.end > from);
+  const first = words.findIndex(word => word.end > range.start);
   let last = -1;
   for (let i = words.length - 1; i >= 0; i--) {
-    if (words[i].start < to) {
+    if (words[i].start < range.end) {
       last = i;
       break;
     }

@@ -295,12 +295,20 @@ Signalling on the document tab that new content arrived
   - log: 2026-09-06T21:08:32Z @kj edited text
   - log: 2026-09-06T21:08:32Z @kj edited test (replaced)
   - log: 2026-09-06T22:05:04Z @kj closed
-- [ ] `ACC-CUE-115` **A screen reader is told when a change arrives** - LOW; When an external change is applied to the visible preview a polite live region announces it in words, once per applied change, and the notes list rows carry roles a screen reader can move through
-  - test: apply an external change, assert the live region text names the change; assert the list has a list role and each row a listitem role with aria-current on the selected one
+- [x] `ACC-CUE-115` **A screen reader can move through the notes list** - LOW; The notes list carries roles a screen reader can move through: the list a list role, each row a listitem role with aria-current on the selected row, and each row's swatch an image role named by the mark's colour
+  - evidence: Galata notes.spec.ts 'ACC-CUE-115 lists the marks as list items' passes on 0.6.37; 3 mutations caught (listitem removed, aria-current removed, list role removed); jest notes-panel.spec 'lists the marks with list roles'
+  - test: assert the list has a list role and each row a listitem role with aria-current on the selected one and a swatch with role img named by the colour
   - test-tags: UNIT, FUNCTIONAL
+  - mechanism: 2026-09-07T19:16:25Z @kj the notes panel body carries role=list when expanded, each row role=listitem with aria-current=true on the selected row and a swatch with role=img named by the mark's colour, because option forbids the buttons and textarea a row holds; the live-region announcement that was the other half of this criterion was reverted in confirm B
+  - mechanism: 2026-09-07T18:16:37Z @kj A module-level visually hidden div.jp-AdvancedMd-liveRegion (aria-live polite, aria-atomic) appended to document.body on first use in src/controller.ts, written in _onApplied whenever the extension is enabled and the preview is visible with '<label> was updated from disk', independent of the tabCue setting; the notes panel body carries role=list when expanded, each row role=listitem with aria-current=true on the selected row and a swatch with role=img named by the mark's colour. Named: two identical announcements in a row may be read once by some screen readers
   - mechanism: 2026-09-07T09:21:50Z @kj one visually hidden aria-live=polite element per page, created once by the controller module and written when a change is applied to the visible preview with the text '<label> was updated from disk'; the notes list carries role=list and each row role=listitem with aria-current on the selected row, because option forbids the buttons and textarea a row holds
   - log: 2026-09-07T09:01:37Z @kj added
   - log: 2026-09-07T09:21:50Z @kj edited test (replaced)
+  - log: 2026-09-07T12:50:18Z @kj closed
+  - log: 2026-09-07T18:16:38Z @kj confirm A on 0.6.37: the announcement no longer depends on tabCue (jest cue.spec 'announces with the tab cue switched off', Galata tab-cue.spec 'ACC-CUE-115 announces a change the tab does not show'); the row swatch carries role img and aria-label = colour (notes-panel.spec 'lists the marks with list roles')
+  - log: 2026-09-07T19:16:24Z @kj edited title and text and test (replaced) and evidence (replaced)
+  - log: 2026-09-07T19:16:25Z @kj confirm B: the live region was reverted - it re-announced the identical sentence on every coalesced apply under a stream (15 in 6 s at 50 ms spacing) and its mechanism note already recorded that identical announcements may be read once; the criterion is restated to the list-roles half; the announcement returns as its own criterion with burst semantics (once per burst of changes, again after the quiet period, a clock independent of tabCue)
+  - log: 2026-09-07T21:15:02Z @kj correction to the confirm B log line above: the announcement was removed, not scheduled. No criterion for a burst-semantics announcement was filed and none is planned - re-adding an aria-live announcement needs a clock of its own and a decision about what a reader should hear under a stream, which is new design and not work this criterion carries
 
 ## Settings `CONFIG`
 
@@ -392,12 +400,16 @@ The live update keeps the other Stellars Markdown extensions working; survey of 
   - log: 2026-09-06T16:01:41Z @kj added
   - log: 2026-09-06T22:05:04Z @kj closed
 - [x] `ACC-COMPAT-108` **Siblings tolerate the forced render** - HIGH; an applied change renders twice, once forced so the change is on screen within half a second and once by the viewer's own pending render; every sibling listening on the rendered signal runs twice per change and none of them misbehaves, in particular the table of contents fix does not scroll to an anchor on the second render
-  - evidence: 'runs every listener twice for one change without a sibling misbehaving' in ui-tests/tests/siblings.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
+  - evidence: green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47, and green again on the full Galata suite since; the criterion covers the two renders and the absence of an anchor scroll, which the test asserts every run. Known limitation, tracked as DEF-APPLY-37-1 (rejected, wontfix): a sibling's smooth scroll that lands after the single late scroll-restore pass is recorded as the reader's own, and the test then finds the reader at the top - 1 of 113 full runs and 2 of 4 isolated repeats with --repeat-each=6 on 0.6.37
   - test: apply an external change to a document with a heading anchor in the hash, count the sibling's anchor scrolls, assert two renders and no scroll
   - test-tags: E2E
   - mechanism: 2026-09-06T17:31:38Z @kj the controller calls widget.content.update() when the watcher reports an applied change; the viewer's own render timeout cannot be cancelled from outside, so the same text renders again about a second later
   - log: 2026-09-06T17:31:38Z @kj added
   - log: 2026-09-06T22:05:04Z @kj closed
+  - log: 2026-09-07T19:43:27Z @kj edited evidence (replaced)
+  - log: 2026-09-07T21:15:02Z @kj edited evidence (replaced)
+  - log: 2026-09-07T21:18:32Z @kj round 4, declined and recorded rather than fixed: _restoreScroll returns at both of its early exits without clearing a timer an earlier render armed, so that timer fires with the earlier render's target and can write over a sibling that took the position in between. The window is the 150 ms of one late pass. Clearing the timer at the early exits is a new rule on the same guard whose last widening had to be reverted, so it is not made without evidence that a reader ever meets it
+  - log: 2026-09-07T21:58:42Z @kj round 5 corrects the reason in the decline above, and the decline stands. The stated reason was wrong: clearing a stale _lateScrollTimer at the early returns makes the guard write LESS, the opposite direction from the widening that had to be reverted, so 'a new rule on the same guard whose last widening had to be reverted' does not carry. Two of the three lenses hold that the decline itself stands, on the ground that reaching it needs a render to arm the timer within 150 ms of a tab switch and the reader to return inside that window, and that the branch has no coverage - controller.ts lines 587 and 602 are uncovered - so the change would be unverifiable on the one guard whose last unverified change cost a round. The third lens holds it should be fixed because the current state breaks this project's own rule that one scroll guard is passive while the sibling's is live. Recorded so the next round reads the real reason and the real disagreement
 - [x] `ACC-COMPAT-116` **A marker tooltip keeps the document's own caption lines** - HIGH; Every tab marker's tooltip carries the state's words above the document's own caption (Name, Path, Last Saved, Last Checkpoint), and the words survive the document manager's caption rewrite after an applied change, because the colourful-tab sibling identifies a file tab by the Path line of the tab title attribute
   - evidence: Galata siblings 'keeps the colour it gave the tab while the marker shows' fails with the composition removed from the installed bundle; unit test 'names the change in words for as long as it stands, then gives the caption back' in `src/__tests__/cue.spec.ts` fails with the guard removed; green on build 0.6.31
   - test: apply a change with the colourful-tab sibling installed, assert the tab keeps its colour and the title attribute holds both the state words and the Path line
@@ -606,14 +618,19 @@ Reader comments anchored to a block of text, stored in the Markdown file as HTML
   - test-tags: UNIT, E2E
   - log: 2026-09-06T15:41:20Z @kj added
   - log: 2026-09-07T00:39:24Z @kj closed
-- [x] `ACC-NOTES-100` **Writing a marker saves the document** - CRITICAL; a mark written while a change is arriving neither loses the change nor raises a dialog: the change on disk is applied first, then the markers are written into the document, and the document is saved - except where it already held the reader's own unsaved edits, which are never saved on their behalf; there the markers are written into the document and reach disk with the reader's next save
-  - evidence: Galata 'ACC-NOTES-100 saves the mark and a change written a moment before' and 'ACC-NOTES-100 applies the change, marks, and saves without a dialog' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
+- [x] `ACC-NOTES-100` **Writing a marker puts it on disk** - CRITICAL; a mark written while a change is arriving neither loses the change nor raises a dialog: the change on disk is applied first, then the markers are written into the document and put on disk - through the compare-and-write route where the server extension is present and the document is clean, through the Context save otherwise - except where it already held the reader's own unsaved edits, which are never saved on their behalf; there the markers are written into the document and reach disk with the reader's next save
+  - mechanism: 2026-09-07T13:59:51Z @kj With the server extension present and the document clean, the markers reach disk through the compare-and-write route (POST .../write with the contents model's hash; the server compares and writes under a per-path lock) and no Context save is made; the Context save path remains where the server extension is absent, where the document holds the reader's unsaved edits (markers reach disk with the reader's next save), and after three refusals of the route
+  - evidence: Galata 'ACC-NOTES-100 saves the mark and a change written a moment before' and 'ACC-NOTES-100 applies the change, marks, and saves without a dialog' in ui-tests/tests/notes.spec.ts and 'DEF-NOTES-33 writes a mark through the route and not through a save' in ui-tests/tests/stream.spec.ts; green on build 0.6.36 with Galata 110 of 110, jest 446 of 446 and pytest 29 of 29
   - test: write the file externally, then mark a sentence before the poll; assert the external change is applied, the save succeeds without a dialog and the file holds both
   - test-tags: UNIT, E2E
   - log: 2026-09-06T15:41:20Z @kj added
   - log: 2026-09-07T00:39:25Z @kj closed
   - log: 2026-09-07T03:39:23Z @kj edited text
   - log: 2026-09-07T09:01:37Z @kj round 1 review: the two Galata tests write once before the mark and never during the save; the guarantee is shown for writes spaced 200 ms or more apart and open below that, see DEF-NOTES-33 and DEF-NOTES-34
+  - log: 2026-09-07T13:59:51Z @kj round 3 on 0.6.36: the save is replaced by the write route where it exists; Galata 'DEF-NOTES-33 writes a mark through the route and not through a save' and 'DEF-NOTES-33 ten marks under a 50 ms stream raise no dialog and reach the file' pass, 110 of 110; the 200 ms bound recorded on 2026-09-07 no longer applies
+  - log: 2026-09-07T14:34:34Z @kj edited title and text and evidence (replaced)
+  - log: 2026-09-07T14:34:34Z @kj confirming round A: title, text and evidence restated for the route (the 0.6.20 evidence line asserted a Context save the route path no longer makes)
+  - log: 2026-09-07T19:43:27Z @kj round 4 on 0.6.38: DEF-NOTES-36 - the route applies its edits only while the document still holds the text they were computed against; otherwise it refreshes and leaves the document, and the dirty state, to the watcher
 - [x] `ACC-NOTES-101` **Markers never break Markdown syntax** - HIGH; markers are placed at word boundaries inside a block or at block boundaries around a run of blocks, never inside a fenced or indented code block, a heading, a link or an emphasis span; a selection that starts or ends inside one of these is widened to its boundary
   - evidence: Galata 'ACC-NOTES-101 keeps a heading whole when the selection starts inside it' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: select text that starts inside a heading and ends in the paragraph below, assert the heading line is unchanged, the opening marker sits alone on a line before it, and the closing marker is inline in the paragraph
@@ -663,12 +680,16 @@ Reader comments anchored to a block of text, stored in the Markdown file as HTML
   - mechanism: 2026-09-07T03:39:23Z @kj with the switch off nothing moves the document's record of the revision, so the platform's own conflict check sees a different file and asks
   - log: 2026-09-07T03:39:23Z @kj added
   - log: 2026-09-07T03:39:30Z @kj closed
-- [ ] `ACC-NOTES-114` **A keyboard-only reader can mark a passage** - MEDIUM; Marking is reachable without a pointer: the mark command is in the command palette and carries a keybinding, enabled when the preview holds a selection, and marks the selected passage
+  - log: 2026-09-07T18:16:38Z @kj confirm A on 0.6.37: the write route is gated on settings.enabled (INotesSettings.enabled, read from ILiveViewSettings.enabled in src/index.ts) because after a 200 the revision moves only through FileWatcher._read, which reads nothing while live updates are off; jest notes.spec 'keeps the context save path while live updates are off' and Galata notes.spec 'ACC-NOTES-112 saves through the Context and not through the route' (no POST /write, one PUT, marker on disk)
+- [x] `ACC-NOTES-114` **A keyboard-only reader can mark a passage** - MEDIUM; Marking is reachable without a pointer: the mark command is in the command palette and carries a keybinding, enabled when the preview holds a selection, and marks the selected passage
+  - evidence: Galata notes.spec.ts 'ACC-NOTES-114 marks the selection from the keyboard' and 'offers the command in the palette' (clicks the item, marker reaches the file) pass on 0.6.34; 4 mutations caught (key changed to Accel Shift K, isEnabled forced false, addItem removed, record dropped on every collapse); jest wiring.spec and schema.spec
   - related: DEF-NOTES-34 - the selection carry this criterion needs
   - test: select a passage with the keyboard, invoke the keybinding, assert the markers land in the file
   - test-tags: UNIT, FUNCTIONAL
+  - mechanism: 2026-09-07T12:50:18Z @kj Command advanced-markdown-viewer:mark-selection ('Mark the selected passage') in the palette under Markdown Viewer and bound to Accel Shift M on .jp-MarkdownViewer in schema/plugin.json; enabled from the controller's recorded selection, which a collapse onto an element (the palette input taking the focus) does not drop; marks with the first colour when no colour argument is given; Accel Shift M coexists with notebook:merge-cell-below because the notebook selector never matches the preview; ICommandPalette is optional
   - mechanism: 2026-09-07T09:01:37Z @kj the mark command is registered with the command palette and a keybinding whose isEnabled reads the selection; the attachment is resolved from the selection, not from a context-menu hit node
   - log: 2026-09-07T09:01:37Z @kj added
+  - log: 2026-09-07T12:50:18Z @kj closed
 
 ## Change animation `ANIM`
 
@@ -788,6 +809,7 @@ External changes reach the preview through operating-system file events pushed b
   - test-tags: INTEGRATION, E2E
   - log: 2026-09-06T15:40:43Z @kj added
   - log: 2026-09-06T21:02:09Z @kj closed
+  - log: 2026-09-07T21:18:32Z @kj round 4, declined and recorded rather than fixed: FileWatchRegistry.swap truncates the file before it writes, so between the truncate and the flush a concurrent reader sees zero bytes and a write that dies part-way leaves the file truncated. The route forgoes the temporary-file-and-rename that jupyter_server's use_atomic_writing performs in order to keep the inode, which is the locked decision this criterion's sibling half rests on; making the write atomic again needs that decision reopened
 - [x] `ACC-EVENT-87` **Identical content applies nothing** - MEDIUM; an event whose read returns the content the document already holds, a touch or a rewrite with the same bytes, applies no change, raises no tab cue and creates no decoration
   - evidence: Galata 'applies nothing for a touch or a rewrite with the same bytes': no applied change, no tab class, no decoration
   - test: touch the file and rewrite it with the same bytes, assert no applied signal and no tab class

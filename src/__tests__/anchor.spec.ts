@@ -5,11 +5,27 @@ import {
   ISourceRange,
   locate,
   passageToRendered,
+  renderedToSource,
   renderedWords,
-  selectionToSource,
+  selectionOffsets,
   tokeniseSource
 } from '../anchor';
 import { captureText } from '../highlight';
+
+/**
+ * The two reads a mark is written through, taken together over one live
+ * selection: the offsets when it is made, the source range when it is
+ * written. Production takes them at different moments (src/notes.ts), so
+ * the composition lives only here.
+ */
+function selectionToSource(
+  selection: ISelectionRange,
+  root: HTMLElement,
+  source: string
+): ISourceRange | null {
+  const range = selectionOffsets(selection, root);
+  return range ? renderedToSource(range, root, source) : null;
+}
 
 /**
  * Build a stand-in for the rendered Markdown host.

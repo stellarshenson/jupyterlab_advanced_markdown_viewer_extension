@@ -823,6 +823,39 @@ test.describe('the fade over the life of a highlight', () => {
   });
 });
 
+test.describe('the highlights under reduced motion', () => {
+  test.use({ mockSettings: settings() });
+
+  test('keep their colour ramps, the ghost fading out before it is taken out', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await openPreview(page, path);
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await expect(page.locator('.jp-AdvancedMd-removed').first()).toBeVisible({
+      timeout: 20000
+    });
+
+    // Colour and opacity ramps are not motion: the ghost's fade to invisible
+    // is what keeps the reflow at its removal off screen, so it runs under
+    // reduced motion as well (DEF-HILITE-31).
+    const names = await page.evaluate(() => {
+      const nameOf = (selector: string) =>
+        getComputedStyle(document.querySelector(selector) as Element)
+          .animationName;
+      return {
+        removed: nameOf('.jp-AdvancedMd-removed'),
+        added: nameOf('.jp-AdvancedMd-added')
+      };
+    });
+    expect(names.removed).toContain('jp-AdvancedMd-ghost-out');
+    expect(names.added).not.toBe('none');
+  });
+});
+
 test.describe('the highlight colours in each theme', () => {
   test.use({ mockSettings: settings() });
 

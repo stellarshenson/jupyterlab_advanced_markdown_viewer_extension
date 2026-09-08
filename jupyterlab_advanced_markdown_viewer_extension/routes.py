@@ -1,10 +1,11 @@
 """HTTP and WebSocket routes of the server extension.
 
-Three routes under the namespace `jupyterlab-advanced-markdown-viewer-extension`: `status`
+Four routes under the namespace `jupyterlab-advanced-markdown-viewer-extension`: `status`
 says whether file events are available, `stat` answers the frontend's batched fallback poll
-with mtime and size per path, and the `events` WebSocket carries register and release
-messages from the browser and change messages back. One registry, shared by every
-connection, lives in the web application settings.
+with mtime and size per path, `write` rewrites a document only while its file still carries
+the hash the browser holds, and the `events` WebSocket carries register and release messages
+from the browser and change messages back. One registry, shared by every connection, lives
+in the web application settings.
 
 The stat answer carries three cases and the frontend reads all three: a stat for a file that
 is there, null for a file that is not, and no entry at all for a path the registry cannot
@@ -15,7 +16,7 @@ import json
 
 import tornado
 from jupyter_core.utils import ensure_async
-from jupyter_server.auth.decorator import ws_authenticated
+from jupyter_server.auth.decorator import authorized, ws_authenticated
 from jupyter_server.base.handlers import APIHandler, JupyterHandler
 from jupyter_server.base.websocket import WebSocketMixin
 from jupyter_server.utils import url_path_join
@@ -44,6 +45,7 @@ class StatusHandler(APIHandler):
     """GET status -> whether file events are available, and the package version."""
 
     @tornado.web.authenticated
+    @authorized(action="read", resource="contents")
     def get(self):
         registry = self.settings[SETTINGS_KEY]
         self.finish(json.dumps({"events": registry.available, "version": __version__}))
@@ -56,10 +58,42 @@ class StatHandler(APIHandler):
     """
 
     @tornado.web.authenticated
+    @authorized(action="read", resource="contents")
     def post(self):
         body = self.get_json_body() or {}
         registry = self.settings[SETTINGS_KEY]
         self.finish(json.dumps({"paths": registry.stat(_paths_of(body))}))
+
+
+class WriteHandler(APIHandler):
+    """POST write {"path", "expected", "content"} -> 200 {"hash"} or 409 {"content", "hash"}.
+
+    `expected` is the hash the contents API reported for the document, which the browser's
+    Context holds; the file is rewritten only while it still carries it. A 409 carries the
+    file as it is, so the browser can rebase its edit and send it again. 400 for a body that
+    is not those three strings; 404 for a file that is not there or a path the registry does
+    not serve, the two the stat answer tells apart.
+    """
+
+    @tornado.web.authenticated
+    @authorized(action="write", resource="contents")
+    async def post(self):
+        body = self.get_json_body() or {}
+        fields = [body.get(name) for name in ("path", "expected", "content")]
+        if not all(isinstance(field, str) for field in fields):
+            raise tornado.web.HTTPError(400, "path, expected and content must be strings")
+        registry = self.settings[SETTINGS_KEY]
+        # Off the IOLoop: the swap blocks on the disk while it holds the path's lock, and
+        # two requests for one path must be able to wait on that lock at the same time.
+        try:
+            result = await IOLoop.current().run_in_executor(None, registry.swap, *fields)
+        except FileNotFoundError:
+            raise tornado.web.HTTPError(404, "no such file") from None
+        if result is None:
+            raise tornado.web.HTTPError(404, "path not served")
+        if "content" in result:
+            self.set_status(409)
+        self.finish(json.dumps(result))
 
 
 class EventsHandler(WebSocketMixin, JupyterHandler, WebSocketHandler):
@@ -134,12 +168,18 @@ class EventsHandler(WebSocketMixin, JupyterHandler, WebSocketHandler):
 def setup_route_handlers(web_app):
     host_pattern = ".*$"
     base_url = web_app.settings["base_url"]
+    contents_manager = web_app.settings["contents_manager"]
     web_app.settings[SETTINGS_KEY] = FileWatchRegistry(
-        web_app.settings["contents_manager"].root_dir, IOLoop.current()
+        contents_manager.root_dir,
+        IOLoop.current(),
+        # The file contents managers carry the algorithm their hash answers use; sha256 is
+        # its default and what a manager without the trait is taken to use.
+        getattr(contents_manager, "hash_algorithm", "sha256"),
     )
     handlers = [
         (url_path_join(base_url, NAMESPACE, "status"), StatusHandler),
         (url_path_join(base_url, NAMESPACE, "stat"), StatHandler),
+        (url_path_join(base_url, NAMESPACE, "write"), WriteHandler),
         (url_path_join(base_url, NAMESPACE, "events"), EventsHandler),
     ]
     web_app.add_handlers(host_pattern, handlers)

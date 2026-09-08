@@ -13,6 +13,7 @@
   --jp-AdvancedMd-added-bg: rgb(46 160 67 / 30%);
   --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 26%);
   --jp-AdvancedMd-cue-blocked: rgb(218 54 51);
+  --jp-AdvancedMd-mark-flash-bg: rgb(128 128 128 / 55%);
   --jp-AdvancedMd-fade-duration: 3000ms;
   --jp-AdvancedMd-fade-in: 500ms;
   --jp-AdvancedMd-fade-out: 750ms;
@@ -22,6 +23,7 @@ body[data-jp-theme-light='false'] {
   --jp-AdvancedMd-added-bg: rgb(63 185 80 / 26%);
   --jp-AdvancedMd-removed-bg: rgb(248 81 73 / 24%);
   --jp-AdvancedMd-cue-blocked: rgb(248 81 73);
+  --jp-AdvancedMd-mark-flash-bg: rgb(220 220 220 / 45%);
 }
 
 .jp-AdvancedMd-decoration {
@@ -55,7 +57,9 @@ body[data-jp-theme-light='false'] {
 /*
  | Removed text is not part of the document, so its ghost fades to invisible
  | before it is taken out; the reflow at removal then happens on an element
- | nobody can see.
+ | nobody can see. The opacity fade runs under reduced motion as well, because
+ | it is what keeps the reflow at removal off screen; colour and opacity ramps
+ | are not motion.
  */
 .jp-AdvancedMd-removed {
   background-color: var(--jp-AdvancedMd-removed-bg);
@@ -101,12 +105,6 @@ body[data-jp-theme-light='false'] {
   to {
     background-color: transparent;
     opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .jp-AdvancedMd-decoration {
-    animation: none;
   }
 }
 
@@ -262,6 +260,12 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
  | background colour, so nothing moves in the layout, and it is a neutral grey
  | rather than a fifth colour, which would read as a mark of its own. The
  | animation runs for as long as the panel keeps the class on the passage.
+ |
+ | The grey is themed, because the eye finds the passage by lightness and not
+ | by hue: the light grey over the light themes and a paler one over the dark,
+ | where a mid grey composites to almost exactly the lightness of the mark
+ | underneath it and the flash reads as a hue rotation nobody sees outside the
+ | point they are already looking at.
  */
 
 .jp-AdvancedMd-markFlash {
@@ -270,13 +274,7 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
 
 @keyframes jp-AdvancedMd-mark-flash {
   50% {
-    background-color: rgb(128 128 128 / 55%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .jp-AdvancedMd-markFlash {
-    animation: none;
+    background-color: var(--jp-AdvancedMd-mark-flash-bg);
   }
 }
 

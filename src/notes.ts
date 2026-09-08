@@ -9,11 +9,14 @@
  * Three rules shape the writing. A marker is written through the shared model
  * in one transaction, so the standard render pipeline runs and every other
  * extension observing the model sees an ordinary local edit. The file is
- * refreshed before the write, so a change already on disk lands first and the
- * save that follows cannot report the file as changed; a document that already
- * held unsaved edits is not saved at all, because those edits are the reader's
- * to save. And the passage bytes between the two markers are never touched: a
- * note, a colour and a removal all rewrite or delete markers alone.
+ * refreshed before the write, so a change already on disk lands first, and
+ * the file is written through the server's compare-and-write route, which
+ * rewrites it only while it still holds the revision the document holds, so
+ * a write from an agent is neither overwritten nor met with the File Changed
+ * dialog; a document that already held unsaved edits is not written to disk
+ * at all, because those edits are the reader's to save. And the passage bytes
+ * between the two markers are never touched: a note, a colour and a removal
+ * all rewrite or delete markers alone.
  *
  * Painting follows the same invariants as the change highlight: the marks are
  * inline spans inside blocks the renderer produced, never a new direct child
@@ -22,20 +25,22 @@
 
 import { DocumentRegistry } from '@jupyterlab/docregistry';
 import { MarkdownDocument } from '@jupyterlab/markdownviewer';
-import { User } from '@jupyterlab/services';
+import { ServerConnection, User } from '@jupyterlab/services';
 import { IDisposable } from '@lumino/disposable';
 import { ISignal, Signal } from '@lumino/signaling';
 
 import {
   IRenderedRange,
-  ISelectionRange,
   passageToRendered,
+  renderedToSource,
   renderedWords,
-  selectionToSource,
+  selectionOffsets,
   tokeniseSource
 } from './anchor';
+import { diffWords, mapOffsets } from './diff';
 import { captureText, DECORATION_CLASS, ITextSnapshot } from './highlight';
 import { openingState } from './notes-panel';
+import { fetchAPI } from './request';
 import {
   IMark,
   IMarkAttribute,
@@ -58,11 +63,6 @@ import {
 export const MARK_CLASS = 'jp-AdvancedMd-mark';
 
 /**
- * Class held for a moment on a passage the panel has just revealed.
- */
-export const MARK_FLASH_CLASS = 'jp-AdvancedMd-markFlash';
-
-/**
  * Transaction origin of a marker write.
  *
  * A mark is written by the reader, so it is a local edit and must not read as
@@ -78,11 +78,6 @@ export const MARK_ORIGIN = 'jupyterlab_advanced_markdown_viewer_extension:mark';
 export const MARK_TYPE = 'note';
 
 /**
- * How long a revealed passage keeps its flash.
- */
-export const FLASH_MS = 1200;
-
-/**
  * Handle written on a note line when nothing else names the reader.
  */
 export const DEFAULT_AUTHOR = 'reader';
@@ -91,6 +86,12 @@ export const DEFAULT_AUTHOR = 'reader';
  * Settings the notes controller reads.
  */
 export interface INotesSettings {
+  /**
+   * Whether live updates are on. The write route is taken only then, because
+   * the refresh that moves the revision after a 200 reads nothing while they
+   * are off.
+   */
+  enabled: boolean;
   /** Whether marks are painted and listed at all. */
   notes: boolean;
   /** Handle written on note lines, empty to take the lab identity. */
@@ -127,6 +128,8 @@ export interface INotesControllerOptions {
    * change waiting on disk is in the document before the save.
    */
   refresh: () => Promise<void>;
+  /** The server the write route is asked on. */
+  serverSettings: ServerConnection.ISettings;
   /** The lab's user manager, for the identity a note line is signed with. */
   user: User.IManager | null;
   settings: INotesSettings;
@@ -147,6 +150,18 @@ interface ISourceEdit {
 interface IAnchored {
   mark: IMark;
   range: IRenderedRange;
+}
+
+/**
+ * The reader's selection, as offsets into the captured text of the render it
+ * was taken from, with that text.
+ *
+ * A render replaces the nodes a live selection points at and collapses it,
+ * so the selection is kept as offsets and carried from one render's text to
+ * the next.
+ */
+interface ISelectionRecord extends IRenderedRange {
+  text: string;
 }
 
 /** Everything a marker's own line may hold before it. */
@@ -186,6 +201,18 @@ function markerSpan(source: string, span: ISpan): ISourceEdit {
   return alone
     ? { start: lineStart, end: lineEnd, text: '' }
     : { start: span.start, end: span.end, text: '' };
+}
+
+/**
+ * The source with the edits made in it, from the end backwards so the offsets
+ * of the earlier ones stand.
+ */
+function applyEdits(source: string, edits: ISourceEdit[]): string {
+  let text = source;
+  for (const edit of edits) {
+    text = text.slice(0, edit.start) + edit.text + text.slice(edit.end);
+  }
+  return text;
 }
 
 /**
@@ -342,6 +369,7 @@ export class NotesController implements IDisposable {
   constructor(options: INotesControllerOptions) {
     this._widget = options.widget;
     this._refresh = options.refresh;
+    this._serverSettings = options.serverSettings;
     this._user = options.user;
     this._settings = options.settings;
     // A Markdown preview is built by the text model factory, so its model is
@@ -353,6 +381,7 @@ export class NotesController implements IDisposable {
     this._widget.content.rendered.connect(this._onRendered, this);
     this._widget.disposed.connect(this._onWidgetDisposed, this);
     this._widget.node.addEventListener('click', this._onClick, true);
+    document.addEventListener('selectionchange', this._onSelectionChange);
 
     // Nothing is read until the document has loaded: before that the model is
     // empty, so every mark would be reported as gone and remembered as such.
@@ -382,6 +411,21 @@ export class NotesController implements IDisposable {
    */
   get activated(): ISignal<this, string> {
     return this._activated;
+  }
+
+  /**
+   * The reader's selection in the rendered view, as a range of its captured
+   * text, or null when nothing of the view is selected.
+   *
+   * Kept through a render, which collapses the live selection, and through a
+   * focus move into a control, so the commands read this rather than the
+   * window's selection. The window is read once more on the ask, because
+   * Chromium fires selectionchange a frame or more after the selection
+   * moved and a context menu opened at once asks before it has.
+   */
+  get selection(): IRenderedRange | null {
+    this._onSelectionChange();
+    return this._selection;
   }
 
   /**
@@ -426,11 +470,8 @@ export class NotesController implements IDisposable {
       window.cancelAnimationFrame(this._frame);
       this._frame = null;
     }
-    if (this._flashTimer !== null) {
-      window.clearTimeout(this._flashTimer);
-      this._flashTimer = null;
-    }
     this._widget.node.removeEventListener('click', this._onClick, true);
+    document.removeEventListener('selectionchange', this._onSelectionChange);
     const root = this._root;
     if (root) {
       unpaintMarks(root);
@@ -441,24 +482,15 @@ export class NotesController implements IDisposable {
   /**
    * Mark the selected text.
    *
-   * @param selection - the selected range of the rendered view
    * @param colour - the colour to mark it in
-   * @returns the identifier of the new mark, or null when the selected words
-   * cannot be found in the source and nothing was written
+   * @returns the identifier of the new mark, or null when nothing is selected
+   * or the selected words cannot be found in the source, and nothing was
+   * written
    */
-  async mark(
-    selection: ISelectionRange,
-    colour: MarkColour
-  ): Promise<string | null> {
+  async mark(colour: MarkColour): Promise<string | null> {
     await this._refresh();
     const root = this._root;
-    if (this._disposed || !root) {
-      return null;
-    }
-    // The range is taken after the refresh, so it is offsets into the source
-    // the write is applied to even when a change from disk just landed.
-    const range = selectionToSource(selection, root, this._source);
-    if (!range) {
+    if (this._disposed || !root || !this._selection) {
       return null;
     }
     const id = newId();
@@ -469,19 +501,29 @@ export class NotesController implements IDisposable {
       notes: []
     });
     const closing = serialiseClosing(id);
-    await this._write([
-      {
-        start: range.start,
-        end: range.start,
-        text: range.startOwnLine ? `${opening}\n` : opening
-      },
-      {
-        start: range.end,
-        end: range.end,
-        text: range.endOwnLine ? `\n${closing}` : closing
+    const written = await this._write(source => {
+      // The record is read after the refresh: a change the refresh applied
+      // re-rendered, and the render carried the record with it, so these are
+      // offsets into the render on screen and the source the write goes into.
+      const selection = this._selection;
+      const range = selection && renderedToSource(selection, root, source);
+      if (!range) {
+        return [];
       }
-    ]);
-    return id;
+      return [
+        {
+          start: range.start,
+          end: range.start,
+          text: range.startOwnLine ? `${opening}\n` : opening
+        },
+        {
+          start: range.end,
+          end: range.end,
+          text: range.endOwnLine ? `\n${closing}` : closing
+        }
+      ];
+    });
+    return written ? id : null;
   }
 
   /**
@@ -489,14 +531,17 @@ export class NotesController implements IDisposable {
    *
    * An empty note writes nothing: a mark without notes is the bare mark the
    * reader already has.
+   *
+   * @returns whether the note was written, which it is not when the mark's
+   * markers are no longer in the document
    */
-  async addNote(id: string, text: string): Promise<void> {
+  async addNote(id: string, text: string): Promise<boolean> {
     const body = text.trim();
     if (!body) {
-      return;
+      return false;
     }
     const stamp = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
-    await this._rewrite(id, mark => ({
+    return this._rewrite(id, mark => ({
       ...mark,
       notes: [...mark.notes, { author: this.author(), stamp, text: body }]
     }));
@@ -520,22 +565,22 @@ export class NotesController implements IDisposable {
     if (this._disposed) {
       return;
     }
-    const source = this._source;
-    const mark = parseMarks(source).find(found => found.id === id);
+    const mark = parseMarks(this._source).find(found => found.id === id);
     if (mark && mark.type !== MARK_TYPE) {
       return;
     }
     // A mark the reader removed is gone, so it is not one of the marks this
     // session remembers for want of its markers.
     this._remembered.delete(id);
-    const edits = [mark?.open, mark?.close]
-      .filter((span): span is ISpan => !!span)
-      .map(span => markerSpan(source, span));
-    if (!edits.length) {
+    const written = await this._write(current => {
+      const found = parseMarks(current).find(each => each.id === id);
+      return [found?.open, found?.close]
+        .filter((span): span is ISpan => !!span)
+        .map(span => markerSpan(current, span));
+    });
+    if (!written) {
       this._changed.emit();
-      return;
     }
-    await this._write(edits);
   }
 
   /**
@@ -552,43 +597,7 @@ export class NotesController implements IDisposable {
     if (this._disposed) {
       return;
     }
-    await this._write(settingsEdits(this._source, state));
-  }
-
-  /**
-   * Bring a mark's passage into view and flash it.
-   *
-   * @param id - the mark to reveal
-   * @returns whether the passage is painted in this render
-   */
-  reveal(id: string): boolean {
-    const root = this._root;
-    if (!root) {
-      return false;
-    }
-    const painted = Array.from(
-      root.querySelectorAll<HTMLElement>(`[data-mark="${id}"]`)
-    );
-    if (!painted.length) {
-      return false;
-    }
-    // jsdom has no layout, so the tests run without this call.
-    if (typeof painted[0].scrollIntoView === 'function') {
-      painted[0].scrollIntoView({ block: 'center' });
-    }
-    for (const element of painted) {
-      element.classList.add(MARK_FLASH_CLASS);
-    }
-    if (this._flashTimer !== null) {
-      window.clearTimeout(this._flashTimer);
-    }
-    this._flashTimer = window.setTimeout(() => {
-      this._flashTimer = null;
-      for (const element of painted) {
-        element.classList.remove(MARK_FLASH_CLASS);
-      }
-    }, FLASH_MS);
-    return true;
+    await this._write(source => settingsEdits(source, state));
   }
 
   /**
@@ -652,6 +661,107 @@ export class NotesController implements IDisposable {
   };
 
   /**
+   * The reader's selection changed: record where it sits in the rendered
+   * text, or forget it.
+   *
+   * A selection collapsed onto an element is what focusing a control leaves,
+   * the palette input or the panel textarea among them, and the reader still
+   * means the words they selected, so the record is kept. A caret in text is
+   * a click in the text, which is a deselection. A render collapses the
+   * selection without reporting a change, so no rule for that is needed here.
+   */
+  private _onSelectionChange = (): void => {
+    const root = this._root;
+    const selection = window.getSelection();
+    if (!root || !selection) {
+      this._selection = null;
+      return;
+    }
+    if (selection.isCollapsed || selection.rangeCount === 0) {
+      if (!(selection.anchorNode instanceof Element)) {
+        this._selection = null;
+      }
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (
+      !root.contains(range.commonAncestorContainer) ||
+      range.toString().trim() === ''
+    ) {
+      this._selection = null;
+      return;
+    }
+    const offsets = selectionOffsets(range, root);
+    this._selection = offsets
+      ? { ...offsets, text: captureText(root).text }
+      : null;
+  };
+
+  /**
+   * Carry the recorded selection onto the text of the render on screen.
+   *
+   * The offsets are moved through the diff of the two texts, so a change
+   * before the selection shifts it and a change inside it closes it. Called
+   * on a render and again when a change settles, because the decorations
+   * hold the added text out of the capture until then.
+   */
+  private _carrySelection(): void {
+    const record = this._selection;
+    const root = this._root;
+    if (!record || !root) {
+      return;
+    }
+    const text = captureText(root).text;
+    if (text === record.text) {
+      return;
+    }
+    const map = mapOffsets(diffWords(record.text, text));
+    const start = map.toLater(record.start);
+    const end = map.toLater(record.end);
+    this._selection = end > start ? { start, end, text } : null;
+  }
+
+  /**
+   * Put the recorded selection back over the nodes of the render on screen.
+   *
+   * Only while nothing but the page or the viewer holds the focus: adding a
+   * range while a textarea is focused keeps the focus there but resets its
+   * caret, so a reader typing a note is left alone and the record stays for
+   * the next render.
+   */
+  private _restoreSelection(): void {
+    const record = this._selection;
+    const root = this._root;
+    if (!record || !root) {
+      return;
+    }
+    const active = document.activeElement;
+    if (active !== document.body && active !== this._widget.content.node) {
+      return;
+    }
+    const selection = window.getSelection();
+    if (!selection) {
+      return;
+    }
+    const { spans } = captureText(root);
+    const first = spans.find(span => span.end > record.start);
+    let last: ITextSnapshot['spans'][number] | null = null;
+    for (const span of spans) {
+      if (span.start < record.end) {
+        last = span;
+      }
+    }
+    if (!first || !last) {
+      return;
+    }
+    const range = document.createRange();
+    range.setStart(first.node, Math.max(record.start - first.start, 0));
+    range.setEnd(last.node, Math.min(record.end, last.end) - last.start);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  /**
    * The model changed, by the reader's own writing or by a change from disk.
    * Reading the marks again is deferred one frame, so a burst of edits is
    * read once.
@@ -674,9 +784,11 @@ export class NotesController implements IDisposable {
    * renders of the same text would otherwise leave the second one bare.
    */
   private _onRendered(): void {
+    this._carrySelection();
     this._flush();
     this._painted = null;
     this._paint();
+    this._restoreSelection();
   }
 
   /**
@@ -685,8 +797,10 @@ export class NotesController implements IDisposable {
    * found.
    */
   private _onSettled(): void {
+    this._carrySelection();
     this._flush();
     this._paint();
+    this._restoreSelection();
   }
 
   /**
@@ -821,76 +935,195 @@ export class NotesController implements IDisposable {
    * The mark is read out of the document again rather than taken from the
    * last read, because the refresh may just have applied a change from disk.
    * A mark of a type this version does not write is left exactly as it is.
+   *
+   * @returns whether the marker was found and rewritten
    */
   private async _rewrite(
     id: string,
     change: (mark: IMark) => IMarkContent
-  ): Promise<void> {
+  ): Promise<boolean> {
     await this._refresh();
     if (this._disposed) {
-      return;
+      return false;
     }
-    const mark = parseMarks(this._source).find(
-      found => found.id === id && found.open
-    );
-    if (!mark || !mark.open || mark.type !== MARK_TYPE) {
-      return;
-    }
-    await this._write([
-      {
-        start: mark.open.start,
-        end: mark.open.end,
-        text: serialiseOpening(change(mark))
+    return this._write(source => {
+      const mark = parseMarks(source).find(
+        found => found.id === id && found.open
+      );
+      if (!mark || !mark.open || mark.type !== MARK_TYPE) {
+        return [];
       }
-    ]);
+      return [
+        {
+          start: mark.open.start,
+          end: mark.open.end,
+          text: serialiseOpening(change(mark))
+        }
+      ];
+    });
   }
 
   /**
-   * Write edits into the document and save it.
+   * Write edits into the document and put them on disk.
    *
-   * One transaction, kept off the undo stack and tagged as a mark, so the
-   * whole write renders once and every extension observing the model can tell
-   * it from typing and from a change applied from disk. The edits are made
-   * from the end backwards, so the offsets of the earlier ones stand.
+   * The edits are computed from the source at the moment of writing, because
+   * a write the server refuses is made again over the file as it is by then.
    *
-   * The save is skipped where the document already held unsaved edits. The
+   * With the document clean and the server extension present, the file is
+   * written first, through the compare-and-write route: the server rewrites
+   * it only while it still carries the revision the document holds, under a
+   * lock, so two writes of one path from this server are serialised; a write
+   * from another process that lands inside the server's own write is the
+   * residual DEF-NOTES-33 records. A 409 carries the newer file; the
+   * refresh brings it into the document through the watcher's normal path,
+   * the edits are computed again and the write is made again, three times at
+   * most; after that the write takes the Context path below, whose conflict
+   * check raises the File Changed dialog against the newer file, which is
+   * what a refresh that moves nothing comes to; with live updates off the
+   * route is not taken at all.
+   * On a 200 the same edits go into the document, which is then clean
+   * because disk and document are equal, and the refresh that follows finds
+   * them equal and moves the revision the Context holds. No save, so no File
+   * Changed dialog.
+   *
+   * Without the route - a 404 carrying the server's HTML page rather than the
+   * JSON a served answer carries, remembered for the session - the document
+   * is written and saved through the Context, as before. A document that
+   * already holds unsaved edits is written and not put on disk at all. The
    * preview and the editor share one document, so those edits are the
    * reader's own writing, and saving would put them on disk without being
    * asked; a change from disk is held back while the document is dirty as
    * well, so the file would be the newer one and the save would raise the
    * File Changed dialog. The marker stays in the document and reaches disk
    * with the reader's own next save.
+   *
+   * The edits go through one transaction, kept off the undo stack and tagged
+   * as a mark, so the whole write renders once and every extension observing
+   * the model can tell it from typing and from a change applied from disk.
+   * They are made from the end backwards, so the offsets of the earlier ones
+   * stand.
+   *
+   * @returns whether the edits were written into the document, which they
+   * are not when there is nothing to write
    */
-  private async _write(edits: ISourceEdit[]): Promise<void> {
-    if (!edits.length) {
-      return;
-    }
-    const unsaved = this._context.model.dirty;
-    const shared = this._context.model.sharedModel;
-    shared.transact(
-      () => {
-        for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
-          shared.updateSource(edit.start, edit.end, edit.text);
+  private async _write(
+    edits: (source: string) => ISourceEdit[]
+  ): Promise<boolean> {
+    let route = !this._routeAbsent;
+    let refusals = 0;
+    for (;;) {
+      const source = this._source;
+      const changes = edits(source).sort((a, b) => b.start - a.start);
+      if (!changes.length) {
+        return false;
+      }
+      const unsaved = this._context.model.dirty;
+      const expected = this._context.contentsModel?.hash;
+      let landed = false;
+      if (
+        !unsaved &&
+        route &&
+        this._settings.enabled &&
+        typeof expected === 'string'
+      ) {
+        const { response, data } = await fetchAPI(
+          'write',
+          this._serverSettings,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              path: this._context.path,
+              expected,
+              content: this._lineEnded(applyEdits(source, changes))
+            })
+          }
+        );
+        if (response.status === 409) {
+          if (++refusals < 3) {
+            await this._refresh();
+            continue;
+          }
+          // Three refusals of one write: the refresh is not bringing the
+          // newer file in, and the route would refuse the same revision for
+          // ever. The write goes the way it
+          // went before the route, and the Context's own conflict check on
+          // the save is what tells the reader.
+          route = false;
+          continue;
         }
-      },
-      false,
-      MARK_ORIGIN
-    );
-    // Read the marks now rather than on the frame the change scheduled, so
-    // what was just written is listed by the time the caller has its answer
-    // and a command can act on the mark it made.
-    this._flush();
-    // The viewer re-renders on its own once its render timeout has run; asking
-    // for the render now is what puts the mark on screen at once.
-    this._widget.content.update();
-    if (!unsaved) {
-      await this._context.save();
+        if (response.status !== 200) {
+          route = false;
+          if (response.status === 404 && typeof data === 'string') {
+            this._routeAbsent = true;
+          }
+          continue;
+        }
+        landed = true;
+      }
+      if (landed && this._source !== source) {
+        // The document moved while the route wrote: the watcher has already
+        // brought the written file in, or the reader typed and the watcher
+        // holds it back behind those edits. The edits computed against
+        // `source` no longer fit, and the dirty state is the watcher's to keep.
+        await this._refresh();
+        // Read the marks now, for the same reason the write path below does:
+        // the caller is handed an id and a command acts on it straight away.
+        this._flush();
+        this._widget.content.update();
+        // Two states reach this guard, and only one of them wrote into the
+        // document: the watcher brought the written file in, or the document
+        // moved to something else - the reader typed, or a second external
+        // write landed after the server wrote and before the answer came
+        // back. The caller is told which, because on the second the mark is
+        // on disk and not in the document, and a caller told otherwise
+        // discards the reader's draft over a note the document never took.
+        return this._source === applyEdits(source, changes);
+      }
+      const shared = this._context.model.sharedModel;
+      shared.transact(
+        () => {
+          for (const edit of changes) {
+            shared.updateSource(edit.start, edit.end, edit.text);
+          }
+        },
+        false,
+        MARK_ORIGIN
+      );
+      // Read the marks now rather than on the frame the change scheduled, so
+      // what was just written is listed by the time the caller has its answer
+      // and a command can act on the mark it made.
+      this._flush();
+      // The viewer re-renders on its own once its render timeout has run;
+      // asking for the render now is what puts the mark on screen at once.
+      this._widget.content.update();
+      if (landed) {
+        this._context.model.dirty = false;
+        await this._refresh();
+      } else if (!unsaved) {
+        await this._context.save();
+      }
+      return true;
     }
+  }
+
+  /**
+   * The text with the line ending the file had when the Context loaded it.
+   *
+   * The Context holds a CRLF or CR file as LF and puts the line ending back
+   * on its own save, from a record it keeps privately; a write that goes
+   * round its save has to put it back the same way, or the file would change
+   * its line endings with the first mark.
+   */
+  private _lineEnded(text: string): string {
+    const ending = (this._context as unknown as { _lineEnding?: string | null })
+      ._lineEnding;
+    return ending ? text.replace(/\n/g, ending) : text;
   }
 
   private _widget: MarkdownDocument;
   private _context: DocumentRegistry.IContext<DocumentRegistry.ICodeModel>;
   private _refresh: () => Promise<void>;
+  private _serverSettings: ServerConnection.ISettings;
   private _user: User.IManager | null;
   private _settings: INotesSettings;
   private _marks: IMark[] = [];
@@ -898,8 +1131,9 @@ export class NotesController implements IDisposable {
   private _lost = new Set<string>();
   private _state: PanelState = 'hidden';
   private _painted: string | null = null;
+  private _selection: ISelectionRecord | null = null;
+  private _routeAbsent = false;
   private _frame: number | null = null;
-  private _flashTimer: number | null = null;
   private _disposed = false;
   private _changed = new Signal<this, void>(this);
   private _activated = new Signal<this, string>(this);

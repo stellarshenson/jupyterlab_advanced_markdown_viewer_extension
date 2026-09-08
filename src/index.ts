@@ -31,10 +31,10 @@ import {
   IMarkdownViewerTracker,
   MarkdownDocument
 } from '@jupyterlab/markdownviewer';
+import { ICommandPalette } from '@jupyterlab/apputils';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { Widget } from '@lumino/widgets';
 
-import { ISelectionRange } from './anchor';
 import { ChangeChannel } from './channel';
 import {
   DEFAULT_SETTINGS,
@@ -51,11 +51,16 @@ import { installNotesPanel, NotesPanel } from './notes-panel';
 const PLUGIN_ID = 'jupyterlab_advanced_markdown_viewer_extension:plugin';
 
 /**
- * The commands the context menu and the toolbar button call.
+ * The commands the context menu, the palette and the toolbar button call.
  */
 export const COMMANDS = {
   /** Mark the selected passage in the colour named by the `colour` argument. */
   mark: 'advanced-markdown-viewer:mark',
+  /**
+   * The same from the palette and the keyboard: listed always and enabled
+   * only with a selection, where the menu entry is hidden without one.
+   */
+  markSelection: 'advanced-markdown-viewer:mark-selection',
   /** Mark the selected passage and open the note entry on it. */
   addNote: 'advanced-markdown-viewer:add-note',
   /** Put the notes panel into the state named by the `state` argument. */
@@ -155,22 +160,6 @@ interface IAttachment {
 }
 
 /**
- * The selected range of the rendered view, or null when nothing inside it is
- * selected. A collapsed or whitespace-only selection marks nothing.
- */
-function selectionIn(root: HTMLElement): ISelectionRange | null {
-  const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
-    return null;
-  }
-  const range = selection.getRangeAt(0);
-  return root.contains(range.commonAncestorContainer) &&
-    range.toString().trim() !== ''
-    ? range
-    : null;
-}
-
-/**
  * The colour a mark command was asked for, falling back to the first of the
  * four so an entry added without an argument still marks.
  */
@@ -212,12 +201,13 @@ const plugin: JupyterFrontEndPlugin<void> = {
     'Keeps an open Markdown preview current with its file, highlighting what an external change added and removed, and holds the reader marks and notes the file itself carries',
   autoStart: true,
   requires: [IMarkdownViewerTracker],
-  optional: [ISettingRegistry, ILabShell],
+  optional: [ISettingRegistry, ILabShell, ICommandPalette],
   activate: (
     app: JupyterFrontEnd,
     tracker: IMarkdownViewerTracker,
     settingRegistry: ISettingRegistry | null,
-    labShell: ILabShell | null
+    labShell: ILabShell | null,
+    palette: ICommandPalette | null
   ) => {
     const contents = app.serviceManager.contents;
     const channel = new ChangeChannel(app.serviceManager.serverSettings);
@@ -240,6 +230,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
         // A change waiting on disk is applied before a marker is written, so
         // the save that follows the write cannot report the file as changed.
         refresh: () => live.refresh(),
+        serverSettings: app.serviceManager.serverSettings,
         user: app.serviceManager.user,
         settings: current
       });
@@ -248,7 +239,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
       const panel = new NotesPanel({
         root,
         handlers: {
-          addNote: (id, text) => void notes.addNote(id, text),
+          addNote: (id, text) => notes.addNote(id, text),
           setColour: (id, colour) => void notes.setColour(id, colour),
           removeMark: id => void notes.remove(id),
           setState: state => void notes.setPanelState(state)
@@ -305,58 +296,56 @@ const plugin: JupyterFrontEndPlugin<void> = {
     }
 
     /**
-     * The preview the context menu was opened over, or null when it was
-     * opened somewhere else. Valid while the menu is being built and while a
-     * command it holds is executing, because the lab keeps the event that
-     * opened the menu until the next one.
+     * The preview a command acts on: the one the context menu was opened
+     * over, else the one in front, which a right click or a Tab focused.
+     * Null while the feature is off.
+     *
+     * The hit test walks up from the node the menu was opened over, and a
+     * render between the menu and the choice replaces that node, so the walk
+     * then reaches no preview; the preview in front is the same one.
      */
-    const hit = (): IAttachment | null => {
+    const target = (): IAttachment | null => {
       if (!current.notes) {
         return null;
       }
       const node = app.contextMenuHitTest(candidate =>
         candidate.classList.contains(RENDERED_CLASS)
       );
-      if (!node) {
-        return null;
-      }
-      for (const [widget, attachment] of attachments) {
-        if (widget.node.contains(node)) {
-          return attachment;
+      let found: IAttachment | undefined;
+      if (node) {
+        for (const attachment of attachments.values()) {
+          if (attachment.widget.node.contains(node)) {
+            found = attachment;
+          }
         }
       }
-      return null;
+      const widget = found?.widget ?? tracker.currentWidget;
+      return (widget && attachments.get(widget)) ?? null;
     };
 
     /**
-     * The preview and the selected range, for the two commands that need
-     * both. Null when either is missing, which is also what hides them.
+     * The preview to mark, for the commands that need a selection: the
+     * target while its controller holds one. Null hides the menu entries and
+     * disables the palette command.
      */
-    const marking = (): {
-      attachment: IAttachment;
-      range: ISelectionRange;
-    } | null => {
-      const attachment = hit();
-      const rendered = attachment
-        ? attachment.widget.node.querySelector<HTMLElement>(
-            `.${RENDERED_CLASS}`
-          )
-        : null;
-      const range = rendered ? selectionIn(rendered) : null;
-      return attachment && range ? { attachment, range } : null;
+    const marking = (): IAttachment | null => {
+      const attachment = target();
+      return attachment && attachment.notes.selection ? attachment : null;
     };
 
     app.commands.addCommand(COMMANDS.mark, {
       label: args => `Mark ${colourOf(args.colour)}`,
       isVisible: () => marking() !== null,
       execute: async args => {
-        const target = marking();
-        if (target) {
-          await target.attachment.notes.mark(
-            target.range,
-            colourOf(args.colour)
-          );
-        }
+        await marking()?.notes.mark(colourOf(args.colour));
+      }
+    });
+
+    app.commands.addCommand(COMMANDS.markSelection, {
+      label: 'Mark the selected passage',
+      isEnabled: () => marking() !== null,
+      execute: async args => {
+        await marking()?.notes.mark(colourOf(args.colour));
       }
     });
 
@@ -364,18 +353,15 @@ const plugin: JupyterFrontEndPlugin<void> = {
       label: 'Add note',
       isVisible: () => marking() !== null,
       execute: async () => {
-        const target = marking();
-        if (!target) {
+        const attachment = marking();
+        if (!attachment) {
           return;
         }
         // The Kindle model: the note is written on a mark, so a note on
         // unmarked text marks it first and opens the entry on the new mark.
-        const id = await target.attachment.notes.mark(
-          target.range,
-          MARK_COLOURS[0]
-        );
+        const id = await attachment.notes.mark(MARK_COLOURS[0]);
         if (id) {
-          target.attachment.panel.selectMark(id, true);
+          attachment.panel.selectMark(id, true);
         }
       }
     });
@@ -383,15 +369,19 @@ const plugin: JupyterFrontEndPlugin<void> = {
     app.commands.addCommand(COMMANDS.panel, {
       label: args => PANEL_LABELS[args.state as PanelState],
       isVisible: args => {
-        const attachment = hit();
+        const attachment = target();
         return !!attachment && attachment.panel.state !== args.state;
       },
       execute: async args => {
-        const attachment = hit();
-        if (attachment) {
-          await attachment.notes.setPanelState(args.state as PanelState);
-        }
+        await target()?.notes.setPanelState(args.state as PanelState);
       }
+    });
+
+    // The menu hides the marking entries without a selection; the palette
+    // must list the command to be found, so it greys it instead.
+    palette?.addItem({
+      command: COMMANDS.markSelection,
+      category: 'Markdown Viewer'
     });
 
     // Marking needs a selection, so its entries lead. The panel entries follow

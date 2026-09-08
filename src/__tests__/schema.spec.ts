@@ -16,13 +16,14 @@
 import plugin from '../../schema/plugin.json';
 
 import { DEFAULT_SETTINGS, ILiveViewSettings } from '../controller';
-import { MINIMUMS } from '../index';
+import { COMMANDS, MINIMUMS } from '../index';
 
 // src/index.ts is the plugin declaration, so importing the minimums from it
 // also loads the packages the declaration names its tokens from, and one of
 // those ships JavaScript jest cannot parse. The tokens are named here and
 // never called, so an empty module in their place is enough.
 jest.mock('@jupyterlab/application', () => ({}));
+jest.mock('@jupyterlab/apputils', () => ({}));
 jest.mock('@jupyterlab/markdownviewer', () => ({}));
 jest.mock('@jupyterlab/settingregistry', () => ({}));
 
@@ -36,6 +37,7 @@ interface IDeclaration {
 }
 
 const schema = plugin as {
+  'jupyter.lab.shortcuts': unknown[];
   additionalProperties?: boolean;
   properties: Record<string, IDeclaration>;
 };
@@ -80,5 +82,17 @@ describe('the settings schema', () => {
 
   it('refuses a setting it does not declare', () => {
     expect(schema.additionalProperties).toBe(false);
+  });
+
+  it('binds the mark-selection command over the preview', () => {
+    // The keydown lands on the viewer node, which is focusable and is what a
+    // click in the preview or a Tab focuses, so the binding is scoped to it.
+    expect(schema['jupyter.lab.shortcuts']).toEqual([
+      {
+        command: COMMANDS.markSelection,
+        keys: ['Accel Shift M'],
+        selector: '.jp-MarkdownViewer'
+      }
+    ]);
   });
 });

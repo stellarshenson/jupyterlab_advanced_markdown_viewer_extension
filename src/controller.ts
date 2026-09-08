@@ -12,6 +12,7 @@ import { MarkdownDocument } from '@jupyterlab/markdownviewer';
 import { Contents } from '@jupyterlab/services';
 import { IDisposable } from '@lumino/disposable';
 import { ISignal, Signal } from '@lumino/signaling';
+import { Title, Widget } from '@lumino/widgets';
 
 import { ChangeAnimator, prefersReducedMotion } from './animate';
 import { ChangeChannel } from './channel';
@@ -60,10 +61,11 @@ export const TAB_MISSING_CLASS = 'jp-AdvancedMd-tabMissing';
 export const TAB_ACTIVE_CLASS = 'jp-AdvancedMd-tabActive';
 
 /**
- * Tooltip for each state the reader has to act on, so the tab says in words
- * which of the two it is and what it asks for.
+ * Tooltip for each marker, so the tab says in words which state it shows.
  */
-const BLOCKED_CAPTIONS: { [className: string]: string | undefined } = {
+const TAB_CAPTIONS: { [className: string]: string | undefined } = {
+  [TAB_UPDATED_CLASS]:
+    'The file changed on disk and the preview shows the new content; added and removed text is highlighted.',
   [TAB_BLOCKED_CLASS]:
     'A change on disk is held back by unsaved edits in this document. Save or revert the document to take the change.',
   [TAB_MISSING_CLASS]:
@@ -190,6 +192,7 @@ export class LiveViewController implements IDisposable {
 
     this._widget.content.rendered.connect(this._onRendered, this);
     this._widget.disposed.connect(this._onWidgetDisposed, this);
+    this._widget.title.changed.connect(this._onTitleChanged, this);
 
     // The stylesheet's fades follow the reduced motion preference as it
     // changes; so does the change animation.
@@ -567,9 +570,13 @@ export class LiveViewController implements IDisposable {
    * Put the scroll position back after the renderer replaced the content.
    *
    * Two attempts: one on the next frame, and one after a short delay, because
-   * another extension scrolls to a heading anchor on this same signal. Neither
-   * runs while the switch-tab scrolling fix owns the scroll position, and both
-   * stand down as soon as the reader scrolls for themselves.
+   * another extension scrolls to a heading anchor on this same signal. Both
+   * stand down as soon as the reader scrolls for themselves. Neither is armed
+   * while the switch-tab scrolling fix owns the scroll position; the guard is
+   * read once here, so a guard that goes up after that still leaves the two
+   * attempts of this render to run, and a timer an earlier render armed is
+   * not cleared at either early return above and fires with that render's
+   * target. ACC-COMPAT-108 records both as declined.
    */
   private _restoreScroll(root: HTMLElement): void {
     const target = this._scrollTop;
@@ -741,7 +748,7 @@ export class LiveViewController implements IDisposable {
           name !== TAB_MISSING_CLASS &&
           name !== TAB_ACTIVE_CLASS
       );
-    this._setCaption(state ? BLOCKED_CAPTIONS[state] : undefined);
+    this._setCaption(state ? TAB_CAPTIONS[state] : undefined);
     if (state) {
       classes.push(state);
       if (active) {
@@ -761,13 +768,17 @@ export class LiveViewController implements IDisposable {
   /**
    * Put a state's tooltip on the tab, or take it back off.
    *
-   * The caption the tab carried before the first marker is kept, so a tab
-   * that stops being blocked says again whatever the document gave it.
+   * The state's words go first and the document's own caption follows,
+   * because other extensions read that caption from the tab: the colourful
+   * tab sibling finds a file tab by the Path line of its tooltip. The
+   * caption the tab carried before the first marker is kept, so a tab that
+   * stops being blocked says again whatever the document gave it.
    *
    * @param text - the tooltip, or undefined for the state having no tooltip
    */
   private _setCaption(text: string | undefined): void {
     const title = this._widget.title;
+    this._stateCaption = text ?? null;
     if (text === undefined) {
       if (this._documentCaption !== null) {
         title.caption = this._documentCaption;
@@ -778,7 +789,34 @@ export class LiveViewController implements IDisposable {
     if (this._documentCaption === null) {
       this._documentCaption = title.caption;
     }
-    title.caption = text;
+    title.caption = this._composedCaption();
+  }
+
+  /** The state's words over the document's own caption. */
+  private _composedCaption(): string {
+    const text = this._stateCaption ?? '';
+    const document = this._documentCaption;
+    return document ? `${text}\n\n${document}` : text;
+  }
+
+  /**
+   * Keep a state's tooltip on the tab while the document manager rewrites
+   * the caption underneath it.
+   *
+   * An applied change moves the Context's record of the file, and the
+   * document manager answers the file-changed signal with a fresh caption a
+   * moment later, once it has listed the checkpoints. The fresh caption is
+   * kept, to be given back and to stand under the state's words meanwhile.
+   */
+  private _onTitleChanged(title: Title<Widget>): void {
+    if (
+      this._stateCaption === null ||
+      title.caption === this._composedCaption()
+    ) {
+      return;
+    }
+    this._documentCaption = title.caption;
+    title.caption = this._composedCaption();
   }
 
   /**
@@ -814,6 +852,7 @@ export class LiveViewController implements IDisposable {
   private _quietTimer: number | null = null;
   private _cueTimer: number | null = null;
   private _documentCaption: string | null = null;
+  private _stateCaption: string | null = null;
   private _activatedAt = 0;
   private _scrollTop = 0;
   private _restoreTarget: number | null = null;
