@@ -1,6 +1,6 @@
 /**
- * The plugin as the lab activates it: the commands, the context menu, the
- * toolbar control and the settings.
+ * The plugin as the lab activates it: the commands, the context menu and the
+ * settings.
  *
  * The other suites cover the pieces. This one covers only what joins them, so
  * it drives the real notes controller and the real panel against a stand-in
@@ -105,7 +105,39 @@ class Commands {
     return this.declared.get(id).isVisible(args);
   }
   isEnabled(id: string, args: any = {}): boolean {
-    return this.declared.get(id).isEnabled(args);
+    return this.option(id, 'isEnabled', args, true);
+  }
+  // The rest of what Lumino's menu renderer reads of a command when the Mark
+  // submenu renders, answered as the registry answers them for a command
+  // that declares nothing.
+  isToggled(id: string, args: any = {}): boolean {
+    return this.option(id, 'isToggled', args, false);
+  }
+  caption(id: string, args: any = {}): string {
+    return this.option(id, 'caption', args, '');
+  }
+  className(id: string, args: any = {}): string {
+    return this.option(id, 'className', args, '');
+  }
+  dataset(id: string, args: any = {}): object {
+    return this.option(id, 'dataset', args, {});
+  }
+  icon(id: string, args: any = {}): unknown {
+    return this.option(id, 'icon', args, undefined);
+  }
+  iconClass(id: string, args: any = {}): string {
+    return this.option(id, 'iconClass', args, '');
+  }
+  iconLabel(id: string, args: any = {}): string {
+    return this.option(id, 'iconLabel', args, '');
+  }
+  mnemonic(id: string, args: any = {}): number {
+    return this.option(id, 'mnemonic', args, -1);
+  }
+  readonly keyBindings: unknown[] = [];
+  private option(id: string, name: string, args: any, fallback: any): any {
+    const value = this.declared.get(id)[name];
+    return typeof value === 'function' ? value(args) : (value ?? fallback);
   }
   execute(id: string, args: any = {}): Promise<void> {
     return Promise.resolve(this.declared.get(id).execute(args));
@@ -237,7 +269,7 @@ function activate(source: string, composite: Record<string, unknown> = {}) {
   };
   const registry: any = { load: async () => settings };
 
-  plugin.activate(app, tracker, registry, null, {
+  plugin.activate(app, tracker, registry, {
     addItem: (item: any) => palette.push(item)
   });
 
@@ -351,6 +383,8 @@ function select(root: HTMLElement, from: string, to: string): void {
     },
     getRangeAt: () => range,
     removeAllRanges: () => undefined,
+    collapseToEnd: () => undefined,
+    collapse: () => undefined,
     addRange: () => undefined
   });
 }
@@ -528,13 +562,13 @@ describe('the plugin', () => {
       expect(lab.widget.text.split(marks[0].id)).toHaveLength(3);
     });
 
-    it('names its colour in the label so four entries read apart', async () => {
+    it('names its colour in the label so the entries read apart', async () => {
       const lab = await start(SOURCE);
       expect(
         MARK_COLOURS.map(colour =>
           lab.commands.label(COMMANDS.mark, { colour })
         )
-      ).toEqual(['Mark yellow', 'Mark blue', 'Mark pink', 'Mark orange']);
+      ).toEqual(['Yellow', 'Blue', 'Pink', 'Orange', 'Red', 'Green']);
     });
 
     it('writes the file through the route and a transaction of its own', async () => {
@@ -645,11 +679,30 @@ describe('the plugin', () => {
       ).toBe('beta gamma');
     });
 
-    it('lists the mark-selection command in the palette', async () => {
+    it('lists the mark-selection and the panel commands in the palette, and no document note', async () => {
       const lab = await start(SOURCE);
       expect(lab.palette).toEqual([
-        { command: COMMANDS.markSelection, category: 'Markdown Viewer' }
+        { command: COMMANDS.markSelection, category: 'Markdown Viewer' },
+        {
+          command: COMMANDS.panel,
+          args: { state: 'expanded' },
+          category: 'Markdown Viewer'
+        }
       ]);
+    });
+
+    it('writes the document marker from the plus control of the panel, the one route to it', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render(HTML);
+      lab.panel().node.querySelector('.jp-AdvancedMd-notesAdd').click();
+      await lab.ready();
+      await lab.ready();
+
+      expect(lab.widget.text).toMatch(
+        /^<!-- mark:[0-9a-f-]{36} document -->\n/
+      );
+      expect(lab.panel().state).toBe('expanded');
+      expect(lab.panel().node.querySelector('textarea')).not.toBeNull();
     });
 
     it('is not offered for a selection holding only whitespace', async () => {
@@ -725,6 +778,21 @@ describe('the plugin', () => {
       ]).toEqual(['Show notes', 'Show notes minimap', 'Hide notes']);
     });
 
+    it('names the minimap in the hide entry while the panel is one', async () => {
+      const lab = await start(MARKED);
+      lab.widget.render(MARKED_HTML);
+      await lab.commands.execute(COMMANDS.panel, { state: 'minimap' });
+      await lab.ready();
+      expect(lab.commands.label(COMMANDS.panel, { state: 'hidden' })).toBe(
+        'Hide minimap'
+      );
+      await lab.commands.execute(COMMANDS.panel, { state: 'expanded' });
+      await lab.ready();
+      expect(lab.commands.label(COMMANDS.panel, { state: 'hidden' })).toBe(
+        'Hide notes'
+      );
+    });
+
     it('puts the panel into the state and stores it in the document', async () => {
       const lab = await start(MARKED);
       lab.widget.render(MARKED_HTML);
@@ -739,34 +807,75 @@ describe('the plugin', () => {
   });
 
   describe('the context menu', () => {
-    it('offers the four colours, the note and the three states', async () => {
+    it('offers a Mark submenu of the six colours, the note and the three states', async () => {
       const lab = await start(SOURCE);
       expect(
         lab.menu.map(item => [
+          item.type ?? 'command',
           item.command,
           item.args?.colour ?? item.args?.state
         ])
+      ).toEqual([
+        ['submenu', undefined, undefined],
+        ['command', COMMANDS.addNote, undefined],
+        ['command', COMMANDS.panel, 'expanded'],
+        ['command', COMMANDS.panel, 'minimap'],
+        ['command', COMMANDS.panel, 'hidden']
+      ]);
+      const submenu = lab.menu[0].submenu;
+      expect(submenu.title.label).toBe('Mark');
+      expect(submenu.title.icon).toBeDefined();
+      expect(
+        submenu.items.map((item: any) => [item.command, item.args.colour])
       ).toEqual([
         [COMMANDS.mark, 'yellow'],
         [COMMANDS.mark, 'blue'],
         [COMMANDS.mark, 'pink'],
         [COMMANDS.mark, 'orange'],
-        [COMMANDS.addNote, undefined],
-        [COMMANDS.panel, 'expanded'],
-        [COMMANDS.panel, 'minimap'],
-        [COMMANDS.panel, 'hidden']
+        [COMMANDS.mark, 'red'],
+        [COMMANDS.mark, 'green']
       ]);
     });
 
     it('offers them over the rendered Markdown of a preview and nothing else', async () => {
       const lab = await start(SOURCE);
-      for (const item of lab.menu) {
+      // A submenu entry is visible whenever its menu exists, so the Mark
+      // entry is offered through a selector that needs the class the
+      // controller puts on the document while a selection is held.
+      expect(lab.menu[0].selector).toBe(
+        '.jp-AdvancedMd-selecting .jp-MarkdownViewer .jp-RenderedMarkdown'
+      );
+      for (const item of lab.menu.slice(1)) {
         expect(item.selector).toBe('.jp-MarkdownViewer .jp-RenderedMarkdown');
       }
-      // The marking entries lead, so a reader with a selection meets them
+      // The marking entry leads, so a reader with a selection meets it
       // before the panel entries.
       const ranks = lab.menu.map(item => item.rank);
       expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
+    });
+
+    it('puts the selecting class on the document while a selection is held', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render(HTML);
+      expect(
+        lab.widget.node.classList.contains('jp-AdvancedMd-selecting')
+      ).toBe(false);
+      select(lab.widget.rendered, 'beta', 'gamma');
+      expect(
+        lab.widget.node.classList.contains('jp-AdvancedMd-selecting')
+      ).toBe(true);
+      // A caret in text is a click in the text, which is a deselection; a
+      // selection collapsed onto an element is what focusing a control
+      // leaves, and keeps the record.
+      stubSelection({
+        isCollapsed: true,
+        rangeCount: 0,
+        anchorNode: document.createTextNode(''),
+        getRangeAt: () => null
+      });
+      expect(
+        lab.widget.node.classList.contains('jp-AdvancedMd-selecting')
+      ).toBe(false);
     });
   });
 
@@ -780,7 +889,7 @@ describe('the plugin', () => {
       expect(rows[0].textContent).toContain('beta gamma');
     });
 
-    it('closes from its own control and comes back from the toolbar', async () => {
+    it('closes from its own control and comes back from the menu command', async () => {
       const lab = await start(MARKED);
       lab.widget.render(MARKED_HTML);
       const panel = lab.panel();
@@ -793,29 +902,24 @@ describe('the plugin', () => {
         panel: 'hidden'
       });
 
-      // The toolbar control is outside the panel, so it is the way back.
-      const button = lab.widget.toolbar.items[0];
-      expect(button.name).toBe('advancedMdNotes');
-      (button.item.node as HTMLButtonElement).click();
+      // The context menu entry is outside the panel, so it is the way back.
+      expect(
+        lab.commands.isVisible(COMMANDS.panel, { state: 'expanded' })
+      ).toBe(true);
+      await lab.commands.execute(COMMANDS.panel, { state: 'expanded' });
       await lab.ready();
 
       expect(panel.state).toBe('expanded');
       expect(panel.node.querySelectorAll(`.${ROW_CLASS}`)).toHaveLength(1);
     });
 
-    it('cycles the three states from the toolbar control', async () => {
+    it('adds nothing to the document toolbar', async () => {
       const lab = await start(MARKED);
       lab.widget.render(MARKED_HTML);
-      const click = async () => {
-        (lab.widget.toolbar.items[0].item.node as HTMLButtonElement).click();
-        await lab.ready();
-        return lab.panel().state;
-      };
 
-      expect(lab.panel().state).toBe('expanded');
-      expect(await click()).toBe('minimap');
-      expect(await click()).toBe('hidden');
-      expect(await click()).toBe('expanded');
+      // One visible item would open the toolbar to its full height on every
+      // preview; empty, JupyterLab keeps it a two-pixel strip.
+      expect(lab.widget.toolbar.items).toEqual([]);
     });
 
     it('opens the note entry when the reader clicks a marked passage', async () => {
@@ -903,10 +1007,26 @@ describe('the plugin', () => {
       expect(lab.commands.isVisible(COMMANDS.panel, { state: 'hidden' })).toBe(
         false
       );
-      // The toolbar control goes too, so no write path is left reachable.
-      expect(lab.widget.toolbar.items[0].item.isHidden).toBe(true);
       // The markers already in the document are untouched.
       expect(lab.widget.text).toBe(MARKED);
+    });
+
+    it('takes the badge away with the setting, and a press on it writes nothing', async () => {
+      // The badge is the feature's one control outside the panel; with the
+      // setting off it is gone, and the state write behind it is refused
+      // (DEF-NOTES-63).
+      // An unmarked document, so the controller's own state is hidden and
+      // the badge's ask for the expanded state reaches the write guard.
+      const lab = await start(SOURCE);
+      lab.widget.render(HTML);
+      lab.set({ notes: false });
+      await lab.ready();
+
+      expect(lab.panel().badge.hidden).toBe(true);
+      lab.panel().badge.click();
+      await lab.ready();
+      expect(lab.panel().state).toBe('hidden');
+      expect(lab.widget.text).toBe(SOURCE);
     });
 
     it('gives the marks back when the setting comes back', async () => {

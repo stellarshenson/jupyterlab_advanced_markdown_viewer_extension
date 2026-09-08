@@ -336,9 +336,14 @@ test.describe('the refresh view sibling', () => {
     await page.evaluate(() => (window as any).__refresh);
     await expect(editor).not.toContainText(UNSAVED);
     await expect(editor).toContainText('The second paragraph mentions apples.');
-    // The dirty flag is not asserted after the revert: this lab leaves a
-    // reverted document marked dirty whether or not this extension is
-    // enabled, so it says nothing about the revert. The text does.
+    // JupyterLab's own revert leaves the flag set once the content changed;
+    // the sibling clears it, because the document now equals the file. So a
+    // second Refresh has nothing to ask about and reverts at once.
+    expect((await currentWidgetState(page)).dirty).toBe(false);
+    await refresh();
+    await page.evaluate(() => (window as any).__refresh);
+    await expect(dialog).toHaveCount(0);
+    expect((await currentWidgetState(page)).dirty).toBe(false);
   });
 });
 
@@ -438,6 +443,64 @@ test.describe('the export sibling', () => {
     expect(secondExport).toContain(UNSAVED);
     const after = await fileState(page, path);
     expect(after.lastModified).toBe(saved.lastModified);
+    expect((await currentWidgetState(page)).dirty).toBe(false);
+  });
+
+  test('asks about a file changed on disk before any spinner, and exports nothing when that save is cancelled', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await typeInEditor(page, path, `\n${UNSAVED}\n`);
+    expect((await currentWidgetState(page)).dirty).toBe(true);
+    // The file moves on disk while the edits are unsaved. The viewer holds
+    // that change back, so the document's record of the file is now stale
+    // and the save the export makes first raises JupyterLab's own dialog.
+    await page.contents.uploadContent(
+      `${INITIAL}\nRewritten outside the lab.\n`,
+      'text',
+      path
+    );
+    await page.waitForTimeout(1500);
+
+    const exports: string[] = [];
+    page.on('request', (request: any) => {
+      if (request.url().includes('jupyterlab-export-markdown-extension/')) {
+        exports.push(request.url());
+      }
+    });
+    const run = () =>
+      page.evaluate(() => {
+        const w = window as any;
+        w.__export = w.jupyterapp.commands.execute('export-markdown:html');
+      });
+    const dialog = page.locator('.jp-Dialog');
+
+    await run();
+    // One dialog, the save's own, and no spinner queued behind it.
+    await expect(dialog).toHaveCount(1);
+    await expect(dialog).toContainText('File Changed');
+    await expect(
+      page.locator('.jp-Dialog', { hasText: 'Exporting' })
+    ).toHaveCount(0);
+    await dialog.locator('button:has-text("Cancel")').click();
+    await page.evaluate(() => (window as any).__export);
+    // A cancel the user chose ends the command quietly: no error, no export.
+    await expect(dialog).toHaveCount(0);
+    expect(exports).toEqual([]);
+    expect((await currentWidgetState(page)).dirty).toBe(true);
+
+    // Overwrite: the save lands, then the export carries the typed text.
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      (async () => {
+        await run();
+        await dialog.locator('button:has-text("Overwrite")').click();
+        await page.evaluate(() => (window as any).__export);
+      })()
+    ]);
+    expect(fs.readFileSync(await download.path(), 'utf8')).toContain(UNSAVED);
     expect((await currentWidgetState(page)).dirty).toBe(false);
   });
 });
@@ -667,6 +730,70 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     return { path, parked: (await currentWidgetState(page)).scrollTop };
   }
 
+  /**
+   * Take the switch-tab scrolling fix out of the lab: its bundle is refused,
+   * so JupyterLab starts without that plugin and nothing marks a widget.
+   */
+  async function withoutSibling(page: any): Promise<void> {
+    await page.route(
+      /jupyterlab_markdown_switch_tab_scrolling_fix\/static\/.*\.js/,
+      (route: any) => route.abort()
+    );
+    await page.reload();
+    await page.locator('#jupyterlab-splash').waitFor({ state: 'detached' });
+    await page.locator('#main').waitFor();
+  }
+
+  test('DEF-COMPAT-43 restores the scroll of an unguarded image document however recently its tab came to the front', async ({
+    page,
+    tmpPath
+  }) => {
+    await withoutSibling(page);
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(
+      PICTURE,
+      'base64',
+      `${tmpPath}/picture.png`
+    );
+    await page.contents.uploadContent(IMAGED, 'text', path);
+    await page.contents.uploadContent(INITIAL, 'text', `${tmpPath}/other.md`);
+    await openPreview(page, path, 'Paragraph 1 of the report');
+    await openPreview(page, `${tmpPath}/other.md`);
+    await activateTab(page, FILE);
+    await page.locator('.jp-RenderedMarkdown:visible').hover();
+    await page.mouse.wheel(0, 1000);
+    await expect
+      .poll(async () => (await currentWidgetState(page)).scrollTop)
+      .toBeGreaterThan(500);
+    await page.waitForTimeout(3500);
+    const parked = (await currentWidgetState(page)).scrollTop;
+
+    // Back to the tab and a change straight after it. Nobody holds the
+    // position: the render reloads the picture and the text collapses under
+    // the reader for a moment, and the viewer must put them back rather
+    // than stand aside on a timer because the tab just came to the front.
+    await activateTab(page, 'other.md');
+    await activateTab(page, FILE);
+    expect((await currentWidgetState(page)).guarded).toBe(false);
+    await page.contents.uploadContent(
+      `${IMAGED}\n${FIRST_MARKER}\n`,
+      'text',
+      path
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      FIRST_MARKER,
+      { timeout: 20000 }
+    );
+    await expect
+      .poll(async () => (await currentWidgetState(page)).scrollTop, {
+        timeout: 3000
+      })
+      .toBe(parked);
+    // And it stays there once the viewer's own render has run as well.
+    await page.waitForTimeout(2500);
+    expect((await currentWidgetState(page)).scrollTop).toBe(parked);
+  });
+
   test('holds its scroll restore exactly as long as the sibling guard holds', async ({
     page,
     tmpPath
@@ -751,9 +878,10 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     const changed = released.find(sample => sample.changed);
     expect(activated).toBeDefined();
     expect(changed).toBeDefined();
-    // The guard let go before the change, and the change was still inside the
-    // three seconds the guard may hold for, which is the window the viewer
-    // used to sit out whole.
+    // The guard let go before the change, and the change landed soon after
+    // the activation: inside the window a viewer that waited out a tab
+    // activation on its own would still have sat out, which is what tells
+    // this viewer from one.
     const lastGuarded = released.filter(sample => sample.guarded).pop();
     expect(lastGuarded!.t).toBeLessThan(changed!.t);
     expect(changed!.t - activated!.t).toBeLessThan(3000);

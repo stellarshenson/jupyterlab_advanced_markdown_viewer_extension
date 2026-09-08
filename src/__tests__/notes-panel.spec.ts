@@ -13,6 +13,9 @@ import { BoxLayout, BoxPanel, Widget } from '@lumino/widgets';
 import {
   BUTTON_CLASS,
   CLOSE_CLASS,
+  COLLAPSE_CLASS,
+  EXPAND_CLASS,
+  REMOVE_CLASS,
   COUNT_CLASS,
   CONTROLS_CLASS,
   DOT_CLASS,
@@ -41,9 +44,12 @@ import {
   TOGGLE_CLASS,
   colourClass,
   installNotesPanel,
-  openingState
+  openingState,
+  BADGE_EMPTY_CLASS,
+  ADD_CLASS
 } from '../notes-panel';
 import { IMark, INoteEntry, MARK_COLOURS, MarkColour } from '../marks';
+import { MARK_ICONS, SWATCH_RADIUS, SWATCH_SIZE } from '../icons';
 
 // Type-only, so the module is never loaded: it ships JavaScript jest cannot
 // parse, and only its type is needed here.
@@ -147,8 +153,31 @@ const handlers: INotesPanelHandlers = {
   },
   setColour: (id, colour) => asked.push(`colour ${id} ${colour}`),
   removeMark: id => asked.push(`remove ${id}`),
+  markDocument: async () => {
+    asked.push('document');
+    onMarkDocument();
+    return documentId;
+  },
   setState: state => asked.push(`state ${state}`)
 };
+
+/** What the stubbed controller answers to markDocument, and what it does first. */
+let documentId: string | null = null;
+let onMarkDocument: () => void = () => undefined;
+
+/** A document note as the controller lists it. */
+function documentItem(id: string): INotesPanelItem {
+  return item(id, '', {
+    mark: mark(id, { type: 'document', close: null, passage: null })
+  });
+}
+
+/** Let the add control's asynchronous handler run to its end. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 4; i += 1) {
+    await Promise.resolve();
+  }
+}
 
 let root: HTMLElement;
 let panel: NotesPanel;
@@ -185,12 +214,13 @@ const texts = (row: Element): string[] =>
   );
 
 /**
- * Click the button of a row whose label is `label`.
+ * Click the button of a row whose label, or whose title for an icon button,
+ * is `label`.
  */
 function press(row: Element, label: string): void {
   const target = Array.from(
     row.querySelectorAll<HTMLButtonElement>(`.${BUTTON_CLASS}`)
-  ).find(button => button.textContent === label);
+  ).find(button => button.textContent === label || button.title === label);
   if (!target) {
     throw new Error(`no button labelled ${label}`);
   }
@@ -219,6 +249,8 @@ beforeEach(() => {
   root = document.createElement('div');
   root.className = 'jp-RenderedMarkdown';
   document.body.appendChild(root);
+  documentId = null;
+  onMarkDocument = () => undefined;
   panel = new NotesPanel({ root: () => root, handlers, state: 'expanded' });
   Widget.attach(panel, document.body);
 });
@@ -252,6 +284,10 @@ describe('installNotesPanel', () => {
     // place the content had.
     expect(BoxPanel.getStretch(host.content)).toBe(1);
     expect(BoxPanel.getStretch(solo)).toBe(0);
+    // The badge over the preview lives in the box, beside the panel that
+    // hides with its state, and never in the rendered root.
+    expect(box.node.contains(solo.badge)).toBe(true);
+    expect(root.contains(solo.badge)).toBe(false);
     expect(BoxLayout.getStretch(box)).toBe(1);
     // Lumino moved the content, so nothing rebuilt the rendered view.
     expect(box.node.contains(host.content.node)).toBe(true);
@@ -533,6 +569,26 @@ describe('selecting a mark', () => {
     expect(asked).toEqual([]);
   });
 
+  it('leaves the reader at the passage when the entry is opened from it', () => {
+    // The entry is opened by a click on the passage or by Add note over a
+    // selection there: the reader is at the passage, so nothing scrolls.
+    panel.selectMark('a', true);
+    expect(scrolled).toEqual([]);
+  });
+
+  it('brings the passage back into the view when the panel opened over it', () => {
+    // The first mark opened the panel, which narrowed the preview and pushed
+    // the passage below the view: it comes back the least distance, which
+    // is what scrollIntoView does for a block of 'nearest'.
+    renderMarks('a');
+    panel.setMarks([item('a', 'first passage')]);
+    const span = root.querySelector<HTMLElement>('[data-mark="a"]')!;
+    root.getBoundingClientRect = () => ({ top: 0, bottom: 500 }) as DOMRect;
+    span.getBoundingClientRect = () => ({ top: 600, bottom: 620 }) as DOMRect;
+    panel.selectMark('a', true);
+    expect(scrolled).toEqual([span]);
+  });
+
   it('asks for the expanded state when the entry is opened from the minimap', () => {
     // A note entry exists only in the expanded state, so a reader who asked
     // for the entry asked for that state; a plain selection asks for nothing.
@@ -541,6 +597,55 @@ describe('selecting a mark', () => {
     expect(asked).toEqual([]);
     panel.selectMark('a', true);
     expect(asked).toEqual(['state expanded']);
+  });
+
+  it('names what the hide control hides', () => {
+    const control = panel.node.querySelector<HTMLButtonElement>(
+      `.${CLOSE_CLASS}`
+    )!;
+    panel.state = 'minimap';
+    expect(control.title).toBe('Hide minimap');
+    expect(control.getAttribute('aria-label')).toBe('Hide minimap');
+    panel.state = 'expanded';
+    expect(control.title).toBe('Hide notes');
+    expect(control.getAttribute('aria-label')).toBe('Hide notes');
+  });
+
+  it('collapses to the minimap from the control in the expanded header', () => {
+    panel.state = 'expanded';
+    const control = panel.node.querySelector<HTMLButtonElement>(
+      `.${COLLAPSE_CLASS}`
+    )!;
+    expect(control.title).toBe('Show notes minimap');
+    expect(control.querySelector('svg')).not.toBeNull();
+    // At the left edge of the header, before the count, apart from Hide.
+    expect(control.parentElement!.firstElementChild).toBe(control);
+    control.focus();
+    control.click();
+    expect(asked).toEqual(['state minimap']);
+    // The control goes out of view with the state; the focus moves to the
+    // Hide control, which the minimap keeps, and not to the page body
+    // (DEF-NOTES-58).
+    panel.state = 'minimap';
+    expect(document.activeElement).toBe(
+      panel.node.querySelector(`.${CLOSE_CLASS}`)
+    );
+  });
+
+  it('expands from the control on the minimap strip', () => {
+    panel.state = 'minimap';
+    const control = panel.node.querySelector<HTMLButtonElement>(
+      `.${EXPAND_CLASS}`
+    )!;
+    expect(control.title).toBe('Show notes');
+    expect(control.querySelector('svg')).not.toBeNull();
+    control.focus();
+    control.click();
+    expect(asked).toEqual(['state expanded']);
+    panel.state = 'expanded';
+    expect(document.activeElement).toBe(
+      panel.node.querySelector(`.${CLOSE_CLASS}`)
+    );
   });
 
   it('asks for the expanded state when the entry is opened while hidden', () => {
@@ -591,6 +696,28 @@ describe('writing a note', () => {
     box.dispatchEvent(new Event('input'));
   };
 
+  it('names the note field for assistive technology', () => {
+    press(rows()[0], 'Add note');
+    expect(
+      panel.node.querySelector('textarea')!.getAttribute('aria-label')
+    ).toBe('Note');
+  });
+
+  it('lays the entry out as a wide box with its two buttons in a row below', () => {
+    press(rows()[0], 'Add note');
+    const form = panel.node.querySelector('.jp-AdvancedMd-notesForm')!;
+    const box = form.querySelector('textarea')!;
+    // Several lines are visible, and the buttons sit in their own row after
+    // the box rather than beside it, so the box keeps the panel's width.
+    expect(box.rows).toBe(4);
+    const buttons = box.nextElementSibling!;
+    expect(buttons.className).toBe('jp-AdvancedMd-notesFormButtons');
+    expect(
+      Array.from(buttons.querySelectorAll('button')).map(b => b.textContent)
+    ).toEqual(['Save', 'Cancel']);
+    expect(form.querySelectorAll('button')).toHaveLength(2);
+  });
+
   it('writes what was typed', async () => {
     press(rows()[0], 'Add note');
     type('needs a number');
@@ -615,6 +742,313 @@ describe('writing a note', () => {
     );
   });
 
+  it('shows the removal as a trash icon named by its title', () => {
+    const remove = rows()[0].querySelector<HTMLButtonElement>(
+      `.${REMOVE_CLASS}`
+    )!;
+    expect(remove.querySelector('svg')).not.toBeNull();
+    expect(remove.textContent?.trim()).toBe('');
+    expect(remove.title).toBe('Remove this mark');
+    expect(remove.getAttribute('aria-label')).toBe('Remove this mark');
+  });
+
+  it('moves the focus to the row at its place when Remove took the focused row away', () => {
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+    const remove = rows()[0].querySelector<HTMLButtonElement>(
+      `.${REMOVE_CLASS}`
+    )!;
+    remove.focus();
+    remove.click();
+    // The controller took the mark out of the document and the panel is
+    // rebuilt without its row; the row at its place takes the focus.
+    panel.setMarks([item('b', 'second passage')]);
+    expect(asked).toEqual(['remove a']);
+    expect(document.activeElement).toBe(rows()[0]);
+    expect(rows()[0].dataset.mark).toBe('b');
+  });
+
+  it('moves the focus to the Hide button when Remove took the last row away', () => {
+    const remove = rows()[0].querySelector<HTMLButtonElement>(
+      `.${REMOVE_CLASS}`
+    )!;
+    remove.focus();
+    remove.click();
+    panel.setMarks([]);
+    expect(document.activeElement).toBe(
+      panel.node.querySelector(`.${CLOSE_CLASS}`)
+    );
+  });
+
+  it('moves the focus to the Hide button when the rows become ticks', () => {
+    rows()[0].focus();
+    panel.state = 'minimap';
+    expect(document.activeElement).toBe(
+      panel.node.querySelector(`.${CLOSE_CLASS}`)
+    );
+  });
+
+  it('moves the focus to the viewer when the panel is hidden from its own button', () => {
+    const viewer = document.createElement('div');
+    viewer.className = 'jp-MarkdownViewer';
+    viewer.tabIndex = 0;
+    document.body.appendChild(viewer);
+    viewer.appendChild(root);
+    const hide = panel.node.querySelector<HTMLButtonElement>(
+      `.${CLOSE_CLASS}`
+    )!;
+    hide.focus();
+    hide.click();
+    expect(asked).toEqual(['state hidden']);
+    // The controller follows at once with the state.
+    panel.state = 'hidden';
+    expect(document.activeElement).toBe(viewer);
+    viewer.remove();
+  });
+
+  it('moves the focus to the viewer when the panel is hidden while a note is typed', () => {
+    // A browser whose button click leaves the focus where it was (Safari,
+    // Firefox on macOS): the note field is focused when Hide is pressed.
+    const viewer = document.createElement('div');
+    viewer.className = 'jp-MarkdownViewer';
+    viewer.tabIndex = 0;
+    document.body.appendChild(viewer);
+    viewer.appendChild(root);
+    press(rows()[0], 'Add note');
+    type('half a thought');
+    panel.node.querySelector('textarea')!.focus();
+    panel.state = 'hidden';
+    expect(document.activeElement).toBe(viewer);
+    viewer.remove();
+  });
+
+  it('moves the focus to the Hide control when the rows become ticks while a note is typed', () => {
+    press(rows()[0], 'Add note');
+    type('half a thought');
+    panel.node.querySelector('textarea')!.focus();
+    panel.state = 'minimap';
+    expect(document.activeElement).toBe(
+      panel.node.querySelector(`.${CLOSE_CLASS}`)
+    );
+  });
+
+  it('draws a document note with the word Document and no swatch wherever it is handed', () => {
+    panel.setMarks([item('a', 'first passage'), documentItem('d')]);
+    const [first, second] = rows();
+    expect(first.dataset.mark).toBe('a');
+    expect(second.dataset.mark).toBe('d');
+    // The controller orders the list; the panel shows what it is handed. A
+    // document note's row carries the word in place of a passage, no swatch
+    // and no state line.
+    expect(second.querySelector(`.${PASSAGE_CLASS}`)!.textContent).toBe(
+      'Document'
+    );
+    expect(second.querySelector(`.${SWATCH_CLASS}`)).toBeNull();
+    expect(second.querySelector(`.${STATE_CLASS}`)).toBeNull();
+    expect(first.querySelector(`.${SWATCH_CLASS}`)).not.toBeNull();
+  });
+
+  it('offers a note and a removal, and no colours, on an open document row', () => {
+    panel.setMarks([documentItem('d')]);
+    panel.selectMark('d');
+    const row = rows()[0];
+    expect(row.querySelectorAll(`.${DOT_CLASS}`)).toHaveLength(0);
+    expect(row.querySelector(`.${REMOVE_CLASS}`)).not.toBeNull();
+    expect(
+      Array.from(row.querySelectorAll('button')).some(
+        control => control.textContent === 'Add note'
+      )
+    ).toBe(true);
+  });
+
+  it('shows no tick for a document note', () => {
+    panel.setMarks([documentItem('d'), item('a', 'first passage')]);
+    panel.state = 'minimap';
+    expect(panel.node.querySelectorAll(`.${TICK_CLASS}`)).toHaveLength(1);
+  });
+
+  it('adds a note on the document from the plus control in the header', async () => {
+    // The one route to a document note: the controller writes the mark and
+    // lists it, and the entry opens on it with the focus in the field.
+    panel.setMarks([item('a', 'first passage')]);
+    documentId = 'd';
+    onMarkDocument = () =>
+      panel.setMarks([documentItem('d'), item('a', 'first passage')]);
+    const control = panel.node.querySelector<HTMLButtonElement>(
+      `.${ADD_CLASS}`
+    )!;
+    expect(control.title).toBe('Add document note');
+    expect(control.getAttribute('aria-label')).toBe(control.title);
+    expect(control.querySelector('svg')).not.toBeNull();
+    // After the count, before the expand and the hide controls.
+    const header = control.parentElement!;
+    expect(header.children[1]).toBe(
+      panel.node.querySelector(`.${COUNT_CLASS}`)
+    );
+    expect(header.children[2]).toBe(control);
+    expect(header.children[3]).toBe(
+      panel.node.querySelector(`.${EXPAND_CLASS}`)
+    );
+
+    control.click();
+    await settle();
+
+    expect(asked).toEqual(['document']);
+    expect(rows()[0].dataset.mark).toBe('d');
+    const field = rows()[0].querySelector('textarea')!;
+    expect(field).not.toBeNull();
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('opens the document note the file holds from the plus control on the minimap', async () => {
+    // The file holds the document mark: the controller answers its id and
+    // writes nothing; the entry needs the expanded state and asks for it.
+    panel.setMarks([documentItem('d'), item('a', 'first passage')]);
+    panel.state = 'minimap';
+    documentId = 'd';
+    const control = panel.node.querySelector<HTMLButtonElement>(
+      `.${ADD_CLASS}`
+    )!;
+    control.click();
+    await settle();
+
+    expect(asked).toEqual(['document', 'state expanded']);
+    panel.state = 'expanded';
+    expect(rows()).toHaveLength(2);
+    expect(rows()[0].querySelector('textarea')).not.toBeNull();
+  });
+
+  it('keeps a draft typed on another row when the plus opens the document row', async () => {
+    // The plus beside a half-written note must not discard it: the document
+    // row opens and is selected, the draft stays in its own row's field.
+    panel.setMarks([documentItem('d'), item('a', 'first passage')]);
+    press(rows()[1], 'Add note');
+    type('half a thought');
+    documentId = 'd';
+    panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!.click();
+    await settle();
+
+    const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('a');
+    expect(field.value).toBe('half a thought');
+    expect(document.activeElement).toBe(field);
+    expect(rows()[0].classList.contains(SELECTED_CLASS)).toBe(true);
+    expect(
+      Array.from(rows()[0].querySelectorAll('button')).some(
+        control => control.textContent === 'Add note'
+      )
+    ).toBe(true);
+  });
+
+  it('lands a blocked press in the draft, its collapsed row opened', () => {
+    // The reader collapsed the row holding a half-written note; a press on
+    // Add note elsewhere neither discards it nor does nothing: the draft's
+    // row opens and its field takes the focus.
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+    press(rows()[0], 'Add note');
+    type('half a thought');
+    (rows()[0].querySelector(`.${TOGGLE_CLASS}`) as HTMLButtonElement).click();
+    expect(panel.node.querySelector('textarea')).toBeNull();
+    panel.selectMark('b');
+    press(rows()[1], 'Add note');
+
+    const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('a');
+    expect(field.value).toBe('half a thought');
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('opens the asked row when the field elsewhere holds only whitespace', () => {
+    // Save reads a whitespace-only field as nothing; a press on Add note
+    // elsewhere reads it the same way, so the field opens on the asked row.
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+    press(rows()[0], 'Add note');
+    type('\n  ');
+    panel.selectMark('b');
+    press(rows()[1], 'Add note');
+
+    const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('b');
+    expect(field.value).toBe('');
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('keeps a draft on one row when Add note is pressed on another', () => {
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+    press(rows()[0], 'Add note');
+    type('half a thought');
+    panel.selectMark('b');
+    press(rows()[1], 'Add note');
+
+    const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('a');
+    expect(field.value).toBe('half a thought');
+  });
+
+  it('puts the focus back in the open document field when the plus is pressed again', async () => {
+    panel.setMarks([documentItem('d')]);
+    documentId = 'd';
+    const plus = panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!;
+    plus.click();
+    await settle();
+    expect(document.activeElement).toBe(panel.node.querySelector('textarea'));
+    type('kept');
+    plus.focus();
+    plus.click();
+    await settle();
+
+    const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(field.value).toBe('kept');
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('opens nothing when the controller could not write the document mark', async () => {
+    panel.setMarks([item('a', 'first passage')]);
+    documentId = null;
+    panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!.click();
+    await settle();
+
+    expect(asked).toEqual(['document']);
+    expect(rows()).toHaveLength(1);
+    expect(panel.node.querySelector('textarea')).toBeNull();
+  });
+
+  it('shows the badge while hidden, muted without notes and named by the count', () => {
+    panel.setMarks([]);
+    panel.state = 'hidden';
+    expect(panel.badge.hidden).toBe(false);
+    expect(panel.badge.classList.contains(BADGE_EMPTY_CLASS)).toBe(true);
+    expect(panel.badge.title).toBe('No marks: Show notes');
+    expect(panel.badge.querySelector('svg')).not.toBeNull();
+    panel.setMarks([item('a', 'first passage')]);
+    expect(panel.badge.classList.contains(BADGE_EMPTY_CLASS)).toBe(false);
+    expect(panel.badge.title).toBe('1 mark: Show notes');
+    expect(panel.badge.getAttribute('aria-label')).toBe(panel.badge.title);
+  });
+
+  it('hides the badge while the panel is shown and opens the panel from it', () => {
+    panel.state = 'expanded';
+    expect(panel.badge.hidden).toBe(true);
+    panel.state = 'minimap';
+    expect(panel.badge.hidden).toBe(true);
+    panel.state = 'hidden';
+    panel.badge.click();
+    expect(asked).toEqual(['state expanded']);
+  });
+
+  it('hands the focus to the Hide control when the badge opened the panel', () => {
+    // The badge hides with the state it asked for; the focus it held goes to
+    // the control the shown panel keeps, not to the page body (DEF-NOTES-64).
+    document.body.appendChild(panel.badge);
+    panel.state = 'hidden';
+    panel.badge.focus();
+    panel.badge.click();
+    panel.state = 'expanded';
+    expect(document.activeElement).toBe(
+      panel.node.querySelector(`.${CLOSE_CLASS}`)
+    );
+    panel.badge.remove();
+  });
+
   it('writes nothing for an empty note, leaving a bare mark', () => {
     press(rows()[0], 'Add note');
     type('   ');
@@ -629,6 +1063,32 @@ describe('writing a note', () => {
     press(rows()[0], 'Cancel');
     expect(asked).toEqual([]);
     expect(panel.node.querySelector('textarea')).toBeNull();
+  });
+
+  it('keeps the focus in the row after Cancel destroyed the pressed button', () => {
+    press(rows()[0], 'Add note');
+    type('never mind');
+    const cancel = Array.from(
+      rows()[0].querySelectorAll<HTMLButtonElement>(`.${BUTTON_CLASS}`)
+    ).find(button => button.textContent === 'Cancel')!;
+    cancel.focus();
+    cancel.click();
+    // The row is rebuilt without the form, so the button that had the focus
+    // is gone; the reader's place in the tab order is the row it was in.
+    expect(document.activeElement).toBe(rows()[0]);
+  });
+
+  it('keeps the focus in the row after Save', async () => {
+    press(rows()[0], 'Add note');
+    type('a thought');
+    const save = Array.from(
+      rows()[0].querySelectorAll<HTMLButtonElement>(`.${BUTTON_CLASS}`)
+    ).find(button => button.textContent === 'Save')!;
+    save.focus();
+    save.click();
+    // The row is rebuilt once the note is written.
+    await Promise.resolve();
+    expect(document.activeElement).toBe(rows()[0]);
   });
 
   it('keeps a half-written note through a change of the document', () => {
@@ -673,7 +1133,17 @@ describe('the controls of a row', () => {
     expand(rows()[0]);
   });
 
-  it('offers the four colours and asks for the one pressed', () => {
+  it('puts the removal control last, pushed to the right of the dots', () => {
+    const controls = rows()[0].querySelector(`.${CONTROLS_CLASS}`)!;
+    const remove = controls.querySelector(`.${REMOVE_CLASS}`)!;
+    expect(controls.lastElementChild).toBe(remove);
+    // jsdom lays nothing out, so the rule that pushes it is read as written.
+    expect(
+      /\.jp-AdvancedMd-notesRemove \{[^}]*margin-left: auto;/.test(readCss())
+    ).toBe(true);
+  });
+
+  it('offers the six colours and asks for the one pressed', () => {
     const dots = Array.from(
       rows()[0].querySelectorAll<HTMLButtonElement>(`.${DOT_CLASS}`)
     );
@@ -686,16 +1156,16 @@ describe('the controls of a row', () => {
   });
 
   it('asks for the mark to be removed', () => {
-    press(rows()[0], 'Remove');
+    press(rows()[0], 'Remove this mark');
     expect(asked).toEqual(['remove a']);
   });
 
   it('names every button for assistive technology by its title', () => {
     press(rows()[0], 'Add note');
     const buttons = Array.from(panel.node.querySelectorAll('button'));
-    // The close control, the toggle, Add note, the four dots, Remove, Save
-    // and Cancel.
-    expect(buttons).toHaveLength(10);
+    // The expand, collapse, add and close controls, the toggle, Add note,
+    // the six dots, Remove, Save and Cancel.
+    expect(buttons).toHaveLength(15);
     for (const button of buttons) {
       expect(button.getAttribute('aria-label')).toBe(button.title);
       // A button with a worded label is spoken and voice-driven by that
@@ -861,6 +1331,14 @@ describe('the mark colours in the stylesheet', () => {
     }
   ];
 
+  // A red and a green mark are kin to the removed and the added run by
+  // nature (ACC-NOTES-127) and are told from them by staying where a change
+  // highlight fades, so no distance is asked of them and no case is made for
+  // them; the other four keep the bar the faint alphas of ACC-NOTES-134 leave.
+  const apart = MARK_COLOURS.filter(
+    colour => colour !== 'red' && colour !== 'green'
+  );
+
   for (const theme of themes) {
     for (const colour of MARK_COLOURS) {
       it(`keeps ${colour} readable under the ${theme.name} theme`, () => {
@@ -870,7 +1348,9 @@ describe('the mark colours in the stylesheet', () => {
         );
         expect(contrast(painted, theme.text)).toBeGreaterThanOrEqual(4.5);
       });
+    }
 
+    for (const colour of apart) {
       it(`keeps ${colour} apart from a change under the ${theme.name} theme`, () => {
         const painted = over(
           declaration(theme.rule(colour), 'background-color'),
@@ -879,13 +1359,124 @@ describe('the mark colours in the stylesheet', () => {
         for (const change of theme.changes) {
           expect(
             distance(painted, over(change, theme.background))
-          ).toBeGreaterThan(20);
+          ).toBeGreaterThan(13);
         }
       });
     }
   }
 
-  it('keeps the four colours apart from each other', () => {
+  it('borders the minimap tick and gives the bordered buttons the 24 px target', () => {
+    // The tick is the mark's faint wash; its border is what the eye finds on
+    // the strip. The four bordered buttons of a row share one height.
+    expect(declaration('.jp-AdvancedMd-notesTick', 'border')).toMatch(
+      /^1px solid /
+    );
+    expect(declaration('.jp-AdvancedMd-notesButton', 'min-height')).toBe(
+      '24px'
+    );
+  });
+
+  it('puts the hide control at the top of the minimap strip', () => {
+    // The strip's column follows the header's order, collapse to close; the
+    // hide control is ordered ahead of the rest there by the ruling of
+    // 2026-09-08, so the x sits above the plus and the expand caret.
+    expect(
+      declaration(
+        '.jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesClose',
+        'order'
+      )
+    ).toBe('-1');
+  });
+
+  /**
+   * The body of every rule whose selector list names the class bare, read
+   * with the comments stripped, since a comment glued to a rule would be
+   * read as its first selector.
+   */
+  function rulesNaming(className: string): string[] {
+    const rule = /\n((?:[^{}\n][^{}]*))\{([^}]*)\}/g;
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const bodies: string[] = [];
+    for (let found = rule.exec(bare); found; found = rule.exec(bare)) {
+      const [, selectors, body] = found;
+      const named = selectors
+        .split(',')
+        .map((part: string) => part.trim())
+        .includes(`.${className}`);
+      if (named) {
+        bodies.push(body);
+      }
+    }
+    return bodies;
+  }
+
+  it('gives the plus control the 24 px target of the icon controls and shows it in both states', () => {
+    // The control is named in the shared selector lists; each rule naming
+    // it is read for the declarations the control needs.
+    const declared: Record<string, string> = {};
+    for (const body of rulesNaming(ADD_CLASS)) {
+      const property = /([\w-]+): ([^;]+);/g;
+      for (let hit = property.exec(body); hit; hit = property.exec(body)) {
+        declared[hit[1]] = hit[2];
+      }
+    }
+    expect(declared['min-height']).toBe('24px');
+    expect(declared['min-width']).toBe('24px');
+    expect(declared.display).toBe('inline-flex');
+  });
+
+  it('shows the expand and the collapse controls in their own state alone', () => {
+    // The two controls are hidden by a bare rule and shown by a state-gated
+    // one; a later bare rule that sets any other display would show both
+    // carets in every state, as build 0.6.55 did (DEF-NOTES-59). Every rule
+    // whose selector list names a control without a state prefix may set
+    // display to none alone.
+    for (const control of [EXPAND_CLASS, COLLAPSE_CLASS]) {
+      let hidden = false;
+      for (const body of rulesNaming(control)) {
+        const display = /display: ([^;]+);/.exec(body);
+        if (display) {
+          expect(display[1]).toBe('none');
+          hidden = true;
+        }
+      }
+      expect(hidden).toBe(true);
+    }
+  });
+
+  it('draws the menu swatch as the row swatch, in geometry and in colour', () => {
+    // The panel swatch is a square with rounded corners, sized by the
+    // stylesheet; the menu icon is the same square from the same numbers.
+    expect(declaration('.jp-AdvancedMd-notesSwatch', 'width')).toBe(
+      `${SWATCH_SIZE}px`
+    );
+    expect(declaration('.jp-AdvancedMd-notesSwatch', 'height')).toBe(
+      `${SWATCH_SIZE}px`
+    );
+    expect(declaration('.jp-AdvancedMd-notesSwatch', 'border-radius')).toBe(
+      `${SWATCH_RADIUS}px`
+    );
+    for (const colour of MARK_COLOURS) {
+      const rect = /<rect ([^>]*)\/>/.exec(MARK_ICONS[colour].svgstr)![1];
+      const attribute = (name: string): string =>
+        new RegExp(`${name}="([^"]*)"`).exec(rect)![1];
+      expect(attribute('width')).toBe(String(SWATCH_SIZE));
+      expect(attribute('height')).toBe(String(SWATCH_SIZE));
+      expect(attribute('rx')).toBe(String(SWATCH_RADIUS));
+      expect(rect).not.toContain('stroke');
+      // The light-theme colour of the painted mark, hue and alpha alike.
+      const painted = /^rgb\((\d+) (\d+) (\d+) \/ (\d+)%\)$/.exec(
+        declaration(`.${colourClass(colour)}`, 'background-color')
+      )!;
+      const hex = [1, 2, 3]
+        .map(index => Number(painted[index]).toString(16).padStart(2, '0'))
+        .join('');
+      expect(attribute('fill')).toBe(`#${hex}`);
+      expect(Number(attribute('fill-opacity'))).toBe(Number(painted[4]) / 100);
+    }
+  });
+
+  it('keeps the colours apart from each other', () => {
     for (const theme of themes) {
       const painted = MARK_COLOURS.map(colour =>
         over(
@@ -895,7 +1486,9 @@ describe('the mark colours in the stylesheet', () => {
       );
       for (let i = 0; i < painted.length; i++) {
         for (let j = i + 1; j < painted.length; j++) {
-          expect(distance(painted[i], painted[j])).toBeGreaterThan(10);
+          // Seven CIE Lab units is three times the just noticeable
+          // difference, the room the faint alphas of ACC-NOTES-134 leave.
+          expect(distance(painted[i], painted[j])).toBeGreaterThan(7);
         }
       }
     }

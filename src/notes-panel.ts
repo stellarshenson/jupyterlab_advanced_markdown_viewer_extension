@@ -14,13 +14,25 @@
  * bring a selected passage into sight.
  */
 
+import { MessageLoop } from '@lumino/messaging';
 import { BoxLayout, BoxPanel, Widget } from '@lumino/widgets';
 
 import {
+  ADD_ICON,
+  COLLAPSE_ICON,
+  EXPAND_ICON,
+  PANEL_ICONS,
+  REMOVE_ICON
+} from './icons';
+import {
+  DOCUMENT_TYPE,
+  HIDE_MINIMAP_LABEL,
   IMark,
   INoteEntry,
   MARK_COLOURS,
+  known,
   MarkColour,
+  PANEL_LABELS,
   PanelState
 } from './marks';
 
@@ -53,12 +65,35 @@ export const CONTROLS_CLASS = 'jp-AdvancedMd-notesControls';
 export const BUTTON_CLASS = 'jp-AdvancedMd-notesButton';
 export const DOT_CLASS = 'jp-AdvancedMd-notesDot';
 export const FORM_CLASS = 'jp-AdvancedMd-notesForm';
+export const FORM_BUTTONS_CLASS = 'jp-AdvancedMd-notesFormButtons';
 export const TICK_CLASS = 'jp-AdvancedMd-notesTick';
 
-/** Classes of the header and its two parts. */
+/** Classes of the header and its parts. */
 export const HEADER_CLASS = 'jp-AdvancedMd-notesHeader';
 export const COUNT_CLASS = 'jp-AdvancedMd-notesCount';
 export const CLOSE_CLASS = 'jp-AdvancedMd-notesClose';
+/** Class of the header control that expands the minimap to the full list. */
+export const EXPAND_CLASS = 'jp-AdvancedMd-notesExpand';
+/** Class of the header control that collapses the list to the minimap. */
+export const COLLAPSE_CLASS = 'jp-AdvancedMd-notesCollapse';
+/** Class of the header control that adds a note on the document as a whole. */
+export const ADD_CLASS = 'jp-AdvancedMd-notesAdd';
+
+/** Title of that control, the one route to a document note. */
+const ADD_LABEL = 'Add document note';
+
+/** The removal control of an open row. */
+export const REMOVE_CLASS = 'jp-AdvancedMd-notesRemove';
+
+/** Class on the word a document note's row shows in place of a passage. */
+export const DOCUMENT_CLASS = 'jp-AdvancedMd-notesDocument';
+
+/**
+ * Class on the notes badge over the preview, and the class it carries while
+ * the document holds no note.
+ */
+export const BADGE_CLASS = 'jp-AdvancedMd-notesBadge';
+export const BADGE_EMPTY_CLASS = 'jp-AdvancedMd-notesBadge-empty';
 
 /**
  * Class the rendered decoration of a marked passage carries, and the attribute
@@ -67,6 +102,12 @@ export const CLOSE_CLASS = 'jp-AdvancedMd-notesClose';
  */
 export const MARK_CLASS = 'jp-AdvancedMd-mark';
 export const MARK_ATTRIBUTE = 'data-mark';
+
+/**
+ * JupyterLab's class on the viewer node, the focusable ancestor of the rendered
+ * root, where the focus goes when the panel that held it is hidden.
+ */
+const VIEWER_CLASS = 'jp-MarkdownViewer';
 
 /** Class a marked passage carries while a selected row flashes it. */
 export const FLASH_CLASS = 'jp-AdvancedMd-markFlash';
@@ -77,11 +118,11 @@ export const FLASH_MS = 1800;
 /** Characters of a passage a row shows before it is cut short. */
 export const PASSAGE_LIMIT = 80;
 
-/** The only mark type this version writes; another type is read-only. */
-const NOTE_TYPE = 'note';
-
 /** Text the row shows for a mark whose passage is not in the rendered view. */
 const UNANCHORED = 'unanchored';
+
+/** Text a document note's row shows in place of a passage. */
+const DOCUMENT_LABEL = 'Document';
 
 /**
  * One mark as the panel lists it.
@@ -97,7 +138,7 @@ export interface INotesPanelItem {
 }
 
 /**
- * What the panel calls when the reader acts on a row.
+ * What the panel calls when the reader acts on a row or on the header.
  *
  * Every one of these changes the document, which is the controller's work: the
  * panel neither parses nor writes the file.
@@ -113,6 +154,11 @@ export interface INotesPanelHandlers {
   setColour(id: string, colour: MarkColour): void;
   /** Remove both markers of a mark, leaving the passage as it is. */
   removeMark(id: string): void;
+  /**
+   * Mark the document as a whole, or answer the document mark the file
+   * already holds; null when nothing could be written.
+   */
+  markDocument(): Promise<string | null>;
   /** Store a new panel state, which is also what the close control does. */
   setState(state: PanelState): void;
 }
@@ -175,6 +221,9 @@ export function installNotesPanel(host: INotesHost, panel: NotesPanel): void {
   box.addWidget(panel);
   BoxLayout.setStretch(box, 1);
   layout.addWidget(box);
+  // The badge sits over the preview's corner while the panel is hidden, so
+  // it lives in the box and not in the panel, which is hidden with it.
+  box.node.appendChild(panel.badge);
 }
 
 /**
@@ -229,20 +278,59 @@ export class NotesPanel extends Widget {
     this._count.className = COUNT_CLASS;
     const header = document.createElement('div');
     header.className = HEADER_CLASS;
-    header.appendChild(this._count);
-    header.appendChild(
-      button(CLOSE_CLASS, '✕', 'Hide notes', () =>
-        this._handlers.setState('hidden')
-      )
+    // The collapse control leads the header, at its left edge, where a caret
+    // reads as collapse and not as a second close beside the hide control;
+    // shown by the stylesheet in the expanded state alone.
+    const collapse = button(COLLAPSE_CLASS, '', PANEL_LABELS.minimap, () =>
+      this._handlers.setState('minimap')
     );
+    COLLAPSE_ICON.element({ container: collapse, tag: 'span' });
+    header.appendChild(collapse);
+    header.appendChild(this._count);
+    // The one route to a note on the document as a whole: the entry opens on
+    // the document mark, written first when the file holds none.
+    const add = button(
+      ADD_CLASS,
+      '',
+      ADD_LABEL,
+      () => void this._addDocumentNote()
+    );
+    ADD_ICON.element({ container: add, tag: 'span' });
+    header.appendChild(add);
+    // Its mirror, shown in the minimap state alone, where the strip has no
+    // rows to expand from.
+    const expand = button(EXPAND_CLASS, '', PANEL_LABELS.expanded, () =>
+      this._handlers.setState('expanded')
+    );
+    EXPAND_ICON.element({ container: expand, tag: 'span' });
+    header.appendChild(expand);
+    // Its title is set by _apply, which names what the control hides.
+    this._close = button(CLOSE_CLASS, '', '', () =>
+      this._handlers.setState('hidden')
+    );
+    PANEL_ICONS.hidden.element({ container: this._close, tag: 'span' });
+    header.appendChild(this._close);
 
     this._body = document.createElement('div');
     this.node.appendChild(header);
     this.node.appendChild(this._body);
 
+    // The badge over the preview; installNotesPanel mounts it, _apply shows
+    // it while the panel is hidden and _render names the count on it.
+    this.badge = button(BADGE_CLASS, '', '', () =>
+      this._handlers.setState('expanded')
+    );
+    PANEL_ICONS.expanded.element({ container: this.badge, tag: 'span' });
+
     this._state = options.state;
     this._apply();
   }
+
+  /**
+   * The notes badge over the preview: shown while the panel is hidden, muted
+   * while the document holds no note, and a way to the expanded panel.
+   */
+  readonly badge: HTMLButtonElement;
 
   /**
    * Which of the three states the panel is in.
@@ -290,11 +378,13 @@ export class NotesPanel extends Widget {
   }
 
   /**
-   * Select a mark's row, bringing its passage into sight and flashing it.
+   * Select a mark's row and, when the row was chosen in the panel, bring its
+   * passage into sight and flash it.
    *
    * @param id - the mark to select
    * @param openNote - also open the note entry, which is what a click on the
-   * marked passage itself asks for
+   * marked passage itself asks for; the passage is where the reader is, so
+   * nothing is scrolled unless the panel's opening pushed it out of the view
    */
   selectMark(id: string, openNote = false): void {
     if (!this._items.some(item => item.mark.id === id)) {
@@ -307,12 +397,67 @@ export class NotesPanel extends Widget {
     }
     this._selected = id;
     this._open.add(id);
-    if (openNote && this._entry?.id !== id) {
-      this._entry = { id, text: '' };
-      this._focus = true;
+    if (openNote) {
+      this._openEntry(id);
     }
     this._render();
-    this._reveal(id);
+    // The entry is opened from the passage itself, where the reader already
+    // is; a row selected in the panel is what needs the passage brought in.
+    if (!openNote) {
+      this._reveal(id);
+    } else {
+      // The first mark of a document opened the panel, which took its width
+      // from the preview: the text above the passage rewrapped and the passage
+      // may have left the view. The fit that opening posted is run first, so
+      // the check reads the new layout; an open panel leaves nothing to do.
+      MessageLoop.flush();
+      this._keepInView(id);
+    }
+  }
+
+  /**
+   * Open the note entry on a mark, for the next render.
+   *
+   * A draft typed on another row is kept, not replaced: the row asked for
+   * opens with its Add note control and the draft stays where it was. The
+   * press lands the reader in the field that holds the entry, its row opened,
+   * so a draft the reader collapsed out of sight never blocks in silence.
+   * A field holding only whitespace is no draft, as Save reads it.
+   */
+  private _openEntry(id: string): void {
+    const entry = this._entry?.text.trim() ? this._entry : { id, text: '' };
+    this._entry = entry;
+    this._open.add(entry.id);
+    this._focus = true;
+  }
+
+  /**
+   * Open the note entry on the document mark, asking the controller for it.
+   */
+  private async _addDocumentNote(): Promise<void> {
+    const id = await this._handlers.markDocument();
+    if (id) {
+      this.selectMark(id, true);
+    }
+  }
+
+  /**
+   * Scroll a passage the least distance that puts it back in the view, when
+   * it is out of it; nothing else moves.
+   */
+  private _keepInView(id: string): void {
+    const root = this._root();
+    const marked = root?.querySelector<HTMLElement>(
+      `[${MARK_ATTRIBUTE}="${id}"]`
+    );
+    if (!root || !marked) {
+      return;
+    }
+    const view = root.getBoundingClientRect();
+    const passage = marked.getBoundingClientRect();
+    if (passage.bottom > view.bottom || passage.top < view.top) {
+      marked.scrollIntoView({ block: 'nearest' });
+    }
   }
 
   /**
@@ -322,7 +467,37 @@ export class NotesPanel extends Widget {
   private _apply(): void {
     this.toggleClass(EXPANDED_CLASS, this._state === 'expanded');
     this.toggleClass(MINIMAP_CLASS, this._state === 'minimap');
+    // The hide control names what it hides.
+    const hide =
+      this._state === 'minimap' ? HIDE_MINIMAP_LABEL : PANEL_LABELS.hidden;
+    this._close.title = hide;
+    this._close.setAttribute('aria-label', hide);
+    // A control of the panel the reader had focused goes out of reach with the
+    // panel, or with the header control that the state class hides (Expand,
+    // Collapse); the viewer, or the Hide control that every shown state
+    // keeps, takes the focus, so it never falls to the page body. A control
+    // in the body is left to _render, which keeps the reader's row, unless
+    // the panel hides, when the body is emptied and no row is rebuilt.
+    const active = document.activeElement;
+    if (
+      this.node.contains(active) &&
+      (this._state === 'hidden' || !this._body.contains(active))
+    ) {
+      if (this._state === 'hidden') {
+        this._root()?.closest<HTMLElement>(`.${VIEWER_CLASS}`)?.focus();
+      } else {
+        this._close.focus({ preventScroll: true });
+      }
+    }
     this.setHidden(this._state === 'hidden');
+    this.badge.hidden = this._state !== 'hidden';
+    // The badge hides with the state it opened; a focused badge hands the
+    // focus to the Hide control, which the shown panel keeps. This runs after
+    // the panel is shown, since a focus call into a hidden subtree does
+    // nothing.
+    if (active === this.badge && this._state !== 'hidden') {
+      this._close.focus({ preventScroll: true });
+    }
     this._render();
     this.parent?.fit();
   }
@@ -333,13 +508,27 @@ export class NotesPanel extends Widget {
    */
   private _render(): void {
     const active = document.activeElement;
-    const typing =
-      active instanceof HTMLTextAreaElement && this._body.contains(active);
+    const inside = active instanceof HTMLElement && this._body.contains(active);
+    const typing = inside && active instanceof HTMLTextAreaElement;
     const keepFocus = this._focus || typing;
     const caret = typing ? [active.selectionStart, active.selectionEnd] : null;
+    // The body is rebuilt whole, so a control the reader had focused is
+    // destroyed with it; its row is what they were at, and the row built in
+    // its place takes the focus, which keeps their place in the tab order.
+    // A row that is gone, its mark removed or the rows now ticks, hands the
+    // focus to the row at its place, else to the Hide button, so it never
+    // falls to the page body.
+    const row = inside ? active.closest<HTMLElement>(`.${ROW_CLASS}`) : null;
+    const at = row?.dataset.mark ?? null;
+    const index = row ? Array.from(this._body.children).indexOf(row) : -1;
     this._focus = false;
 
     this._count.textContent = countLabel(this._items.length);
+    // The count, then the action, under the name the menu gives it.
+    const title = `${countLabel(this._items.length)}: ${PANEL_LABELS.expanded}`;
+    this.badge.title = title;
+    this.badge.setAttribute('aria-label', title);
+    this.badge.classList.toggle(BADGE_EMPTY_CLASS, this._items.length === 0);
     this._body.className = this._state === 'minimap' ? MAP_CLASS : LIST_CLASS;
     this._body.textContent = '';
     // The rows are a list a screen reader moves through; the strip of ticks
@@ -353,16 +542,34 @@ export class NotesPanel extends Widget {
       return;
     }
     for (const item of this._items) {
+      // A document note has no place in the document, so no tick.
+      if (this._state === 'minimap' && item.mark.type === DOCUMENT_TYPE) {
+        continue;
+      }
       this._body.appendChild(
         this._state === 'minimap' ? this._tick(item) : this._row(item)
       );
     }
-    if (keepFocus) {
-      const text = this._body.querySelector('textarea');
-      text?.focus();
-      if (text && caret) {
+    // The note field takes the focus back when one was built; when the state
+    // took it away (the rows became ticks while a note was typed), the row
+    // chain below finds the reader a place.
+    const text = keepFocus ? this._body.querySelector('textarea') : null;
+    if (text) {
+      text.focus();
+      if (caret) {
         text.setSelectionRange(caret[0], caret[1]);
       }
+    } else if (at !== null) {
+      const rows = this._body.querySelectorAll<HTMLElement>(`.${ROW_CLASS}`);
+      const target =
+        this._body.querySelector<HTMLElement>(
+          `.${ROW_CLASS}[${MARK_ATTRIBUTE}="${at}"]`
+        ) ??
+        rows[Math.min(index, rows.length - 1)] ??
+        this._close;
+      // A rebuild the reader did not ask for, a change from disk, must not
+      // scroll the panel to the row.
+      target.focus({ preventScroll: true });
     }
   }
 
@@ -372,7 +579,7 @@ export class NotesPanel extends Widget {
   private _row(item: INotesPanelItem): HTMLElement {
     const { mark } = item;
     const open = this._open.has(mark.id);
-    const known = mark.type === NOTE_TYPE;
+    const wholeDocument = mark.type === DOCUMENT_TYPE;
 
     const row = document.createElement('div');
     row.className = ROW_CLASS;
@@ -396,15 +603,22 @@ export class NotesPanel extends Widget {
     const head = document.createElement('div');
     head.className = HEAD_CLASS;
     head.addEventListener('click', () => this.selectMark(mark.id));
-    const swatch = document.createElement('span');
-    swatch.className = `${SWATCH_CLASS} ${colourClass(mark.colour)}`;
-    // The swatch is the only place the row shows its colour.
-    swatch.setAttribute('role', 'img');
-    swatch.setAttribute('aria-label', mark.colour);
     const passage = document.createElement('span');
     passage.className = PASSAGE_CLASS;
-    passage.textContent = shorten(item.passage);
-    head.appendChild(swatch);
+    if (wholeDocument) {
+      // A note on the document as a whole has no colour and no passage: the
+      // row says so in place of both.
+      passage.classList.add(DOCUMENT_CLASS);
+      passage.textContent = DOCUMENT_LABEL;
+    } else {
+      const swatch = document.createElement('span');
+      swatch.className = `${SWATCH_CLASS} ${colourClass(mark.colour)}`;
+      // The swatch is the only place the row shows its colour.
+      swatch.setAttribute('role', 'img');
+      swatch.setAttribute('aria-label', mark.colour);
+      head.appendChild(swatch);
+      passage.textContent = shorten(item.passage);
+    }
     head.appendChild(passage);
     head.appendChild(
       button(
@@ -428,7 +642,10 @@ export class NotesPanel extends Widget {
 
     // A mark of a type this version does not know is listed with its type and
     // offered no control, so nothing this extension cannot read is rewritten.
-    const state = [known ? '' : mark.type, item.anchored ? '' : UNANCHORED]
+    const state = [
+      known(mark) ? '' : mark.type,
+      item.anchored ? '' : UNANCHORED
+    ]
       .filter(part => part !== '')
       .join(' ');
     if (state) {
@@ -442,7 +659,7 @@ export class NotesPanel extends Widget {
       row.appendChild(entryRow(note, open));
     }
 
-    if (open && known) {
+    if (open && known(mark)) {
       row.appendChild(this._controls(mark));
       if (this._entry?.id === mark.id) {
         row.appendChild(this._form(mark.id, this._entry.text));
@@ -452,35 +669,38 @@ export class NotesPanel extends Widget {
   }
 
   /**
-   * The controls of an open row: a note, the four colours, and a removal.
+   * The controls of an open row: a note, the six colours, and a removal.
    */
   private _controls(mark: IMark): HTMLElement {
     const controls = document.createElement('div');
     controls.className = CONTROLS_CLASS;
     controls.appendChild(
       button(BUTTON_CLASS, 'Add note', 'Add note to this mark', () => {
-        this._entry = { id: mark.id, text: '' };
-        this._focus = true;
+        this._openEntry(mark.id);
         this._render();
       })
     );
-    for (const colour of MARK_COLOURS) {
+    for (const colour of mark.type === DOCUMENT_TYPE ? [] : MARK_COLOURS) {
       controls.appendChild(
         button(`${DOT_CLASS} ${colourClass(colour)}`, '', colour, () =>
           this._handlers.setColour(mark.id, colour)
         )
       );
     }
-    controls.appendChild(
-      button(BUTTON_CLASS, 'Remove', 'Remove this mark', () =>
-        this._handlers.removeMark(mark.id)
-      )
+    const remove = button(
+      `${BUTTON_CLASS} ${REMOVE_CLASS}`,
+      '',
+      'Remove this mark',
+      () => this._handlers.removeMark(mark.id)
     );
+    REMOVE_ICON.element({ container: remove, tag: 'span' });
+    controls.appendChild(remove);
     return controls;
   }
 
   /**
-   * The note entry: a text box, and the two ways out of it.
+   * The note entry: a text box, and the two ways out of it in a row below
+   * the box, so the box keeps the panel's whole width.
    *
    * Saving blank text writes nothing, so a mark stays bare rather than gaining
    * an empty note line. The draft stays until the controller says whether the
@@ -492,12 +712,17 @@ export class NotesPanel extends Widget {
     const form = document.createElement('div');
     form.className = FORM_CLASS;
     const text = document.createElement('textarea');
+    text.rows = 4;
+    text.setAttribute('aria-label', 'Note');
     text.value = draft;
     text.addEventListener('input', () => {
       this._entry = { id, text: text.value };
     });
     form.appendChild(text);
-    form.appendChild(
+    const buttons = document.createElement('div');
+    buttons.className = FORM_BUTTONS_CLASS;
+    form.appendChild(buttons);
+    buttons.appendChild(
       button(BUTTON_CLASS, 'Save', 'Save this note', () => {
         const written = text.value.trim();
         if (!written) {
@@ -513,7 +738,7 @@ export class NotesPanel extends Widget {
         });
       })
     );
-    form.appendChild(
+    buttons.appendChild(
       button(BUTTON_CLASS, 'Cancel', 'Cancel this note', () => {
         this._entry = null;
         this._render();
@@ -587,6 +812,7 @@ export class NotesPanel extends Widget {
   private _state: PanelState;
   private _selected: string | null = null;
   private _entry: { id: string; text: string } | null = null;
+  private _close: HTMLButtonElement;
   private _focus = false;
   private _flash: number | null = null;
 }

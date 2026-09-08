@@ -13,7 +13,7 @@
  * carries the whole conversation and any Markdown renderer ignores it. This
  * module is the wiring: it creates the three pieces per document (the live
  * controller, the notes controller and the notes panel), declares the commands
- * the context menu and the toolbar call, and reads the settings all three
+ * the context menu and the palette call, and reads the settings all three
  * share.
  *
  * The scope is the rendered preview. A Markdown file open in the editor is not
@@ -24,8 +24,7 @@
 
 import {
   JupyterFrontEnd,
-  JupyterFrontEndPlugin,
-  ILabShell
+  JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import {
   IMarkdownViewerTracker,
@@ -33,16 +32,24 @@ import {
 } from '@jupyterlab/markdownviewer';
 import { ICommandPalette } from '@jupyterlab/apputils';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
-import { Widget } from '@lumino/widgets';
+import { Menu } from '@lumino/widgets';
 
 import { ChangeChannel } from './channel';
+import { MARK_ICONS, MARK_MENU_ICON, NOTE_ICON, PANEL_ICONS } from './icons';
 import {
   DEFAULT_SETTINGS,
   ILiveViewSettings,
   LiveViewController
 } from './controller';
-import { MARK_COLOURS, MarkColour, PanelState } from './marks';
-import { NotesController } from './notes';
+import {
+  DEFAULT_COLOUR,
+  HIDE_MINIMAP_LABEL,
+  MARK_COLOURS,
+  MarkColour,
+  PANEL_LABELS,
+  PanelState
+} from './marks';
+import { NotesController, SELECTING_CLASS } from './notes';
 import { installNotesPanel, NotesPanel } from './notes-panel';
 
 /**
@@ -51,7 +58,7 @@ import { installNotesPanel, NotesPanel } from './notes-panel';
 const PLUGIN_ID = 'jupyterlab_advanced_markdown_viewer_extension:plugin';
 
 /**
- * The commands the context menu, the palette and the toolbar button call.
+ * The commands the context menu and the palette call.
  */
 export const COMMANDS = {
   /** Mark the selected passage in the colour named by the `colour` argument. */
@@ -77,21 +84,19 @@ const RENDERED_CLASS = 'jp-RenderedMarkdown';
  * Selector the context-menu entries are registered on: the rendered output of
  * a Markdown preview, not of a notebook cell or any other rendered Markdown.
  */
-const CONTEXT_SELECTOR = '.jp-MarkdownViewer .jp-RenderedMarkdown';
+const CONTEXT_SELECTOR = `.jp-MarkdownViewer .${RENDERED_CLASS}`;
 
 /**
- * The name of each panel state as the context menu offers it.
+ * Where the Mark submenu is offered: the same, while the document widget
+ * says a selection is held. A submenu entry is visible whenever its menu
+ * exists, so the selector is what hides it without a selection.
  */
-const PANEL_LABELS: Record<PanelState, string> = {
-  expanded: 'Show notes',
-  minimap: 'Show notes minimap',
-  hidden: 'Hide notes'
-};
+const MARKING_SELECTOR = `.${SELECTING_CLASS} ${CONTEXT_SELECTOR}`;
 
 /**
- * The order the toolbar button cycles the three states in.
+ * The order the context menu offers the three states in.
  */
-const PANEL_CYCLE: PanelState[] = ['expanded', 'minimap', 'hidden'];
+const PANEL_ORDER: PanelState[] = ['expanded', 'minimap', 'hidden'];
 
 /**
  * The lowest value this code accepts for each numeric setting. A number below
@@ -159,36 +164,19 @@ interface IAttachment {
   panel: NotesPanel;
 }
 
+/** A colour as the Mark submenu names it. */
+function colourLabel(colour: MarkColour): string {
+  return colour[0].toUpperCase() + colour.slice(1);
+}
+
 /**
- * The colour a mark command was asked for, falling back to the first of the
- * four so an entry added without an argument still marks.
+ * The colour a mark command was asked for, falling back to the default
+ * colour so an entry added without an argument still marks.
  */
 function colourOf(value: unknown): MarkColour {
   return MARK_COLOURS.includes(value as MarkColour)
     ? (value as MarkColour)
-    : MARK_COLOURS[0];
-}
-
-/**
- * The toolbar control that shows and hides the notes panel.
- *
- * The panel's own header closes it, so the reader needs a control outside the
- * panel to bring it back. It cycles the three states rather than offering
- * three buttons, and carries the JupyterLab toolbar classes so it looks like
- * every other button on that toolbar.
- */
-function notesToolbarButton(onClick: () => void): Widget {
-  const node = document.createElement('button');
-  node.className = 'jp-ToolbarButtonComponent jp-mod-minimal jp-Button';
-  node.title = 'Show the notes panel, its minimap, or neither';
-  const label = document.createElement('span');
-  label.className = 'jp-ToolbarButtonComponent-label';
-  label.textContent = 'Notes';
-  node.appendChild(label);
-  node.addEventListener('click', onClick);
-  const item = new Widget({ node });
-  item.addClass('jp-ToolbarButton');
-  return item;
+    : DEFAULT_COLOUR;
 }
 
 /**
@@ -201,12 +189,11 @@ const plugin: JupyterFrontEndPlugin<void> = {
     'Keeps an open Markdown preview current with its file, highlighting what an external change added and removed, and holds the reader marks and notes the file itself carries',
   autoStart: true,
   requires: [IMarkdownViewerTracker],
-  optional: [ISettingRegistry, ILabShell, ICommandPalette],
+  optional: [ISettingRegistry, ICommandPalette],
   activate: (
     app: JupyterFrontEnd,
     tracker: IMarkdownViewerTracker,
     settingRegistry: ISettingRegistry | null,
-    labShell: ILabShell | null,
     palette: ICommandPalette | null
   ) => {
     const contents = app.serviceManager.contents;
@@ -242,24 +229,26 @@ const plugin: JupyterFrontEndPlugin<void> = {
           addNote: (id, text) => notes.addNote(id, text),
           setColour: (id, colour) => void notes.setColour(id, colour),
           removeMark: id => void notes.remove(id),
+          markDocument: () => notes.markDocument(),
           setState: state => void notes.setPanelState(state)
         },
         state: notes.panelState
       });
+      // Nothing is added to the document toolbar: one visible item would make
+      // JupyterLab open the toolbar to its full height on every preview, where
+      // it stays a two-pixel strip while empty. The context menu and the
+      // panel's own header are the controls.
       installNotesPanel(widget, panel);
-      const control = notesToolbarButton(() => {
-        const next = PANEL_CYCLE[(PANEL_CYCLE.indexOf(panel.state) + 1) % 3];
-        void notes.setPanelState(next);
-      });
-      widget.toolbar.addItem('advancedMdNotes', control);
 
       // The panel holds no model: every change of the marks or of the state is
       // read back out of the controller and handed to it whole.
       const sync = (): void => {
         // With the feature off nothing of it is offered, and the document
         // keeps the markers it already carries: no write path is reachable.
-        control.setHidden(!current.notes);
         panel.state = current.notes ? notes.panelState : 'hidden';
+        // The badge is the feature's one control outside the panel: off with
+        // the setting, else shown with the hidden state as _apply has it.
+        panel.badge.hidden = !current.notes || panel.state !== 'hidden';
         panel.setMarks(
           notes.marks.map(mark => ({
             mark,
@@ -282,18 +271,6 @@ const plugin: JupyterFrontEndPlugin<void> = {
 
     tracker.forEach(attach);
     tracker.widgetAdded.connect((_, widget) => attach(widget));
-
-    if (labShell) {
-      // Another extension takes the scroll position for a few seconds after a
-      // tab is activated. Controllers need to know when that clock started.
-      labShell.currentChanged.connect((_, args) => {
-        const widget = args.newValue as Widget | null;
-        const attachment = widget
-          ? attachments.get(widget as MarkdownDocument)
-          : undefined;
-        attachment?.live.noteActivated();
-      });
-    }
 
     /**
      * The preview a command acts on: the one the context menu was opened
@@ -334,7 +311,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
     };
 
     app.commands.addCommand(COMMANDS.mark, {
-      label: args => `Mark ${colourOf(args.colour)}`,
+      label: args => colourLabel(colourOf(args.colour)),
+      icon: args => MARK_ICONS[colourOf(args.colour)],
       isVisible: () => marking() !== null,
       execute: async args => {
         await marking()?.notes.mark(colourOf(args.colour));
@@ -343,6 +321,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
 
     app.commands.addCommand(COMMANDS.markSelection, {
       label: 'Mark the selected passage',
+      icon: args => MARK_ICONS[colourOf(args.colour)],
       isEnabled: () => marking() !== null,
       execute: async args => {
         await marking()?.notes.mark(colourOf(args.colour));
@@ -351,6 +330,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
 
     app.commands.addCommand(COMMANDS.addNote, {
       label: 'Add note',
+      icon: NOTE_ICON,
       isVisible: () => marking() !== null,
       execute: async () => {
         const attachment = marking();
@@ -359,7 +339,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
         }
         // The Kindle model: the note is written on a mark, so a note on
         // unmarked text marks it first and opens the entry on the new mark.
-        const id = await attachment.notes.mark(MARK_COLOURS[0]);
+        const id = await attachment.notes.mark(DEFAULT_COLOUR);
         if (id) {
           attachment.panel.selectMark(id, true);
         }
@@ -367,7 +347,13 @@ const plugin: JupyterFrontEndPlugin<void> = {
     });
 
     app.commands.addCommand(COMMANDS.panel, {
-      label: args => PANEL_LABELS[args.state as PanelState],
+      label: args => {
+        const state = args.state as PanelState;
+        return state === 'hidden' && target()?.panel.state === 'minimap'
+          ? HIDE_MINIMAP_LABEL
+          : PANEL_LABELS[state];
+      },
+      icon: args => PANEL_ICONS[args.state as PanelState],
       isVisible: args => {
         const attachment = target();
         return !!attachment && attachment.panel.state !== args.state;
@@ -383,23 +369,37 @@ const plugin: JupyterFrontEndPlugin<void> = {
       command: COMMANDS.markSelection,
       category: 'Markdown Viewer'
     });
+    // The panel has no toolbar item, so the palette is the route to it that
+    // the keyboard reaches without the context menu; listed while a preview
+    // is the target, since the command's visibility rules the palette too.
+    palette?.addItem({
+      command: COMMANDS.panel,
+      args: { state: 'expanded' },
+      category: 'Markdown Viewer'
+    });
 
-    // Marking needs a selection, so its entries lead. The panel entries follow
-    // and are offered with or without one.
-    MARK_COLOURS.forEach((colour, index) => {
-      app.contextMenu.addItem({
-        command: COMMANDS.mark,
-        args: { colour },
-        selector: CONTEXT_SELECTOR,
-        rank: 10 + index
-      });
+    // Marking needs a selection, so its entry leads: one Mark entry opening
+    // the six colours, so the menu is not six entries long before the
+    // reader reaches the rest. The panel entries follow and are offered with
+    // or without a selection.
+    const markMenu = new Menu({ commands: app.commands });
+    markMenu.title.label = 'Mark';
+    markMenu.title.icon = MARK_MENU_ICON;
+    for (const colour of MARK_COLOURS) {
+      markMenu.addItem({ command: COMMANDS.mark, args: { colour } });
+    }
+    app.contextMenu.addItem({
+      type: 'submenu',
+      submenu: markMenu,
+      selector: MARKING_SELECTOR,
+      rank: 10
     });
     app.contextMenu.addItem({
       command: COMMANDS.addNote,
       selector: CONTEXT_SELECTOR,
       rank: 20
     });
-    PANEL_CYCLE.forEach((state, index) => {
+    PANEL_ORDER.forEach((state, index) => {
       app.contextMenu.addItem({
         command: COMMANDS.panel,
         args: { state },

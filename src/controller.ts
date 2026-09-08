@@ -97,21 +97,6 @@ const FADE_IN_MS = 500;
 const FOREIGN_SCROLL_GUARD_ATTRIBUTE = 'data-jp-scroll-guard';
 
 /**
- * How long the switch-tab scrolling fix can hold the scroll position after a
- * tab is activated. Used only until a widget has been seen carrying the
- * attribute above: a sibling that does not mark its widgets, or none at all,
- * leaves nothing else to go by.
- */
-const FOREIGN_SCROLL_GUARD_MS = 3000;
-
-/**
- * Whether a guard marker has ever been seen in this lab. One sighting says the
- * sibling marks its widgets, so from then on the marker alone decides and a
- * released guard no longer costs the reader their position for three seconds.
- */
-let foreignGuardMarked = false;
-
-/**
  * Delay of the second scroll restore, chosen to land after the Markdown viewer
  * table-of-contents fix scrolls to a heading anchor on the same signal.
  */
@@ -231,17 +216,6 @@ export class LiveViewController implements IDisposable {
    */
   get settled(): ISignal<this, void> {
     return this._settled;
-  }
-
-  /**
-   * Record that the document tab was just brought to the front.
-   *
-   * Another extension takes ownership of the scroll position for a few seconds
-   * after that happens, and this controller yields to it. It marks the widget
-   * while it holds; this timestamp only bounds the wait where no mark appears.
-   */
-  noteActivated(): void {
-    this._activatedAt = Date.now();
   }
 
   /**
@@ -613,19 +587,12 @@ export class LiveViewController implements IDisposable {
    * Whether another extension owns the scroll position right now.
    *
    * The switch-tab scrolling fix marks the widget while its guard is live and
-   * takes the marker off as soon as it releases, which is usually well inside
-   * the three seconds it may hold. The timer is the fallback for a lab where
-   * no marker has ever appeared.
+   * takes the marker off as soon as it releases. The marker alone decides: a
+   * widget nobody marked is nobody's but the reader's, however recently its
+   * tab came to the front.
    */
   private _foreignScrollGuard(): boolean {
-    if (this._widget.node.hasAttribute(FOREIGN_SCROLL_GUARD_ATTRIBUTE)) {
-      foreignGuardMarked = true;
-      return true;
-    }
-    return (
-      !foreignGuardMarked &&
-      Date.now() - this._activatedAt < FOREIGN_SCROLL_GUARD_MS
-    );
+    return this._widget.node.hasAttribute(FOREIGN_SCROLL_GUARD_ATTRIBUTE);
   }
 
   /**
@@ -853,7 +820,6 @@ export class LiveViewController implements IDisposable {
   private _cueTimer: number | null = null;
   private _documentCaption: string | null = null;
   private _stateCaption: string | null = null;
-  private _activatedAt = 0;
   private _scrollTop = 0;
   private _restoreTarget: number | null = null;
   private _lastInputAt = 0;

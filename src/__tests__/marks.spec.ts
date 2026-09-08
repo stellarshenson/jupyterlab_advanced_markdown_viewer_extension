@@ -183,6 +183,23 @@ describe('parseMarks', () => {
     ]);
   });
 
+  it('reads a document marker as a mark with no closing marker and no passage', () => {
+    const marks = parseMarks(
+      `<!-- mark:${ID} document\n@kj 2026-09-08T12:00:00Z: On the whole\n-->\n# Title\n`
+    );
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).toMatchObject({
+      id: ID,
+      type: 'document',
+      close: null,
+      passage: null,
+      notes: [
+        { author: 'kj', stamp: '2026-09-08T12:00:00Z', text: 'On the whole' }
+      ]
+    });
+    expect(marks[0].open).toEqual({ start: 0, end: 98 });
+  });
+
   it('reads a document written with carriage returns', () => {
     const source = [
       `<!-- mark:${ID} note colour=blue`,
@@ -237,7 +254,7 @@ describe('parseMarks', () => {
     ).toEqual(marks[0].attributes);
   });
 
-  it('reads each of the four colours from the marker', () => {
+  it('reads each of the colours from the marker', () => {
     for (const colour of MARK_COLOURS) {
       const source = `<!-- mark:${ID} note colour=${colour} -->p${serialiseClosing(
         ID

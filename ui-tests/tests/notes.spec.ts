@@ -2,6 +2,8 @@ import { expect, test } from '@jupyterlab/galata';
 
 import {
   choose,
+  closeMenus,
+  colourLabel,
   entry,
   FILE,
   fileText,
@@ -10,6 +12,7 @@ import {
   mark,
   menu,
   onDisk,
+  openMarkMenu,
   openMenu,
   openPreview,
   select,
@@ -48,6 +51,11 @@ const DOC = [
   'The fourth paragraph mentions grapes and melons.',
   ''
 ].join('\n');
+
+/** A second document, so a tab can be switched away from and back. */
+const OTHER = ['# Other', '', 'The first paragraph is unchanged.', ''].join(
+  '\n'
+);
 
 /**
  * The four sentences, each ending at its full stop.
@@ -240,12 +248,16 @@ const painted = (page: any) =>
   page.locator('.jp-RenderedMarkdown:visible .jp-AdvancedMd-mark');
 
 /** A button of the panel, by the text on it. */
+/** The plus control in the panel header, the one route to a document note. */
+const addControl = (page: any) =>
+  panel(page).locator('.jp-AdvancedMd-notesAdd');
+
 const panelButton = (page: any, label: string) =>
   page.locator('.jp-AdvancedMd-notes:visible button', { hasText: label });
 
-/** The toolbar control that brings the panel back. */
-const toolbarNotes = (page: any) =>
-  page.locator('.jp-Toolbar:visible .jp-ToolbarButton', { hasText: 'Notes' });
+/** The removal control of the open row, an icon button named by its title. */
+const removeButton = (page: any) =>
+  page.locator('.jp-AdvancedMd-notes:visible button[title="Remove this mark"]');
 
 /** Open a row so its controls and its whole thread are on screen. */
 async function openRow(page: any, index = 0): Promise<void> {
@@ -317,14 +329,408 @@ test.describe('marking a passage', () => {
     );
   });
 
+  test('ACC-NOTES-120 puts an icon on every entry it offers, one colour per Mark', async ({
+    page
+  }) => {
+    await openMenu(page, await select(page, P1));
+    // Every entry this extension offers: the Mark entry opening the submenu,
+    // Add note, the two panel states the panel is not in, and the six
+    // colours inside the submenu; the document note has no entry
+    // (ACC-NOTES-139).
+    await expect(
+      entry(page, 'Mark').locator('.lm-Menu-itemIcon svg')
+    ).toHaveCount(1);
+    await openMarkMenu(page);
+    const ours = page.locator(
+      '.lm-Menu-item[data-command^="advanced-markdown-viewer:"]:not(.lm-mod-hidden)'
+    );
+    await expect(ours).toHaveCount(9);
+    const count = await ours.count();
+    for (let i = 0; i < count; i++) {
+      await expect(ours.nth(i).locator('.lm-Menu-itemIcon svg')).toHaveCount(1);
+    }
+    // The six colour entries show six different colours.
+    const hues = await page.evaluate(() =>
+      Array.from(
+        document.querySelectorAll(
+          '.lm-Menu-item[data-command="advanced-markdown-viewer:mark"] .lm-Menu-itemIcon rect'
+        )
+      ).map(rect => rect.getAttribute('fill'))
+    );
+    expect(hues).toHaveLength(6);
+    expect(new Set(hues).size).toBe(6);
+    await closeMenus(page);
+  });
+
+  test('ACC-NOTES-121 draws each Mark entry in the colour it paints, in both themes', async ({
+    page
+  }) => {
+    // The hues the marks paint, as the browser reports a computed fill.
+    const HUES = [
+      'rgb(240, 212, 15)',
+      'rgb(15, 112, 240)',
+      'rgb(246, 49, 177)',
+      'rgb(241, 148, 34)',
+      'rgb(230, 30, 70)',
+      'rgb(30, 210, 50)'
+    ];
+    const swatchFills = () =>
+      page.evaluate(() =>
+        Array.from(
+          document.querySelectorAll(
+            '.lm-Menu-item[data-command="advanced-markdown-viewer:mark"] .lm-Menu-itemIcon rect'
+          )
+        ).map(rect => getComputedStyle(rect).fill)
+      );
+    await openMenu(page, await select(page, P1));
+    await openMarkMenu(page);
+    expect(await swatchFills()).toEqual(HUES);
+    await closeMenus(page);
+
+    // The dark theme recolours JupyterLab's own icons; the swatches keep
+    // the colour the mark paints.
+    await page.theme.setDarkTheme();
+    await openMenu(page, await select(page, P1));
+    await openMarkMenu(page);
+    expect(await swatchFills()).toEqual(HUES);
+    await closeMenus(page);
+  });
+
+  test('ACC-NOTES-124 draws the swatches muted, at the tint the painted mark uses', async ({
+    page
+  }) => {
+    await openMenu(page, await select(page, P1));
+    await openMarkMenu(page);
+    const tints = await page.evaluate(() =>
+      Array.from(
+        document.querySelectorAll(
+          '.lm-Menu-item[data-command="advanced-markdown-viewer:mark"] .lm-Menu-itemIcon rect'
+        )
+      ).map(rect => Number(getComputedStyle(rect).fillOpacity))
+    );
+    // The light-theme alpha of each painted mark, from style/base.css.
+    expect(tints).toEqual([0.2, 0.11, 0.14, 0.17, 0.18, 0.17]);
+    for (const tint of tints) {
+      expect(tint).toBeLessThanOrEqual(0.5);
+    }
+    await closeMenus(page);
+  });
+
+  test('ACC-NOTES-134 keeps every highlight faint in both themes', async ({
+    page
+  }) => {
+    // The alpha of each mark colour as the stylesheet paints it, read from a
+    // probe span inside the rendered view so the theme rules apply.
+    const alphas = () =>
+      page.evaluate(() => {
+        const root = document.querySelector('.jp-RenderedMarkdown')!;
+        return ['yellow', 'blue', 'pink', 'orange', 'red', 'green'].map(
+          colour => {
+            const probe = document.createElement('span');
+            probe.className = `jp-AdvancedMd-mark jp-AdvancedMd-mark-${colour}`;
+            root.appendChild(probe);
+            const found = /rgba\(\d+, \d+, \d+, ([\d.]+)\)/.exec(
+              getComputedStyle(probe).backgroundColor
+            );
+            probe.remove();
+            return found ? Number(found[1]) : 1;
+          }
+        );
+      });
+    for (const alpha of await alphas()) {
+      expect(alpha).toBeLessThanOrEqual(0.2);
+    }
+    await page.theme.setDarkTheme();
+    for (const alpha of await alphas()) {
+      expect(alpha).toBeLessThanOrEqual(0.18);
+    }
+  });
+
+  test('ACC-NOTES-136 writes a note on the document as a whole from the panel', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    const documentMarker = /^<!-- mark:[0-9a-f-]{36} document\n/;
+    // No marks: the panel is hidden and the badge is the way to it.
+    await page.locator('.jp-AdvancedMd-notesBadge:visible').click();
+    await addControl(page).click();
+    await writeNote(page, 'On the whole document');
+    const text = await fileWhen(path, holds =>
+      holds.includes('On the whole document')
+    );
+    expect(text).toMatch(documentMarker);
+    expect(text).toMatch(/: On the whole document\n-->\n/);
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesPassage')
+    ).toHaveText('Document');
+
+    await panelButton(page, 'Add note').click();
+    await writeNote(page, 'A second thought');
+    const twice = await fileWhen(path, holds =>
+      holds.includes('A second thought')
+    );
+    expect(
+      twice.match(/^<!-- mark:[0-9a-f-]{36} document\n(?:@[^\n]*\n)+-->\n/)
+    ).not.toBeNull();
+
+    // The control pressed again opens the same thread: no second marker.
+    await addControl(page).click();
+    await expect(
+      page.locator('.jp-AdvancedMd-notesForm textarea')
+    ).toBeVisible();
+    await expect(rows(page)).toHaveCount(1);
+    expect(openingIds(fileText(path))).toHaveLength(1);
+    await panelButton(page, 'Cancel').click();
+
+    await removeButton(page).click();
+    const after = await fileWhen(path, holds => !documentMarker.test(holds));
+    expect(openingIds(after)).toHaveLength(0);
+  });
+
+  test('ACC-NOTES-137 lists the document note first, with no swatch, no tick and no highlight', async ({
+    page
+  }) => {
+    await mark(page, P1);
+    await expect(painted(page)).toHaveCount(1);
+    await addControl(page).click();
+    await writeNote(page, 'On the whole');
+
+    await expect(rows(page)).toHaveCount(2);
+    const first = rows(page).first();
+    await expect(first.locator('.jp-AdvancedMd-notesPassage')).toHaveText(
+      'Document'
+    );
+    await expect(first.locator('.jp-AdvancedMd-notesSwatch')).toHaveCount(0);
+    await expect(
+      rows(page).nth(1).locator('.jp-AdvancedMd-notesSwatch')
+    ).toHaveCount(1);
+    await expect(panel(page).locator('.jp-AdvancedMd-notesCount')).toHaveText(
+      '2 marks'
+    );
+    // The entry left the row open: a note and a removal, no colour dots.
+    await expect(first.locator('.jp-AdvancedMd-notesDot')).toHaveCount(0);
+    await expect(first.locator('button', { hasText: 'Add note' })).toHaveCount(
+      1
+    );
+
+    await openMenuOnPreview(page);
+    await choose(page, 'Show notes minimap');
+    await expect(ticks(page)).toHaveCount(1);
+    await expect(painted(page)).toHaveCount(1);
+  });
+
+  test('ACC-NOTES-139 adds the document note from the plus control alone, in both panel states', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await mark(page, P1);
+    await expect(panel(page)).toBeVisible();
+    // After the count, before the expand and hide controls, 24 px.
+    const order = await panel(page)
+      .locator('.jp-AdvancedMd-notesHeader > *')
+      .evaluateAll((nodes: Element[]) =>
+        nodes.map(node => node.className.replace('jp-AdvancedMd-notes', ''))
+      );
+    expect(order).toEqual(['Collapse', 'Count', 'Add', 'Expand', 'Close']);
+    const box = (await addControl(page).boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(24);
+    expect(box.height).toBeGreaterThanOrEqual(24);
+
+    // From the minimap: the marker is written, the list opens on its row.
+    await openMenuOnPreview(page);
+    await choose(page, 'Show notes minimap');
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-minimap/);
+    await expect(addControl(page)).toBeVisible();
+    // On the strip the hide control sits above the plus and the expand caret.
+    const hideBox = (await panel(page)
+      .locator('.jp-AdvancedMd-notesClose')
+      .boundingBox())!;
+    const plusBox = (await addControl(page).boundingBox())!;
+    const expandBox = (await panel(page)
+      .locator('.jp-AdvancedMd-notesExpand')
+      .boundingBox())!;
+    expect(hideBox.y + hideBox.height).toBeLessThanOrEqual(plusBox.y + 1);
+    expect(hideBox.y + hideBox.height).toBeLessThanOrEqual(expandBox.y + 1);
+    await addControl(page).click();
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-expanded/);
+    const field = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(field).toBeFocused();
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesPassage')
+    ).toHaveText('Document');
+    expect(openingIds(fileText(path))).toHaveLength(2);
+    await writeNote(page, 'Whole');
+    await fileWhen(path, holds => holds.includes(': Whole'));
+
+    // Pressed again: the same thread, no second marker.
+    await addControl(page).click();
+    await expect(field).toBeFocused();
+    await expect(rows(page)).toHaveCount(2);
+    expect(openingIds(fileText(path))).toHaveLength(2);
+    await panelButton(page, 'Cancel').click();
+
+    // No other surface offers it.
+    await openMenuOnPreview(page);
+    await expect(entry(page, 'Add document note')).toHaveCount(0);
+    await closeMenus(page);
+    await openMenu(page, await select(page, P2));
+    await expect(entry(page, 'Add document note')).toHaveCount(0);
+    await closeMenus(page);
+  });
+
+  test('ACC-NOTES-138 shows the notes badge over the preview while the panel is hidden', async ({
+    page
+  }) => {
+    const badge = page.locator('.jp-AdvancedMd-notesBadge:visible');
+    // No marks: the panel is hidden and the badge is muted.
+    await expect(panel(page)).toHaveCount(0);
+    await expect(badge).toHaveCount(1);
+    await expect(badge).toHaveClass(/jp-AdvancedMd-notesBadge-empty/);
+    await expect(badge).toHaveAttribute('title', 'No marks: Show notes');
+    await expect(
+      page.locator('.jp-RenderedMarkdown .jp-AdvancedMd-notesBadge')
+    ).toHaveCount(0);
+    // Over the top right corner of the preview.
+    const box = (await badge.boundingBox())!;
+    const view = (await page
+      .locator('.jp-RenderedMarkdown:visible')
+      .boundingBox())!;
+    expect(box.x).toBeGreaterThan(view.x + view.width / 2);
+    expect(box.x + box.width).toBeLessThanOrEqual(view.x + view.width + 1);
+    expect(box.y).toBeLessThan(view.y + 40);
+
+    // The first mark opens the panel, which takes the badge with it.
+    await mark(page, P1);
+    await expect(panel(page)).toBeVisible();
+    await expect(badge).toHaveCount(0);
+
+    await panel(page).locator('.jp-AdvancedMd-notesClose').click();
+    await expect(badge).toHaveCount(1);
+    await expect(badge).not.toHaveClass(/jp-AdvancedMd-notesBadge-empty/);
+    await expect(badge).toHaveAttribute('title', '1 mark: Show notes');
+
+    // Opened from the keyboard: the focus goes to the Hide control, not to
+    // the page body (DEF-NOTES-64).
+    await badge.focus();
+    await page.keyboard.press('Enter');
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-expanded/);
+    await expect(badge).toHaveCount(0);
+    await expect(
+      panel(page).locator('.jp-AdvancedMd-notesClose')
+    ).toBeFocused();
+  });
+
+  test('DEF-NOTES-50 draws no focus ring around the preview when its tab comes back to the front', async ({
+    page,
+    tmpPath
+  }) => {
+    // JupyterLab focuses the viewer node on every tab activation, and the
+    // browser takes that for keyboard focus after a switch, so without the
+    // rule its own ring frames the rendered Markdown in the theme's foreground.
+    await page.theme.setDarkTheme();
+    await page.contents.uploadContent(OTHER, 'text', `${tmpPath}/other.md`);
+    await openPreview(page, `${tmpPath}/other.md`);
+    await page
+      .locator('.lm-DockPanel-tabBar .lm-TabBar-tab', { hasText: FILE })
+      .click();
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      FIRST
+    );
+
+    const focus = await page.evaluate(() => {
+      const viewer = document.querySelector<HTMLElement>('.jp-MarkdownViewer')!;
+      return {
+        focused: document.activeElement === viewer,
+        outline: getComputedStyle(viewer).outlineStyle
+      };
+    });
+    expect(focus.focused).toBe(true);
+    expect(focus.outline).toBe('none');
+  });
+
+  test('ACC-NOTES-127 writes red and green into the marker and paints them in colours of their own', async ({
+    page,
+    tmpPath
+  }) => {
+    await mark(page, P1, undefined, 'red');
+    await expect(painted(page)).toHaveCount(1);
+    await mark(page, P2, undefined, 'green');
+    await expect(painted(page)).toHaveCount(2);
+
+    const text = await fileWhen(
+      `${tmpPath}/${FILE}`,
+      holds => openingIds(holds).length === 2
+    );
+    expect(text).toContain('note colour=red -->');
+    expect(text).toContain('note colour=green -->');
+    const backgrounds = await page.evaluate(() =>
+      ['red', 'green'].map(colour => {
+        const node = document.querySelector(
+          `.jp-RenderedMarkdown .jp-AdvancedMd-mark-${colour}`
+        );
+        return node ? getComputedStyle(node).backgroundColor : '';
+      })
+    );
+    // Two painted passages in two backgrounds, neither the transparent one an
+    // unstyled span reports and neither the colour a change is painted in.
+    expect(new Set(backgrounds).size).toBe(2);
+    // The change colours as the browser computes them, through probe spans
+    // painted from the same custom properties, so the two are compared in one
+    // syntax.
+    const changes = await page.evaluate(() =>
+      ['removed', 'added'].map(kind => {
+        const probe = document.createElement('span');
+        probe.style.backgroundColor = `var(--jp-AdvancedMd-${kind}-bg)`;
+        document.body.appendChild(probe);
+        const colour = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return colour;
+      })
+    );
+    expect(changes).not.toContain('rgba(0, 0, 0, 0)');
+    for (const background of backgrounds) {
+      expect(background).not.toBe('rgba(0, 0, 0, 0)');
+      expect(changes).not.toContain(background);
+    }
+  });
+
+  test('ACC-NOTES-129 clears the selection once the passage is marked', async ({
+    page,
+    tmpPath
+  }) => {
+    await mark(page, P1);
+    await expect(painted(page)).toHaveCount(1);
+    // Painting the passage in place collapses the live selection by itself;
+    // what kept the selection was the controller's record of it, which the
+    // next render put back over the marked words (logs/probe-selection-0651).
+    expect(await selectedText(page)).toBe('');
+
+    await writeExternally(
+      page,
+      `${tmpPath}/${FILE}`,
+      DOC.replace('grapes and melons', 'quinces and medlars')
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'quinces and medlars'
+    );
+    await page.waitForTimeout(600);
+    expect(await selectedText(page)).toBe('');
+    expect(
+      await page.evaluate(() => window.getSelection()?.isCollapsed ?? true)
+    ).toBe(true);
+  });
+
   test('ACC-NOTES-45 offers the marking entries only with a selection', async ({
     page
   }) => {
     await openMenuOnPreview(page);
-    // A Lumino item that is not visible stays in the DOM, so what says the
-    // entry is not offered is the class on it.
-    await expect(entry(page, 'Mark yellow')).toHaveCount(1);
-    await expect(entry(page, 'Mark yellow')).toHaveClass(/lm-mod-hidden/);
+    // The Mark entry is offered through a selector that needs a selection, so
+    // without one it is not in the menu at all. A Lumino command item that is
+    // not visible stays in the DOM, so what says Add note is not offered is
+    // the class on it.
+    await expect(entry(page, 'Mark')).toHaveCount(0);
     await expect(entry(page, 'Add note')).toHaveClass(/lm-mod-hidden/);
     // The panel entries are offered without a selection, which is the control
     // saying the menu itself was built.
@@ -333,8 +739,43 @@ test.describe('marking a passage', () => {
     await expect(menu(page)).toHaveCount(0);
 
     await openMenu(page, await select(page, P1));
-    await expect(entry(page, 'Mark yellow')).not.toHaveClass(/lm-mod-hidden/);
+    await expect(entry(page, 'Mark')).toHaveCount(1);
+    await expect(entry(page, 'Mark')).not.toHaveClass(/lm-mod-hidden/);
     await expect(entry(page, 'Add note')).not.toHaveClass(/lm-mod-hidden/);
+  });
+
+  test('ACC-NOTES-123 keeps the colours in a Mark submenu', async ({
+    page,
+    tmpPath
+  }) => {
+    await openMenu(page, await select(page, P1));
+    // One Mark entry in the menu itself, and no colour beside it.
+    await expect(entry(page, 'Mark')).toHaveCount(1);
+    for (const colour of ['Yellow', 'Blue', 'Pink', 'Orange', 'Red', 'Green']) {
+      await expect(entry(page, colour)).toHaveCount(0);
+    }
+    await openMarkMenu(page);
+    const colours = menu(page)
+      .nth(1)
+      .locator('.lm-Menu-item:not(.lm-mod-hidden)');
+    await expect(colours.locator('.lm-Menu-itemLabel')).toHaveText([
+      'Yellow',
+      'Blue',
+      'Pink',
+      'Orange',
+      'Red',
+      'Green'
+    ]);
+    await expect(colours.locator('.lm-Menu-itemIcon svg rect')).toHaveCount(6);
+
+    await choose(page, 'Pink');
+    await expect(painted(page)).toHaveCount(1);
+    await expect(painted(page)).toHaveClass(/jp-AdvancedMd-mark-pink/);
+    const text = await fileWhen(
+      `${tmpPath}/${FILE}`,
+      holds => openingIds(holds).length === 1
+    );
+    expect(text).toContain('colour=pink');
   });
 
   test('ACC-NOTES-46 writes the note and both markers into the file', async ({
@@ -410,6 +851,89 @@ test.describe('marking a passage', () => {
     await expect(
       rows(page).first().locator('.jp-AdvancedMd-notesPassage')
     ).toHaveText(P1);
+  });
+
+  test('ACC-NOTES-117 paints a mark in place and drops the render it would have caused', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    // Hold the first paragraph's node: a render rebuilds every node of the
+    // preview, so the held one stays connected only while no render ran.
+    await page.evaluate(() => {
+      const roots = Array.from(
+        document.querySelectorAll<HTMLElement>('.jp-RenderedMarkdown')
+      );
+      const root = roots.find(node => node.offsetParent !== null);
+      (window as any).__held = root?.querySelector('p') ?? null;
+    });
+    const held = (): Promise<boolean> =>
+      page.evaluate(() => (window as any).__held?.isConnected === true);
+    expect(await held()).toBe(true);
+
+    await mark(page, P1);
+    await expect(painted(page)).toHaveCount(1);
+    expect(await held()).toBe(true);
+    // The viewer renders a change once its render timeout, a second, has
+    // run; that render is given its time, and it must not come.
+    await page.waitForTimeout(2500);
+    expect(await held()).toBe(true);
+    await expect(painted(page)).toHaveCount(1);
+
+    // A change to the text itself still renders as ever.
+    const marked = await fileWhen(
+      target,
+      holds => openingIds(holds).length === 1
+    );
+    await writeExternally(
+      page,
+      target,
+      marked.replace('grapes and melons', 'grapes and lemons')
+    );
+    await expect.poll(held, { timeout: 10000 }).toBe(false);
+  });
+
+  test('ACC-NOTES-118 gives the note entry a wide box with its buttons below', async ({
+    page
+  }) => {
+    await mark(page, P1);
+    await openRow(page);
+    await panelButton(page, 'Add note').click();
+    const form = page.locator('.jp-AdvancedMd-notesForm');
+    const box = form.locator('textarea');
+    await expect(box).toBeVisible();
+
+    const formAt = await form.boundingBox();
+    const boxAt = await box.boundingBox();
+    const saveAt = await panelButton(page, 'Save').boundingBox();
+    const cancelAt = await panelButton(page, 'Cancel').boundingBox();
+    // The box spans the form and shows several lines; both buttons start
+    // below its bottom edge, so neither narrows it.
+    expect(boxAt.width).toBeGreaterThanOrEqual(formAt.width - 2);
+    expect(boxAt.height).toBeGreaterThanOrEqual(60);
+    expect(saveAt.y).toBeGreaterThanOrEqual(boxAt.y + boxAt.height);
+    expect(cancelAt.y).toBeGreaterThanOrEqual(boxAt.y + boxAt.height);
+  });
+
+  test('ACC-NOTES-119 shows the notes of a mark as its tooltip', async ({
+    page,
+    tmpPath
+  }) => {
+    await mark(page, P1);
+    await expect(painted(page)).toHaveCount(1);
+    // A bare mark says nothing on hover.
+    expect(await painted(page).first().getAttribute('title')).toBeNull();
+
+    await painted(page).first().click();
+    await writeNote(page, 'Say which orchard.');
+    await fileWhen(`${tmpPath}/${FILE}`, holds =>
+      holds.includes('Say which orchard.')
+    );
+    await painted(page).first().hover();
+    await expect(painted(page).first()).toHaveAttribute(
+      'title',
+      /^[^:\n]+: Say which orchard\.$/
+    );
   });
 
   test('ACC-NOTES-96 adds a note from the marked passage and leaves it whole', async ({
@@ -589,7 +1113,7 @@ test.describe('marking a passage', () => {
     const id = openingIds(before)[0];
 
     await openRow(page);
-    await panelButton(page, 'Remove').click();
+    await removeButton(page).click();
 
     const text = await fileWhen(
       `${tmpPath}/${FILE}`,
@@ -827,6 +1351,50 @@ test.describe('a document that already carries marks', () => {
     await expect(panel(page)).toBeVisible();
   });
 
+  test('ACC-NOTES-125 shows the removal of a row as a trash icon', async ({
+    page
+  }) => {
+    await openRow(page);
+    await expect(removeButton(page)).toHaveCount(1);
+    await expect(removeButton(page).locator('svg')).toHaveCount(1);
+    await expect(removeButton(page)).toHaveText('');
+    await expect(removeButton(page)).toHaveAttribute(
+      'aria-label',
+      'Remove this mark'
+    );
+  });
+
+  test('DEF-NOTES-54 draws the theme focus ring on a row the keyboard reaches', async ({
+    page
+  }) => {
+    // Shift+Tab leaves the row for the Hide button and Tab returns to it, so
+    // the row holds keyboard focus and the browser shows a focus ring.
+    await rows(page).first().focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    const ring = await rows(page)
+      .first()
+      .evaluate((row: HTMLElement) => ({
+        focused: document.activeElement === row,
+        visible: row.matches(':focus-visible'),
+        style: getComputedStyle(row).outlineStyle,
+        colour: getComputedStyle(row).outlineColor
+      }));
+    expect(ring.focused).toBe(true);
+    expect(ring.visible).toBe(true);
+    expect(ring.style).toBe('solid');
+    // The ring is the theme's, the one JupyterLab's own buttons draw.
+    const theme = await page.evaluate(() => {
+      const probe = document.createElement('div');
+      probe.style.color = 'var(--jp-focus-outline-color)';
+      document.body.appendChild(probe);
+      const colour = getComputedStyle(probe).color;
+      probe.remove();
+      return colour;
+    });
+    expect(ring.colour).toBe(theme);
+  });
+
   test('ACC-NOTES-51 opens the panel listing the marks it holds', async ({
     page
   }) => {
@@ -851,17 +1419,137 @@ test.describe('a document that already carries marks', () => {
     expect(marked).toEqual([P1, P2, P3]);
   });
 
+  test('ACC-NOTES-135 collapses to the minimap from the header control', async ({
+    page
+  }) => {
+    const control = panel(page).locator('.jp-AdvancedMd-notesCollapse');
+    await expect(control).toBeVisible();
+    await expect(control).toHaveAttribute('title', 'Show notes minimap');
+    await expect(control.locator('svg')).toHaveCount(1);
+    // The control leads the header at its left edge, before the count; the
+    // hide control keeps the right.
+    const count = await panel(page)
+      .locator('.jp-AdvancedMd-notesCount')
+      .boundingBox();
+    const box = await control.boundingBox();
+    expect(box!.x + box!.width).toBeLessThan(count!.x + 1);
+    const close = await panel(page)
+      .locator('.jp-AdvancedMd-notesClose')
+      .boundingBox();
+    expect(close!.x).toBeGreaterThan(count!.x + count!.width - 1);
+
+    await control.focus();
+    await page.keyboard.press('Enter');
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-minimap/);
+    await expect(ticks(page)).toHaveCount(3);
+    // The minimap is what the control opens, so it has no place there; the
+    // keyboard focus moves to the Hide control and not to the page body
+    // (DEF-NOTES-58).
+    await expect(control).toBeHidden();
+    await expect(
+      panel(page).locator('.jp-AdvancedMd-notesClose')
+    ).toBeFocused();
+  });
+
+  test('ACC-NOTES-132 puts the trash icon at the right, apart from the colour dots', async ({
+    page
+  }) => {
+    await openRow(page);
+    const dots = rows(page).first().locator('.jp-AdvancedMd-notesDot');
+    await expect(dots).toHaveCount(6);
+    const lastDot = await dots.last().boundingBox();
+    const remove = await removeButton(page).boundingBox();
+    expect(lastDot).not.toBeNull();
+    expect(remove).not.toBeNull();
+    // More than a dot's width of free row between the last dot and the icon.
+    expect(remove!.x).toBeGreaterThan(lastDot!.x + 2 * lastDot!.width);
+    const controls = await rows(page)
+      .first()
+      .locator('.jp-AdvancedMd-notesControls')
+      .boundingBox();
+    expect(remove!.x + remove!.width).toBeGreaterThan(
+      controls!.x + controls!.width - 8
+    );
+  });
+
+  test('ACC-NOTES-133 draws the menu swatch as the row swatch', async ({
+    page
+  }) => {
+    const swatch = await page.evaluate(() => {
+      const node = document.querySelector(
+        '.jp-AdvancedMd-notesSwatch.jp-AdvancedMd-mark-yellow'
+      )!;
+      const box = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return {
+        width: box.width,
+        height: box.height,
+        radius: style.borderRadius,
+        background: style.backgroundColor
+      };
+    });
+    await openMenu(page, await select(page, P1));
+    await openMarkMenu(page);
+    const icon = await page.evaluate(() => {
+      const rect = document.querySelector(
+        '.lm-Menu-item[data-command="advanced-markdown-viewer:mark"] .lm-Menu-itemIcon rect'
+      )!;
+      const box = rect.getBoundingClientRect();
+      const style = getComputedStyle(rect);
+      return {
+        width: box.width,
+        height: box.height,
+        radius: `${rect.getAttribute('rx')}px`,
+        fill: style.fill,
+        alpha: Number(style.fillOpacity)
+      };
+    });
+    await closeMenus(page);
+    expect(icon.width).toBeCloseTo(swatch.width, 0);
+    expect(icon.height).toBeCloseTo(swatch.height, 0);
+    expect(icon.radius).toBe(swatch.radius);
+    // rgba(r, g, b, a) of the swatch is rgb(r, g, b) at fill-opacity a.
+    const parts = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(
+      swatch.background
+    )!;
+    expect(icon.fill).toBe(`rgb(${parts[1]}, ${parts[2]}, ${parts[3]})`);
+    expect(icon.alpha).toBeCloseTo(Number(parts[4]), 2);
+  });
+
   test('ACC-NOTES-52 closes the panel and brings it back with no mark lost', async ({
     page
   }) => {
     await page.locator('.jp-AdvancedMd-notesClose').click();
     await expect(panel(page)).toHaveCount(0);
 
-    await expect(toolbarNotes(page)).toBeVisible();
-    await toolbarNotes(page).click();
+    // The context menu is the control outside the panel that brings it back.
+    await openMenuOnPreview(page);
+    await choose(page, 'Show notes');
 
     await expect(panel(page)).toBeVisible();
     await expect(rows(page)).toHaveCount(3);
+  });
+
+  test('ACC-NOTES-126 leaves the preview toolbar a micro strip', async ({
+    page
+  }) => {
+    // JupyterLab collapses a toolbar to its two-pixel strip only while every
+    // item is hidden, so one visible button of this extension would cost every
+    // preview a toolbar row.
+    const toolbar = page
+      .locator('.jp-MainAreaWidget:visible', {
+        has: page.locator('.jp-MarkdownViewer')
+      })
+      .locator(':scope > .jp-Toolbar');
+    await expect(toolbar).toHaveClass(/jp-Toolbar-micro/);
+    // JupyterLab's own popup opener sits hidden in every toolbar, so only a
+    // visible button would be one of ours.
+    await expect(toolbar.locator('.jp-ToolbarButton:visible')).toHaveCount(0);
+    // The strip JupyterLab leaves is a few pixels; the open toolbar is the
+    // full --jp-private-toolbar-height, near thirty.
+    const box = await toolbar.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.height).toBeLessThan(16);
   });
 
   test('ACC-NOTES-53 is a narrow strip beside the preview with no overlap', async ({
@@ -892,7 +1580,8 @@ test.describe('a document that already carries marks', () => {
     await expect(rows(page)).toHaveCount(0);
 
     await openMenuOnPreview(page);
-    await choose(page, 'Hide notes');
+    // ACC-NOTES-131: the entry names the minimap while the panel is one.
+    await choose(page, 'Hide minimap');
     await expect(panel(page)).toHaveCount(0);
 
     await openMenuOnPreview(page);
@@ -1043,6 +1732,48 @@ test.describe('a document whose panel opens as a minimap', () => {
       `${tmpPath}/${FILE}`
     );
     await openPreview(page, `${tmpPath}/${FILE}`, FIRST);
+  });
+
+  test('ACC-NOTES-130 expands from the control on the strip', async ({
+    page
+  }) => {
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-minimap/);
+    const control = panel(page).locator('.jp-AdvancedMd-notesExpand');
+    await expect(control).toBeVisible();
+    await expect(control).toHaveAttribute('title', 'Show notes');
+    await expect(control.locator('svg')).toHaveCount(1);
+
+    await control.focus();
+    await page.keyboard.press('Enter');
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-expanded/);
+    // The expanded panel is what the control opens, so it has no place there;
+    // the keyboard focus moves to the Hide control (DEF-NOTES-58).
+    await expect(control).toBeHidden();
+    await expect(
+      panel(page).locator('.jp-AdvancedMd-notesClose')
+    ).toBeFocused();
+  });
+
+  test('ACC-NOTES-131 names the minimap in the hide control and the menu entry', async ({
+    page
+  }) => {
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-minimap/);
+    await expect(
+      panel(page).locator('.jp-AdvancedMd-notesClose')
+    ).toHaveAttribute('title', 'Hide minimap');
+    await openMenuOnPreview(page);
+    await expect(entry(page, 'Hide minimap')).not.toHaveClass(/lm-mod-hidden/);
+    await expect(entry(page, 'Hide notes')).toHaveCount(0);
+    await choose(page, 'Show notes');
+
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-expanded/);
+    await expect(
+      panel(page).locator('.jp-AdvancedMd-notesClose')
+    ).toHaveAttribute('title', 'Hide notes');
+    await openMenuOnPreview(page);
+    await expect(entry(page, 'Hide notes')).not.toHaveClass(/lm-mod-hidden/);
+    await expect(entry(page, 'Hide minimap')).toHaveCount(0);
+    await page.keyboard.press('Escape');
   });
 
   test('DEF-NOTES-28 opens the note entry from the marked passage', async ({
@@ -1250,6 +1981,53 @@ test.describe('revealing a mark from the panel', () => {
     await rows(page).first().locator('.jp-AdvancedMd-notesHead').click();
 
     await expect(passage).toBeInViewport();
+  });
+});
+
+test.describe('adding a note from a passage far down the document', () => {
+  test('ACC-NOTES-122 neither renders nor scrolls the preview from Add note through Save', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(LONG, 'text', target);
+    await openPreview(page, target, 'Long report');
+
+    // Selecting brings the passage to the middle of the view; from here on
+    // the view must not move, and no node of it may be rebuilt.
+    const at = await select(page, P3);
+    const parked = await scrollTop(page);
+    expect(parked).toBeGreaterThan(0);
+    await page.evaluate(() => {
+      const roots = Array.from(
+        document.querySelectorAll<HTMLElement>('.jp-RenderedMarkdown')
+      );
+      const root = roots.find(node => node.offsetParent !== null);
+      (window as any).__held =
+        Array.from(root?.querySelectorAll('p') ?? []).find(node =>
+          node.textContent?.includes('cherries')
+        ) ?? null;
+    });
+    const held = (): Promise<boolean> =>
+      page.evaluate(() => (window as any).__held?.isConnected === true);
+    expect(await held()).toBe(true);
+
+    await openMenu(page, at);
+    await choose(page, 'Add note');
+    await expect(
+      page.locator('.jp-AdvancedMd-notesForm textarea')
+    ).toBeVisible();
+    expect(await scrollTop(page)).toBe(parked);
+    expect(await held()).toBe(true);
+
+    await writeNote(page, 'Say which orchard.');
+    await fileWhen(target, holds => holds.includes('Say which orchard.'));
+    // The viewer's render timeout is a second; the render it would schedule
+    // is given its time, and the view must still be where it was.
+    await page.waitForTimeout(2500);
+    expect(await scrollTop(page)).toBe(parked);
+    expect(await held()).toBe(true);
+    await expect(painted(page)).toHaveCount(1);
   });
 });
 
@@ -1504,7 +2282,7 @@ test.describe('notes turned off', () => {
       page.locator('.lm-Menu-item:not(.lm-mod-hidden)', {
         has: page.locator('.lm-Menu-itemLabel', {
           hasText:
-            /^(Mark \w+|Add note|Show notes|Show notes minimap|Hide notes)$/
+            /^(Mark \w+|Add note|Show notes|Show notes minimap|Hide notes|Hide minimap)$/
         })
       })
     ).toHaveCount(0);
@@ -1848,7 +2626,8 @@ test.describe('a stream of writes while the reader marks', () => {
     const count = await stopWriter(page);
     await expect(menu(page).first()).toBeVisible();
 
-    await choose(page, 'Mark yellow');
+    await openMarkMenu(page);
+    await choose(page, colourLabel('yellow'));
 
     const text = await fileWhen(
       target,
@@ -2115,5 +2894,55 @@ test.describe('marking with live updates off', () => {
     expect(writes.filter(entry => entry.includes('/write '))).toEqual([]);
     expect(writes.filter(entry => entry.startsWith('PUT '))).toHaveLength(1);
     await savedCleanly(page);
+  });
+});
+
+test.describe('the first note of a long document', () => {
+  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+
+  test('DEF-NOTES-51 keeps the passage in view when the panel opens beside it', async ({
+    page,
+    tmpPath
+  }) => {
+    // Paragraphs long enough to wrap onto more lines once the panel has taken
+    // its width from the preview.
+    const sentence =
+      'This paragraph carries words enough to wrap at the width of the preview and again at the narrower width the panel leaves it. ';
+    const filler = Array.from(
+      { length: 12 },
+      (_, index) => `Paragraph ${index + 1}. ${sentence.repeat(3)}`
+    ).join('\n\n');
+    await page.contents.uploadContent(
+      `# Report\n\n${filler}\n\nThe last paragraph mentions apples and pears.\n`,
+      'text',
+      `${tmpPath}/${FILE}`
+    );
+    await openPreview(page, `${tmpPath}/${FILE}`, 'Paragraph 1.');
+    // The passage sits at the bottom edge of the view, with the panel hidden.
+    await page.evaluate(() => {
+      const paragraphs = document.querySelectorAll('.jp-RenderedMarkdown p');
+      paragraphs[paragraphs.length - 1].scrollIntoView({ block: 'end' });
+    });
+
+    await openMenu(page, await select(page, P1));
+    await choose(page, 'Add note');
+    await expect(panel(page).locator('textarea')).toBeVisible();
+
+    const placed = await page.evaluate(() => {
+      const view = document
+        .querySelector('.jp-RenderedMarkdown')!
+        .getBoundingClientRect();
+      const passage = document
+        .querySelector('[data-mark]')!
+        .getBoundingClientRect();
+      return {
+        view: [view.top, view.bottom],
+        passage: [passage.top, passage.bottom]
+      };
+    });
+    // The passage came back the least distance, so its edge meets the view's
+    // edge; the two rectangles round to sub-pixels a fraction apart.
+    expect(placed.passage[0]).toBeGreaterThanOrEqual(placed.view[0] - 1);
+    expect(placed.passage[1]).toBeLessThanOrEqual(placed.view[1] + 1);
   });
 });

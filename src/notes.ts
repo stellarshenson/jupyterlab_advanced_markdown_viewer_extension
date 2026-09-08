@@ -27,6 +27,7 @@ import { DocumentRegistry } from '@jupyterlab/docregistry';
 import { MarkdownDocument } from '@jupyterlab/markdownviewer';
 import { ServerConnection, User } from '@jupyterlab/services';
 import { IDisposable } from '@lumino/disposable';
+import { IMessageHandler, Message, MessageLoop } from '@lumino/messaging';
 import { ISignal, Signal } from '@lumino/signaling';
 
 import {
@@ -39,15 +40,23 @@ import {
 } from './anchor';
 import { diffWords, mapOffsets } from './diff';
 import { captureText, DECORATION_CLASS, ITextSnapshot } from './highlight';
-import { openingState } from './notes-panel';
+import {
+  colourClass,
+  MARK_ATTRIBUTE,
+  MARK_CLASS,
+  openingState
+} from './notes-panel';
 import { fetchAPI } from './request';
 import {
+  DOCUMENT_TYPE,
   IMark,
   IMarkAttribute,
   IMarkContent,
   ISpan,
+  known,
   MarkColour,
   newId,
+  NOTE_TYPE,
   PanelState,
   parseMarks,
   parseSettings,
@@ -55,12 +64,6 @@ import {
   serialiseOpening,
   serialiseSettings
 } from './marks';
-
-/**
- * Class on the span painting a marked passage. The colour is a second class
- * of the same name with the colour appended.
- */
-export const MARK_CLASS = 'jp-AdvancedMd-mark';
 
 /**
  * Transaction origin of a marker write.
@@ -72,10 +75,20 @@ export const MARK_CLASS = 'jp-AdvancedMd-mark';
 export const MARK_ORIGIN = 'jupyterlab_advanced_markdown_viewer_extension:mark';
 
 /**
- * The only mark type this version writes. A mark of another type is read and
- * listed but never rewritten, so what a later version wrote survives.
+ * How long after a marker write a render of the written document is dropped.
+ *
+ * The viewer renders a change once its render timeout has run, a second by
+ * default, and the watcher may force a render the moment the written file
+ * comes back in from disk; both would rebuild the same text the marks were
+ * painted on in place. Anything asked for after this window is rendered.
  */
-export const MARK_TYPE = 'note';
+export const MARK_RENDER_WINDOW_MS = 1500;
+
+/**
+ * The class the document widget carries while a selection is recorded, so a
+ * context-menu entry that needs one can be offered through its selector.
+ */
+export const SELECTING_CLASS = 'jp-AdvancedMd-selecting';
 
 /**
  * Handle written on a note line when nothing else names the reader.
@@ -186,6 +199,15 @@ const ANONYMOUS = /^Anonymous/;
 const GENERATED = /^(?=.*[0-9])[0-9a-f-]{8,}$/i;
 
 /**
+ * Where a document marker goes: after a leading YAML front matter block, which
+ * a site generator reads only as the first bytes of the file, else at the top.
+ */
+function frontMatterEnd(source: string): number {
+  const found = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(source);
+  return found ? found[0].length : 0;
+}
+
+/**
  * The offsets a marker is deleted or rewritten over.
  *
  * A marker that has a line to itself takes the line with it, so removing it
@@ -268,12 +290,28 @@ function settingsEdits(source: string, state: PanelState): ISourceEdit[] {
 }
 
 /**
+ * The notes of a mark as the tooltip of its span: one line per note, each
+ * with its author, the lines of a note run together so a note that continues
+ * on a second line is not read as a second note without an author. Empty for
+ * a bare mark, which then shows no tooltip.
+ */
+function tooltip(mark: IMark): string {
+  return mark.notes
+    .map(note => `${note.author}: ${note.text.replace(/\s*\n\s*/g, ' ')}`)
+    .join('\n');
+}
+
+/**
  * Build the span that paints one mark.
  */
 function markSpan(mark: IMark): HTMLElement {
   const span = document.createElement('span');
-  span.className = `${MARK_CLASS} ${MARK_CLASS}-${mark.colour}`;
+  span.className = `${MARK_CLASS} ${colourClass(mark.colour)}`;
   span.dataset.mark = mark.id;
+  const title = tooltip(mark);
+  if (title) {
+    span.title = title;
+  }
   return span;
 }
 
@@ -379,8 +417,18 @@ export class NotesController implements IDisposable {
 
     options.settled.connect(this._onSettled, this);
     this._widget.content.rendered.connect(this._onRendered, this);
+    MessageLoop.installMessageHook(this._widget.content, this._dropRender);
     this._widget.disposed.connect(this._onWidgetDisposed, this);
     this._widget.node.addEventListener('click', this._onClick, true);
+    // Chromium reports a selection change a frame or more after the
+    // selection is made, and a right click can come first; the menu is built
+    // on the document's contextmenu handler, so the record, and the class the
+    // Mark entry's selector needs, are brought up to date ahead of it.
+    this._widget.node.addEventListener(
+      'contextmenu',
+      this._onSelectionChange,
+      true
+    );
     document.addEventListener('selectionchange', this._onSelectionChange);
 
     // Nothing is read until the document has loaded: before that the model is
@@ -419,9 +467,11 @@ export class NotesController implements IDisposable {
    *
    * Kept through a render, which collapses the live selection, and through a
    * focus move into a control, so the commands read this rather than the
-   * window's selection. The window is read once more on the ask, because
+   * window's selection; it is the same object across renders, its offsets
+   * carried onto each. The window is read once more on the ask, because
    * Chromium fires selectionchange a frame or more after the selection
-   * moved and a context menu opened at once asks before it has.
+   * moved, and the keybinding and the palette ask before it has; the context
+   * menu is served ahead of that by the contextmenu listener.
    */
   get selection(): IRenderedRange | null {
     this._onSelectionChange();
@@ -441,7 +491,12 @@ export class NotesController implements IDisposable {
         listed.push({ ...remembered, unanchored: true });
       }
     }
-    return listed;
+    // A note on the document as a whole leads the list wherever its marker
+    // sits, or sat; the passage marks follow in document order.
+    return [
+      ...listed.filter(mark => mark.type === DOCUMENT_TYPE),
+      ...listed.filter(mark => mark.type !== DOCUMENT_TYPE)
+    ];
   }
 
   /**
@@ -470,8 +525,16 @@ export class NotesController implements IDisposable {
       window.cancelAnimationFrame(this._frame);
       this._frame = null;
     }
+    this._forgetWritten();
     this._widget.node.removeEventListener('click', this._onClick, true);
+    this._widget.node.removeEventListener(
+      'contextmenu',
+      this._onSelectionChange,
+      true
+    );
+    this._widget.node.classList.remove(SELECTING_CLASS);
     document.removeEventListener('selectionchange', this._onSelectionChange);
+    MessageLoop.removeMessageHook(this._widget.content, this._dropRender);
     const root = this._root;
     if (root) {
       unpaintMarks(root);
@@ -496,17 +559,33 @@ export class NotesController implements IDisposable {
     const id = newId();
     const opening = serialiseOpening({
       id,
-      type: MARK_TYPE,
+      type: NOTE_TYPE,
       attributes: [{ key: 'colour', value: colour }],
       notes: []
     });
     const closing = serialiseClosing(id);
+    // The record the mark is made from, read once: the write path asks for
+    // the edits again when it falls back from the route or retries after a
+    // refusal, and the reader may have selected other words meanwhile, which
+    // are not what they asked to mark. The record's offsets are into the
+    // render on screen, and a render that completes meanwhile carries them
+    // in place, so each turn locates the same words in whichever source the
+    // write goes into.
+    let used: ISelectionRecord | null = null;
     const written = await this._write(source => {
-      // The record is read after the refresh: a change the refresh applied
-      // re-rendered, and the render carried the record with it, so these are
-      // offsets into the render on screen and the source the write goes into.
-      const selection = this._selection;
-      const range = selection && renderedToSource(selection, root, source);
+      if (used === null) {
+        used = this._selection;
+      }
+      // A record the reader let go of during the write (a click, other
+      // words) is not carried onto a render that completes meanwhile; its
+      // offsets then name other words on screen, so it is used only while
+      // it holds the text of the render as it stands, which a carried record
+      // always does.
+      const selection = used;
+      const range =
+        selection && selection.text === captureText(root).text
+          ? renderedToSource(selection, root, source)
+          : null;
       if (!range) {
         return [];
       }
@@ -523,7 +602,67 @@ export class NotesController implements IDisposable {
         }
       ];
     });
+    // The painted mark now shows the passage, so the selection it was made
+    // from is dropped: kept, it would be put back over the mark after the next
+    // render. The caret is put at the end of the painted mark, where a reader
+    // browsing with the caret was: the live range collapsed onto the parent
+    // when the paint replaced its nodes, ahead of the mark. A selection the
+    // reader made while the write was on its way is theirs and stays.
+    if (written && this._selection === used) {
+      this._setSelection(null);
+      const live = window.getSelection();
+      const painted = root.querySelectorAll(`[${MARK_ATTRIBUTE}="${id}"]`);
+      const last = painted[painted.length - 1];
+      if (last) {
+        live?.collapse(last, last.childNodes.length);
+      } else {
+        live?.collapseToEnd();
+      }
+    }
     return written ? id : null;
+  }
+
+  /**
+   * Put a note marker on the document as a whole: an opening marker of the
+   * document type with no closing marker, on a line of its own at the top of
+   * the file, so it has no passage and any other renderer shows nothing.
+   *
+   * @returns the identifier of the new mark, or of the document mark the file
+   * already holds; null when nothing could be written
+   */
+  async markDocument(): Promise<string | null> {
+    await this._refresh();
+    if (this._disposed) {
+      return null;
+    }
+    const id = newId();
+    const opening = serialiseOpening({
+      id,
+      type: DOCUMENT_TYPE,
+      attributes: [],
+      notes: []
+    });
+    // The document has one note thread: a marker the file already holds is
+    // the one the entry opens, and a second is never written. The check runs
+    // inside the edit, on the source of each attempt, since a press during
+    // another press's round trip finds the first marker only on the refresh
+    // its refused write brings.
+    let found: string | null = null;
+    const written = await this._write(source => {
+      const existing = parseMarks(source).find(
+        mark => mark.type === DOCUMENT_TYPE && mark.open
+      );
+      if (existing) {
+        found = existing.id;
+        return [];
+      }
+      const at = frontMatterEnd(source);
+      return [{ start: at, end: at, text: `${opening}\n` }];
+    });
+    // A marker the refresh brought in is read now, as the write paths do, so
+    // the panel lists it by the time the caller opens the entry on it.
+    this._flush();
+    return written ? id : found;
   }
 
   /**
@@ -566,7 +705,7 @@ export class NotesController implements IDisposable {
       return;
     }
     const mark = parseMarks(this._source).find(found => found.id === id);
-    if (mark && mark.type !== MARK_TYPE) {
+    if (mark && !known(mark)) {
       return;
     }
     // A mark the reader removed is gone, so it is not one of the marks this
@@ -587,7 +726,8 @@ export class NotesController implements IDisposable {
    * Store the state of the notes panel in the document.
    */
   async setPanelState(state: PanelState): Promise<void> {
-    if (state === this._state) {
+    // With the notes setting off nothing of the feature writes.
+    if (state === this._state || !this._settings.notes) {
       return;
     }
     // The panel follows at once; the document follows when the write lands.
@@ -661,6 +801,76 @@ export class NotesController implements IDisposable {
   };
 
   /**
+   * Drop the render the viewer schedules for a marker write.
+   *
+   * The viewer renders the document again once its render timeout has run
+   * after any change to the model. A write that changed markers alone would
+   * render the same text again, rebuilding every node on screen, reloading
+   * every image and moving the reader for nothing: the marks were painted on
+   * the render in place when they were written. So is the render the watcher
+   * forces when the written file comes back in from disk ahead of the
+   * write's own answer. A render is dropped only while the document holds
+   * exactly what the write left in it and only inside the write's window;
+   * the first change of any other kind, typed or from disk, is rendered as
+   * ever and ends the dropping.
+   */
+  private _dropRender = (_: IMessageHandler, message: Message): boolean => {
+    if (message.type !== 'update-request') {
+      return true;
+    }
+    if (this._markedSource !== null && this._source === this._markedSource) {
+      return false;
+    }
+    // The document holds something a marker write did not leave in it: that
+    // is a change to render, and every render after it as well. The viewer
+    // renders a request only once the document is ready, and reads the
+    // document as it stands now; the render reports back with that source.
+    this._forgetWritten();
+    if (this._context.isReady) {
+      this._requestedSource = this._source;
+    }
+    return true;
+  };
+
+  /**
+   * Remember what a marker write leaves in the document, so the renders it
+   * causes are dropped while the document holds exactly that, and for no
+   * longer than the window.
+   *
+   * The marks are painted on the render on screen, which stands in for a
+   * render of the written document only when it is the render of the
+   * document the write changed. When it is not, a change is still waiting on
+   * the viewer's render timeout, the render it schedules shows that change,
+   * and nothing is remembered: the render goes through as ever.
+   *
+   * @param before - the document the write was computed against
+   * @param after - the document the write leaves
+   */
+  private _rememberWritten(before: string, after: string): void {
+    if (before !== this._renderedSource) {
+      this._forgetWritten();
+      return;
+    }
+    this._renderedSource = after;
+    this._markedSource = after;
+    if (this._markedTimer !== null) {
+      window.clearTimeout(this._markedTimer);
+    }
+    this._markedTimer = window.setTimeout(() => {
+      this._markedTimer = null;
+      this._markedSource = null;
+    }, MARK_RENDER_WINDOW_MS);
+  }
+
+  private _forgetWritten(): void {
+    this._markedSource = null;
+    if (this._markedTimer !== null) {
+      window.clearTimeout(this._markedTimer);
+      this._markedTimer = null;
+    }
+  }
+
+  /**
    * The reader's selection changed: record where it sits in the rendered
    * text, or forget it.
    *
@@ -674,12 +884,12 @@ export class NotesController implements IDisposable {
     const root = this._root;
     const selection = window.getSelection();
     if (!root || !selection) {
-      this._selection = null;
+      this._setSelection(null);
       return;
     }
     if (selection.isCollapsed || selection.rangeCount === 0) {
       if (!(selection.anchorNode instanceof Element)) {
-        this._selection = null;
+        this._setSelection(null);
       }
       return;
     }
@@ -688,22 +898,47 @@ export class NotesController implements IDisposable {
       !root.contains(range.commonAncestorContainer) ||
       range.toString().trim() === ''
     ) {
-      this._selection = null;
+      this._setSelection(null);
       return;
     }
     const offsets = selectionOffsets(range, root);
-    this._selection = offsets
-      ? { ...offsets, text: captureText(root).text }
-      : null;
+    const text = offsets ? captureText(root).text : '';
+    // The browser reports its own restore of the selection as a change; the
+    // record stays the same object for the same selection, so a mark on its
+    // way still knows it as its own.
+    const held = this._selection;
+    if (
+      offsets &&
+      held &&
+      held.start === offsets.start &&
+      held.end === offsets.end &&
+      held.text === text
+    ) {
+      return;
+    }
+    this._setSelection(offsets ? { ...offsets, text } : null);
   };
+
+  /**
+   * Record the selection, and say on the document widget whether one is
+   * held: a submenu entry has no visibility of its own, so the menu offers
+   * the marking submenu through a selector that needs the class.
+   */
+  private _setSelection(record: ISelectionRecord | null): void {
+    this._selection = record;
+    this._widget.node.classList.toggle(SELECTING_CLASS, record !== null);
+  }
 
   /**
    * Carry the recorded selection onto the text of the render on screen.
    *
-   * The offsets are moved through the diff of the two texts, so a change
-   * before the selection shifts it and a change inside it closes it. Called
+   * The offsets are moved through the diff of the two texts: a change ahead
+   * of the selection moves it, a deletion inside it shrinks or closes it, and
+   * a replacement of its first word carries it onto the replacement. Called
    * on a render and again when a change settles, because the decorations
-   * hold the added text out of the capture until then.
+   * hold the added text out of the capture until then. The record is moved
+   * in place: a mark on its way holds the record it was made from, and tells
+   * the record from one the reader made since by identity.
    */
   private _carrySelection(): void {
     const record = this._selection;
@@ -718,7 +953,12 @@ export class NotesController implements IDisposable {
     const map = mapOffsets(diffWords(record.text, text));
     const start = map.toLater(record.start);
     const end = map.toLater(record.end);
-    this._selection = end > start ? { start, end, text } : null;
+    // The record is moved whether the range stays open or closes, so a mark
+    // on its way that holds the record sees it closed and writes nothing.
+    Object.assign(record, { start, end, text });
+    if (end <= start) {
+      this._setSelection(null);
+    }
   }
 
   /**
@@ -784,6 +1024,12 @@ export class NotesController implements IDisposable {
    * renders of the same text would otherwise leave the second one bare.
    */
   private _onRendered(): void {
+    // The screen shows the source the render read: the one the hook took down
+    // when it let the update-request through, since the document may have
+    // moved during the render; a render no request preceded, the first one,
+    // read the document as it stands.
+    this._renderedSource = this._requestedSource ?? this._source;
+    this._requestedSource = null;
     this._carrySelection();
     this._flush();
     this._painted = null;
@@ -826,7 +1072,7 @@ export class NotesController implements IDisposable {
     const source = this._source;
     this._marks = parseMarks(source);
     for (const mark of this._marks) {
-      if (mark.open && mark.close) {
+      if (mark.open && (mark.close || mark.type === DOCUMENT_TYPE)) {
         this._remembered.set(mark.id, this._listed(mark, source));
       }
     }
@@ -856,7 +1102,10 @@ export class NotesController implements IDisposable {
         ? source.slice(mark.passage.start, mark.passage.end)
         : '',
       position: mark.open ? mark.open.start / Math.max(source.length, 1) : 0,
-      unanchored: !mark.passage || this._lost.has(mark.id)
+      unanchored:
+        mark.type === DOCUMENT_TYPE
+          ? false
+          : !mark.passage || this._lost.has(mark.id)
     };
   }
 
@@ -891,7 +1140,9 @@ export class NotesController implements IDisposable {
     const anchored: IAnchored[] = [];
     const lost = new Set<string>();
     for (const mark of this._marks) {
-      if (!mark.passage) {
+      // A document note paints nothing, even one a hand-written closing
+      // marker gave a passage: the panel names no colour for it.
+      if (!mark.passage || mark.type === DOCUMENT_TYPE) {
         continue;
       }
       const range = passageToRendered(mark.passage, scan, words);
@@ -905,7 +1156,7 @@ export class NotesController implements IDisposable {
     const signature = anchored
       .map(
         item =>
-          `${item.mark.id} ${item.mark.colour} ${item.range.start}-${item.range.end}`
+          `${item.mark.id} ${item.mark.colour} ${item.range.start}-${item.range.end} ${JSON.stringify(tooltip(item.mark))}`
       )
       .join('\n');
     if (signature !== this._painted) {
@@ -950,7 +1201,7 @@ export class NotesController implements IDisposable {
       const mark = parseMarks(source).find(
         found => found.id === id && found.open
       );
-      if (!mark || !mark.open || mark.type !== MARK_TYPE) {
+      if (!mark || !mark.open || !known(mark)) {
         return [];
       }
       return [
@@ -998,8 +1249,8 @@ export class NotesController implements IDisposable {
    * with the reader's own next save.
    *
    * The edits go through one transaction, kept off the undo stack and tagged
-   * as a mark, so the whole write renders once and every extension observing
-   * the model can tell it from typing and from a change applied from disk.
+   * as a mark, so every extension observing the model can tell it from typing
+   * and from a change applied from disk.
    * They are made from the end backwards, so the offsets of the earlier ones
    * stand.
    *
@@ -1019,6 +1270,11 @@ export class NotesController implements IDisposable {
       }
       const unsaved = this._context.model.dirty;
       const expected = this._context.contentsModel?.hash;
+      // What the document holds once this write is in it, by whichever path:
+      // the render on screen already shows that text, so a render of it is
+      // dropped from here on.
+      const written = applyEdits(source, changes);
+      this._rememberWritten(source, written);
       let landed = false;
       if (
         !unsaved &&
@@ -1034,7 +1290,7 @@ export class NotesController implements IDisposable {
             body: JSON.stringify({
               path: this._context.path,
               expected,
-              content: this._lineEnded(applyEdits(source, changes))
+              content: this._lineEnded(written)
             })
           }
         );
@@ -1067,9 +1323,11 @@ export class NotesController implements IDisposable {
         // `source` no longer fit, and the dirty state is the watcher's to keep.
         await this._refresh();
         // Read the marks now, for the same reason the write path below does:
-        // the caller is handed an id and a command acts on it straight away.
+        // the caller is handed an id and a command acts on it straight away;
+        // and paint them on the render as it stands, which is the render of
+        // the written file.
         this._flush();
-        this._widget.content.update();
+        this._paint();
         // Two states reach this guard, and only one of them wrote into the
         // document: the watcher brought the written file in, or the document
         // moved to something else - the reader typed, or a second external
@@ -1077,7 +1335,7 @@ export class NotesController implements IDisposable {
         // back. The caller is told which, because on the second the mark is
         // on disk and not in the document, and a caller told otherwise
         // discards the reader's draft over a note the document never took.
-        return this._source === applyEdits(source, changes);
+        return this._source === written;
       }
       const shared = this._context.model.sharedModel;
       shared.transact(
@@ -1093,9 +1351,13 @@ export class NotesController implements IDisposable {
       // what was just written is listed by the time the caller has its answer
       // and a command can act on the mark it made.
       this._flush();
-      // The viewer re-renders on its own once its render timeout has run;
-      // asking for the render now is what puts the mark on screen at once.
-      this._widget.content.update();
+      // The markers are comments the renderer leaves out, so the render on
+      // screen is already the render of the written document: the marks are
+      // painted on it now, in place, and the render the viewer schedules for
+      // the change is dropped when it comes, as long as the document still
+      // holds exactly what was written.
+      this._rememberWritten(written, this._source);
+      this._paint();
       if (landed) {
         this._context.model.dirty = false;
         await this._refresh();
@@ -1131,6 +1393,10 @@ export class NotesController implements IDisposable {
   private _lost = new Set<string>();
   private _state: PanelState = 'hidden';
   private _painted: string | null = null;
+  private _renderedSource: string | null = null;
+  private _requestedSource: string | null = null;
+  private _markedSource: string | null = null;
+  private _markedTimer: number | null = null;
   private _selection: ISelectionRecord | null = null;
   private _routeAbsent = false;
   private _frame: number | null = null;

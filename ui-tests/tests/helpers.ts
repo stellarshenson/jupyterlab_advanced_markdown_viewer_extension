@@ -267,6 +267,29 @@ export async function mark(
   to?: string,
   colour = 'yellow'
 ): Promise<void> {
+  // A mark's clearing lags its paint by the trailing refresh, and a selection
+  // made inside that window is collapsed with it (ACC-NOTES-129 log): a mark
+  // after a mark waits for the previous clearing before selecting.
+  await expect(page.locator('.jp-AdvancedMd-selecting')).toHaveCount(0);
   await openMenu(page, await select(page, from, to));
-  await choose(page, `Mark ${colour}`);
+  await openMarkMenu(page);
+  await choose(page, colourLabel(colour));
+}
+
+/** A colour as the Mark submenu names it. */
+export const colourLabel = (colour: string): string =>
+  colour[0].toUpperCase() + colour.slice(1);
+
+/** Open the Mark submenu of the open context menu and wait for it. */
+export async function openMarkMenu(page: any): Promise<void> {
+  await entry(page, 'Mark').click();
+  await expect(menu(page)).toHaveCount(2);
+}
+
+/** Close the context menu and any submenu of it. */
+export async function closeMenus(page: any): Promise<void> {
+  while ((await menu(page).count()) > 0) {
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(50);
+  }
 }

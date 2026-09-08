@@ -26,6 +26,18 @@ body[data-jp-theme-light='false'] {
   --jp-AdvancedMd-mark-flash-bg: rgb(220 220 220 / 45%);
 }
 
+/*
+ | JupyterLab focuses the viewer node whenever its tab comes to the front, and
+ | a browser that takes that focus for keyboard focus draws its own focus ring
+ | around the rendered Markdown: a bright frame no theme colours. JupyterLab
+ | suppresses the same ring on its mime documents; this does it for the
+ | Markdown viewer. The document tab already says which document is active.
+ */
+
+.jp-MarkdownViewer:focus {
+  outline: none;
+}
+
 .jp-AdvancedMd-decoration {
   border-radius: 2px;
   animation:
@@ -211,11 +223,15 @@ body[data-jp-theme-light='false'] {
  |
  | A mark decoration sets only a background colour and the transition into it,
  | so the text of the document keeps its own colour and a mark inside a fenced
- | block leaves the syntax colouring alone. The four colours are the set a
- | Kindle offers. Each is a wash pale enough in the light theme, and dark
- | enough in the dark theme, to read the text through, and each stands more
- | than 20 CIE Lab units from the green and the red a change is highlighted in,
- | so a mark is never read as a change that has just landed.
+ | block leaves the syntax colouring alone. The first four colours are the set
+ | a Kindle offers, desaturated a step; red and green were asked for after
+ | them. Each is a faint wash close to the page, in either theme, so the text
+ | stays the thing the eye lands on (ACC-NOTES-134).
+ | The first four still stand more than 13 CIE Lab units from the green and
+ | the red a change is highlighted in; the red and the green are kin to those
+ | by nature and are told from them by staying where a change highlight fades.
+ | The six stand more than 7 units from one another. The swatch of each
+ | colour in src/icons.ts carries the light-theme value written here.
  */
 
 .jp-AdvancedMd-mark {
@@ -223,35 +239,51 @@ body[data-jp-theme-light='false'] {
 }
 
 .jp-AdvancedMd-mark-yellow {
-  background-color: rgb(255 224 0 / 42%);
+  background-color: rgb(240 212 15 / 20%);
 }
 
 .jp-AdvancedMd-mark-blue {
-  background-color: rgb(0 110 255 / 24%);
+  background-color: rgb(15 112 240 / 11%);
 }
 
 .jp-AdvancedMd-mark-pink {
-  background-color: rgb(255 40 180 / 30%);
+  background-color: rgb(246 49 177 / 14%);
 }
 
 .jp-AdvancedMd-mark-orange {
-  background-color: rgb(255 150 20 / 38%);
+  background-color: rgb(241 148 34 / 17%);
+}
+
+.jp-AdvancedMd-mark-red {
+  background-color: rgb(230 30 70 / 18%);
+}
+
+.jp-AdvancedMd-mark-green {
+  background-color: rgb(30 210 50 / 17%);
 }
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-yellow {
-  background-color: rgb(255 224 0 / 30%);
+  background-color: rgb(240 212 15 / 14%);
 }
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-blue {
-  background-color: rgb(56 139 253 / 36%);
+  background-color: rgb(68 141 241 / 17%);
 }
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-pink {
-  background-color: rgb(255 60 180 / 32%);
+  background-color: rgb(247 68 178 / 15%);
 }
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
-  background-color: rgb(255 150 20 / 32%);
+  background-color: rgb(241 148 34 / 15%);
+}
+
+body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-red {
+  background-color: rgb(230 30 70 / 18%);
+}
+
+body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
+  background-color: rgb(30 210 50 / 18%);
 }
 
 /*
@@ -307,11 +339,14 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 6px;
+
+  /* 1 px at the left puts the collapse caret over the rows' swatches. */
+  padding: 4px 6px 4px 1px;
   border-bottom: 1px solid var(--jp-border-color2);
 }
 
 .jp-AdvancedMd-notesCount {
+  flex: 1 1 auto;
   overflow: hidden;
   white-space: nowrap;
 }
@@ -320,7 +355,35 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
   display: none;
 }
 
+/*
+ | The minimap strip has room for icons alone: its header stacks its controls,
+ | the hide control at the top, then the plus and the expand control. The
+ | expand control exists only there, since the expanded panel is already what
+ | it would open; the collapse control is its mirror, shown in the expanded
+ | state alone, at the left edge of the header where it reads as collapse and
+ | not as a second close.
+ */
+.jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesHeader {
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+/* The icon controls are a 24 px pointer target, the WCAG 2.5.8 minimum. */
 .jp-AdvancedMd-notesClose,
+.jp-AdvancedMd-notesAdd,
+.jp-AdvancedMd-notesCollapse,
+.jp-AdvancedMd-notesExpand {
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.jp-AdvancedMd-notesClose,
+.jp-AdvancedMd-notesAdd,
+.jp-AdvancedMd-notesCollapse,
+.jp-AdvancedMd-notesExpand,
 .jp-AdvancedMd-notesToggle {
   padding: 0 4px;
   color: inherit;
@@ -329,13 +392,55 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
   border: none;
 }
 
+.jp-AdvancedMd-notesExpand svg,
+.jp-AdvancedMd-notesCollapse svg,
+.jp-AdvancedMd-notesClose svg,
+.jp-AdvancedMd-notesAdd svg,
+.jp-AdvancedMd-notesRemove svg,
+.jp-AdvancedMd-notesBadge svg {
+  width: 14px;
+  height: 14px;
+}
+
+.jp-AdvancedMd-notesClose,
+.jp-AdvancedMd-notesAdd {
+  display: inline-flex;
+}
+
+.jp-AdvancedMd-notesExpand,
+.jp-AdvancedMd-notesCollapse {
+  display: none;
+}
+
+.jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesExpand,
+.jp-AdvancedMd-notes-expanded .jp-AdvancedMd-notesCollapse {
+  display: inline-flex;
+}
+
+.jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesClose {
+  order: -1;
+}
+
 .jp-AdvancedMd-notesButton {
+  min-height: 24px;
   padding: 1px 6px;
   color: inherit;
   cursor: pointer;
   background: none;
   border: 1px solid var(--jp-border-color2);
   border-radius: 2px;
+}
+
+/*
+ | The removal control sits at the far right of the controls row, the free
+ | width of the row between it and the colour dots, so it is never read as one
+ | more colour.
+ */
+.jp-AdvancedMd-notesRemove {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 1px 4px;
 }
 
 .jp-AdvancedMd-notesList {
@@ -379,6 +484,49 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
   font-size: var(--jp-ui-font-size0);
 }
 
+/* The word a document note's row shows in place of a passage. */
+.jp-AdvancedMd-notesDocument {
+  font-style: normal;
+  font-weight: 600;
+}
+
+/*
+ | The notes badge sits over the top right corner of the preview while the
+ | panel is hidden, clear of the scrollbar: muted while the document holds no
+ | note, in the ordinary chrome colour while it holds one. It is a child of
+ | the box beside the preview, never of the rendered root. The hidden
+ | attribute must win over the inline-flex below.
+ */
+.jp-AdvancedMd-notesBadge {
+  position: absolute;
+  top: 4px;
+  right: 20px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  color: var(--jp-ui-font-color2);
+  cursor: pointer;
+  background: var(--jp-layout-color1);
+  border: 1px solid var(--jp-border-color2);
+  border-radius: 2px;
+}
+
+.jp-AdvancedMd-notesBadge[hidden] {
+  display: none;
+}
+
+.jp-AdvancedMd-notesBadge-empty {
+  color: var(--jp-ui-font-color3);
+}
+
+.jp-AdvancedMd-notesBadge svg [fill] {
+  fill: currentcolor;
+}
+
 .jp-AdvancedMd-notesEntry {
   margin-top: 4px;
 }
@@ -415,13 +563,34 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
 
 .jp-AdvancedMd-notesForm {
   display: flex;
+  flex-direction: column;
   gap: 4px;
   margin-top: 4px;
 }
 
 .jp-AdvancedMd-notesForm textarea {
-  flex: 1 1 auto;
-  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  color: inherit;
+  background: var(--jp-layout-color0);
+  border: 1px solid var(--jp-border-color2);
+}
+
+/*
+ | The row that takes the focus after a rebuild and the note field draw the
+ | focus ring JupyterLab's own buttons draw, not the browser's.
+ */
+
+.jp-AdvancedMd-notesRow:focus-visible,
+.jp-AdvancedMd-notesForm textarea:focus-visible {
+  outline: var(--jp-focus-outline-width) solid var(--jp-focus-outline-color);
+  outline-offset: -1px;
+}
+
+.jp-AdvancedMd-notesFormButtons {
+  display: flex;
+  gap: 4px;
 }
 
 /*
@@ -438,7 +607,12 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
   position: absolute;
   right: 6px;
   left: 6px;
+  box-sizing: border-box;
   height: 8px;
   cursor: pointer;
+
+  /* The tick is a faint wash, the mark's own; the border is what the eye
+     finds on the strip. */
+  border: 1px solid var(--jp-border-color1);
   border-radius: 2px;
 }

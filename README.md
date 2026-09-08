@@ -21,13 +21,31 @@ Keep open Markdown files live. When an AI agentic tool or any other process rewr
 - **Rendered view** - live updates apply to the rendered Markdown view; an editor open on the same file keeps JupyterLab's own File Changed dialog for a save over unsaved edits
 - **Unsaved edits are never overwritten** - a change arriving while the document has unsaved edits is held, shown as a red square on the tab, and applied once the document is clean again
 - **A file that is gone says so** - a document whose file has been deleted carries a still cross on the tab, distinct from the held change by shape and by movement, and takes the new content if the file comes back
-- **Marks and notes in the file itself** - select a passage in the rendered view, right-click and mark it in one of four colours, with notes attached to it; or select with caret browsing (F7) and press Accel Shift M, also in the command palette as Mark the selected passage. A mark is a pair of HTML comments around the passage, so the Markdown file carries everything and any other renderer shows the document with no trace of it
+- **Marks and notes in the file itself** - select a passage in the rendered view, right-click and mark it in one of six colours, with notes attached to it; or select with caret browsing (F7) and press Accel Shift M, also in the command palette as Mark the selected passage. A mark is a pair of HTML comments around the passage, so the Markdown file carries everything and any other renderer shows the document with no trace of it
+- **Notes on the document as a whole** - press the plus control in the notes panel's header; the note is stored in a marker at the top of the file, after any front matter, with no passage, and listed first in the panel. While the panel is hidden a small notes badge sits at the top right of the preview, faint without notes and in the chrome's own grey with them, and opens the panel
 - **A panel beside the preview** - the marks of the open document listed in order, each with its passage and its notes; a narrow strip of ticks instead, or nothing at all. The state you leave it in is written into the file, so the document opens the way you left it
 - **Marking while the agent writes** - a mark is written through the extension's own server route, which compares the file with what the preview holds and writes under a lock, so marking while writes stream in raises no File Changed dialog and the preview keeps following. A writer appending faster than about one line per 50 ms can still lose a line that lands inside the server's own write, a few milliseconds wide. A lab without the server extension, a document holding your unsaved edits, or live updates turned off keeps JupyterLab's save and its File Changed dialog; there, choose Revert, which keeps the agent's text
 
 ![A change part way through: added text typed in on green, the last line still mid-word, and the removed text struck on red before it is deleted](docs/images/animation-01.png)
 
 ![The three tab markers side by side: a half-filled circle part way through its turn on report.md, whose change is waiting to be read; a red square on draft.md, whose change is held back because the editor beside it holds unsaved edits; and a red cross on archive.md, whose file is gone from disk](docs/images/tab-05-three-markers.png)
+
+## Usage
+
+The screenshots below show the JupyterLab Dark theme; the colours follow the active theme.
+
+- Open a Markdown file with the Markdown Preview. It follows the file from then on; a change arriving from disk is highlighted and the tab shows a marker until you look
+- Select a passage in the preview, right-click and pick a colour under **Mark**; or select with caret browsing (F7) and press Accel Shift M. Choose **Add note** to mark and write a note in one step
+- Press the plus in the notes panel header for a note on the document as a whole; the panel is shown from the badge at the top right of the preview or from Show notes in the context menu. The context menu and the palette offer no entry for the document note itself
+- Click a row in the panel to reveal its passage and open its notes, colours and removal control; the caret at the header's left edge collapses the panel to a strip of ticks, the cross hides it. With the panel hidden, the notes badge at the top right of the preview brings it back
+
+![The notes panel beside the preview: three marked passages in yellow, blue and pink, a note on the document as a whole listed first, the yellow row open with its note, Add note, colour dots and removal control, and the pink row with its note](docs/images/notes-01-panel.png)
+
+![The panel collapsed to the minimap: a narrow strip of ticks at the marks' positions, with the hide control at the top, the plus and the expand caret under it](docs/images/notes-02-minimap.png)
+
+![The panel hidden: the small notes badge at the top right of the preview, in the chrome's own grey because the document holds notes](docs/images/notes-03-badge.png)
+
+![The context menu over a selection with the Mark submenu open, each of the six colours drawn with the swatch the panel shows](docs/images/notes-04-mark-menu.png)
 
 ## Settings
 

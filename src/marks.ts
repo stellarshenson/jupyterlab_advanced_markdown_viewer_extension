@@ -2,7 +2,8 @@
  * The marker grammar: marks, note threads and the panel settings, all stored in
  * the Markdown file itself.
  *
- * A mark is a passage enclosed by two HTML comments sharing one identifier, and
+ * A mark is a passage enclosed by two HTML comments sharing one identifier, or
+ * the document as a whole under one opening comment of the document type, and
  * a note is a line inside the opening comment. The file alone carries
  * everything, so any Markdown renderer shows the document without a trace and an
  * agent rewriting the file can read and answer a thread as plain text.
@@ -14,18 +15,21 @@
  */
 
 /**
- * Colours a mark can carry, the set a Kindle offers.
+ * Colours a mark can carry: the set a Kindle offers, then red and green.
  */
-export type MarkColour = 'yellow' | 'blue' | 'pink' | 'orange';
+export type MarkColour =
+  'yellow' | 'blue' | 'pink' | 'orange' | 'red' | 'green';
 
 /**
- * The four colours in the order the panel offers them.
+ * The six colours in the order the panel offers them.
  */
 export const MARK_COLOURS: readonly MarkColour[] = [
   'yellow',
   'blue',
   'pink',
-  'orange'
+  'orange',
+  'red',
+  'green'
 ];
 
 /**
@@ -33,10 +37,41 @@ export const MARK_COLOURS: readonly MarkColour[] = [
  */
 export const DEFAULT_COLOUR: MarkColour = 'yellow';
 
+/** The type this version writes on a mark around a passage. */
+export const NOTE_TYPE = 'note';
+
+/**
+ * The type of a note on the document as a whole: an opening marker with no
+ * closing marker and no passage, on a line of its own at the top of the file,
+ * holding its note lines like any mark.
+ */
+export const DOCUMENT_TYPE = 'document';
+
+/**
+ * Whether a mark is of a type this version writes, and so may be rewritten
+ * and offered controls. A mark of any other type is listed but never
+ * rewritten, so what a later version wrote survives.
+ */
+export function known(mark: { type: string }): boolean {
+  return mark.type === NOTE_TYPE || mark.type === DOCUMENT_TYPE;
+}
+
 /**
  * States the notes panel can be in, stored in the settings marker.
  */
 export type PanelState = 'expanded' | 'minimap' | 'hidden';
+
+/**
+ * The name of each panel state as the context menu, the palette and the
+ * panel's own header offer it. Hiding names what it hides: the minimap while
+ * the panel is one, the notes otherwise.
+ */
+export const PANEL_LABELS: Record<PanelState, string> = {
+  expanded: 'Show notes',
+  minimap: 'Show notes minimap',
+  hidden: 'Hide notes'
+};
+export const HIDE_MINIMAP_LABEL = 'Hide minimap';
 
 /**
  * A half-open range of source offsets: `start` is included, `end` is not.
@@ -78,7 +113,7 @@ export interface INoteEntry {
 export interface IMarkContent {
   /** Lowercase version 4 UUID shared by the two markers of the pair. */
   id: string;
-  /** Bare token after the identifier; this version writes `note`. */
+  /** Bare token after the identifier; this version writes `note` or `document`. */
   type: string;
   attributes: IMarkAttribute[];
   notes: INoteEntry[];
@@ -89,7 +124,9 @@ export interface IMarkContent {
  *
  * `close` and `passage` are null for an opening marker whose closing marker is
  * missing, and `open` is null for a closing marker whose opening marker is
- * missing. Either way the mark is unanchored and the panel says so.
+ * missing. Either way the mark is unanchored and the panel says so, except a
+ * mark of the document type, which has no passage and is anchored by its
+ * opening marker alone.
  */
 export interface IMark extends IMarkContent {
   /** Colour to render with: the `colour` attribute, or the default. */

@@ -2,6 +2,45 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.5] - 2026-09-08
+
+The first stable release of the notes feature. The 0.6 line was built and installed locally more than thirty times while the feature was reviewed and reworked; the builds between 0.6.41 and 1.0.2 were never published, and 1.0.3 and 1.0.4 shipped an intermediate state of this work on the same day.
+
+### Added
+
+- Notes on the document as a whole: a plus control in the notes panel header opens a note thread on the document itself, with no passage. The thread is stored as a document marker at the top of the file, after any YAML front matter, so any other renderer shows the document with no trace of it; the panel lists it first, with the word Document in place of a passage. It is the one route to such a note: neither the context menu nor the command palette offers it
+- A notes badge at the top right of the preview while the panel is hidden, faint without notes and in the chrome's own grey with them; it opens the panel and hands the keyboard focus to the panel's Hide control. It is gone with the notes setting off
+- Two more mark colours, red and green, six in all; the colours sit in one Mark submenu of the context menu, each entry drawn with the swatch the panel shows
+- Two header controls that collapse the panel to the minimap and expand it back; on the strip the hide control sits at the top, the plus and the expand caret below it
+- The minimap's ticks carry a border in the theme's border colour, so a tick at the muted alpha is still found on the strip
+
+### Changed
+
+- The mark highlights are muted to a fifth of the colour at most, and the swatches, dots and menu icons follow; the yellow, blue, pink and orange highlights stay apart from the change highlights, and red and green are told from a change by staying where a change fades
+- The notes panel header: the collapse caret leads it at the left edge, then the count, the plus, the expand caret and the hide control; the hide control says what it hides, Hide notes or Hide minimap
+- The removal control of a row is a trash icon set apart at the right of the colour dots; the bordered buttons share one 24 px height
+- Marking clears the text selection and leaves the caret at the end of the marked passage; adding a note neither renders nor scrolls the preview
+- The notes toolbar button is gone, so the preview toolbar stays a micro strip; the panel is reached from the context menu, the palette and the badge
+- The README gains a Usage section and four screenshots taken in the JupyterLab Dark theme
+- The build Makefile is at 1.39: its upgrade target reports dependency advisories instead of forcing fixes that downgraded the JupyterLab packages
+
+### Fixed
+
+- A mark retried after a refused write could land on other words when a change during the write moved, closed or replaced the selected passage; a mark is now written around the words the reader selected or not at all
+- A render the viewer still needed was dropped when the document moved before a marker write
+- The note entry was unthemed in the dark theme; the focused row and the note field drew the browser's own focus ring; the note field had no accessible name
+- Add note scrolled the passage the reader was already at, and the passage left the view when the panel opened beside it
+- Keyboard focus fell to the page body after Save, Cancel, Expand, Collapse, Hide and the badge, and when a panel action took the focused row away
+- A note continuing on a second line read as a second note in the tooltip
+- A bright unthemed ring framed the rendered Markdown after its tab came back to the front
+- Both header carets showed in every panel state on an intermediate build
+- The scroll restore after a tab activation was skipped for three seconds
+- A document note asked for twice wrote a second document marker; a hand-paired document marker was painted as a passage
+- A press on Add note with a draft typed on another row did nothing, and a draft in a collapsed row left every Add note dead; the press now lands in the field that holds the draft, its row re-opened, and a field holding only whitespace counts as no draft, as Save reads it
+- A document marker that arrived with the press's own refresh was answered before the panel had listed it, so the entry did not open
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## [0.6.41] - 2026-09-08
 
 ### Added
@@ -28,8 +67,6 @@
 - The passage a note was being written about carried no highlight until the viewer's own render timeout had run
 - A passage flashed for an earlier row kept its flash and played it again when the tab was hidden and shown
 - Panel buttons were announced to assistive technology by their glyph instead of their title
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## [0.6.28] - 2026-09-07
 
@@ -102,5 +139,3 @@
 - Fade timer cleared when a settings change removes the decorations
 - Held writes fade in text in regions that carried no highlight before
 - Ghost suppression follows both sides of the diff's coarse branch
-
-<!-- <END NEW CHANGELOG ENTRY> -->
