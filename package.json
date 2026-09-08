@@ -1,6 +1,6 @@
 {
     "name": "jupyterlab_advanced_markdown_viewer_extension",
-    "version": "0.6.41",
+    "version": "1.0.3",
     "description": "Live Markdown preview for JupyterLab: an open rendered Markdown document follows the file on disk without a reload, with changes typed in on a green background, removed text shown red before it goes, and a tab cue",
     "keywords": [
         "jupyter",
@@ -64,7 +64,9 @@
         "@jupyterlab/markdownviewer": "^4.0.0",
         "@jupyterlab/services": "^7.0.0",
         "@jupyterlab/settingregistry": "^4.0.0",
+        "@jupyterlab/ui-components": "^4.0.0",
         "@lumino/disposable": "^2.0.0",
+        "@lumino/messaging": "^2.0.0",
         "@lumino/polling": "^2.0.0",
         "@lumino/signaling": "^2.0.0",
         "@lumino/widgets": "^2.0.0"
