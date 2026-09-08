@@ -360,6 +360,47 @@ Marks, note lines and the notes panel
   - root-cause: 2026-09-07T21:58:17Z @kj The guard was added as an early return and inherited none of the work the path below it does after the write
   - log: 2026-09-07T21:58:17Z @kj added
   - log: 2026-09-07T21:58:30Z @kj closed
+- [x] `DEF-NOTES-44` **A render the viewer still needs is dropped when the document moved before a marker write** - MAJOR; the render-drop hook remembers what a marker write leaves in the document and drops the viewer's render of it, taking the render on screen for the render of the document the write changed; when a change was still waiting on the viewer's render timeout, typed beside the preview or brought in by the refresh sibling's revert, a mark, a note or a panel toggle written inside that second makes the hook drop the render that would have shown the change, and the preview holds stale text until the next change
+  - evidence: NotesController._renderedSource gate: a write is remembered only when the render on screen is the render of the document it changed; jest 'lets the render through when the document moved before the write' and 'drops the render of a second mark written inside the window' (notes.spec), 464/464 via make test; mutations 'rendered-gate-never-refuses' and 'written-source-not-taken-as-rendered' each failed exactly those (logs/mutation-_.log); Galata ACC-NOTES-117 and the full suite 121/121 on 0.6.46 (logs/galata-0646-_.log)
+  - repro: with editor and preview side by side type a word, and within one second click the notes panel button on the preview toolbar: the preview keeps the old text; jest 'lets the render through when the document moved before the write' on the code before the fix
+  - test-tags: UNIT, E2E
+  - log: 2026-09-08T10:49:06Z @kj added
+  - log: 2026-09-08T11:38:21Z @kj closed
+- [x] `DEF-NOTES-45` **The note entry is unthemed in the dark theme** - MAJOR; the enlarged note textarea sets only width, box sizing and resize, so in the dark theme it is the browser's default field, a white box with black text in the default monospace font, the brightest object in the panel beside buttons that carry the panel's colours
+  - evidence: style/base.css .jp-AdvancedMd-notesForm textarea now carries color: inherit, background var(--jp-layout-color0) and the panel's border; ACC-NOTES-118 Galata box assertions unchanged and green on 0.6.46 (logs/galata-0646-notes-siblings-settings.log)
+  - repro: switch to the dark theme, open a mark's row, press Add note: the box is white with black text
+  - test-tags: E2E
+  - log: 2026-09-08T10:49:06Z @kj added
+  - log: 2026-09-08T11:38:21Z @kj closed
+- [x] `DEF-NOTES-46` **Add note scrolls the passage the reader is already at** - MAJOR; opening the note entry from a click on a painted mark or from Add note over a selection runs the panel's reveal, which scrolls the passage to the centre of the view and flashes it although the reader is looking at it; the view jumps under them as the entry opens
+  - evidence: NotesPanel.selectMark reveals only when the entry is not being opened from the passage; jest 'leaves the reader at the passage when the entry is opened from it', mutation 'reveal-kept-on-open-note' failed exactly it (logs/mutation-reveal-kept-on-open-note.log); Galata 'ACC-NOTES-122 neither renders nor scrolls the preview from Add note through Save' green on 0.6.46
+  - repro: scroll a long document to a passage, select it, choose Add note: the preview scrolls so the passage sits at the centre
+  - test-tags: UNIT, E2E
+  - log: 2026-09-08T10:49:06Z @kj added
+  - log: 2026-09-08T11:38:21Z @kj closed
+- [x] `DEF-NOTES-47` **Save and Cancel drop the keyboard focus to the page body** - MEDIUM; the panel rebuilds its whole body on every change, which destroys the control the reader had focused; only a textarea's focus was carried over, so after Save, Cancel, a colour dot, a toggle or Remove the focus falls to the page body and a keyboard reader restarts the tab order from the top of the document
+  - evidence: NotesPanel._render records the row of the focused control before the rebuild and focuses the row built in its place; jest 'keeps the focus in the row after Cancel destroyed the pressed button' and 'keeps the focus in the row after Save' (notes-panel.spec), 462/462 via make test (logs/test-round2-fixes.log); mutation 'focus-not-returned-to-the-row' failed exactly those two (logs/mutation-focus-not-returned-to-the-row.log)
+  - repro: open a row, Tab to Add note, press it, type, Tab to Cancel, press it: document.activeElement is body
+  - test-tags: UNIT
+  - log: 2026-09-08T10:49:06Z @kj added
+  - log: 2026-09-08T10:52:00Z @kj closed
+- [x] `DEF-NOTES-48` **A note continuing on a second line reads as a second note in the tooltip** - MINOR; the tooltip of a marked passage joins its notes with a line break and puts the author before each; a note whose text holds a line break shows its second line as a line of its own, without an author, as if it were another note
+  - evidence: tooltip() runs the lines of a note together with a space; jest 'puts the notes on the painted span as its tooltip, one line each with its author' asserts a two-line note is one line with its author, 462/462 via make test; mutation 'tooltip-keeps-the-newlines-of-a-note' failed exactly that test (logs/mutation-tooltip-keeps-the-newlines-of-a-note.log)
+  - repro: add a note of two lines to a mark and hover the passage: the tooltip shows three lines, the third with no author
+  - test-tags: UNIT
+  - log: 2026-09-08T10:49:07Z @kj added
+  - log: 2026-09-08T10:52:00Z @kj closed
+- [-] `DEF-NOTES-49` **Two marks inside one second can render the preview once in full** - MINOR; the write remembers the source it will leave before its server route call; when the viewer's render timeout for the first mark runs while the second mark's route call is in flight, the remembered source is the second mark's future text, the document still holds the first mark's text, and the hook takes that for a change and lets the render through: one full render with its image reload, which is what the preview did for every mark before the render-drop hook
+  - repro: mark two passages within one second with the server route slow enough that the second call is in flight when the first mark's render timeout runs; the preview renders once in full
+  - test-tags: UNIT
+  - log: 2026-09-08T10:49:07Z @kj added
+  - log: 2026-09-08T10:52:00Z @kj rejected: wontfix: the cost is one full render in a race of the server route's latency against the viewer's one-second render timeout, which is what every mark cost before the render-drop hook; answering it needs a second remembered source in the hook for a coincidence that harms no reader, and the adjudication of round 2 (tmp/campaign/siblings/round2/adjudication.md) ruled it non-material
+- [ ] `DEF-NOTES-50` **A bright unthemed ring frames the rendered Markdown after its tab comes back to the front** - MAJOR; in the dark theme, after the reader switches to another tab and back, a bright ring sometimes frames the rendered Markdown, panel open or hidden; the ring follows no theme colour and shows on some switches and not on others
+  - root-cause: 2026-09-08T11:49:09Z @kj JupyterLab's MarkdownViewer gives its node tabIndex 0 and focuses it on every activate-request; after a tab switch Chromium takes that programmatic focus for keyboard focus (:focus-visible) and draws its default focus ring, outline auto 1px, around the viewer node; JupyterLab suppresses the ring on .jp-MimeDocument but not on .jp-MarkdownViewer, and nothing in the extension's stylesheet did either
+  - repro: dark theme, open a Markdown preview and a second document, click the second tab then the preview's tab: a bright ring frames the rendered Markdown
+  - test-tags: FUNCTIONAL
+  - log: 2026-09-08T11:44:48Z @kj added
+  - log: 2026-09-08T11:49:09Z @kj edited title and text and repro (replaced)
 
 ## Change detection `DETECT`
 
@@ -396,3 +437,17 @@ Noticing that a file on disk has changed
   - root-cause: 2026-09-07T04:20:05Z @kj the contents fallback treats a not-found answer as a deletion without asking whether the path is one it can serve at all
   - log: 2026-09-07T04:20:05Z @kj added
   - log: 2026-09-07T04:37:00Z @kj closed
+
+## Sibling extension compatibility `COMPAT`
+
+Defects in how the viewer coexists with the sibling Markdown extensions
+
+- [x] `DEF-COMPAT-43` **Scroll restore skipped for three seconds after a tab activation** - MAJOR; the viewer's fallback timer treats every render within 3 s of a tab activation as guarded by the switch-tab scrolling fix and skips its own scroll restore; in a lab without that fix, or on a render it does not guard, an image document whose file is rewritten in that window collapses under the reader while its images reload and nothing puts the position back
+  - evidence: FOREIGN_SCROLL_GUARD_MS, foreignGuardMarked, noteActivated, _activatedAt and the ILabShell block deleted; _foreignScrollGuard is the attribute test alone; Galata 'DEF-COMPAT-43 restores the scroll of an unguarded image document however recently its tab came to the front' blocks the switch-tab bundle and passes on 0.6.44 and 0.6.46 (logs/galata-064*-notes-siblings-settings.log); bundle mutation making the viewer always yield fails it, 1000 expected 1492 received (logs/def-compat-43.log)
+  - test-tags: E2E
+  - repro: in a lab without the switch-tab scrolling fix, open a Markdown file with an image in the preview, scroll down, switch to another tab and back, rewrite the file on disk within 3 s; the preview renders, the picture reloads and the scroll position is lost
+  - root-cause: 2026-09-08T09:47:53Z @kj _foreignScrollGuard in src/controller.ts answers true while no guard attribute has ever been seen and the activation is under 3 s old, a fallback kept for a sibling release that does not mark its widget; the fallback governs whenever the mark is absent, which on image-less documents is always
+  - log: 2026-09-08T09:47:53Z @kj added
+  - log: 2026-09-08T09:49:29Z @kj edited test-tags (added)
+  - log: 2026-09-08T10:13:11Z @kj edited text and repro (replaced)
+  - log: 2026-09-08T11:38:21Z @kj closed

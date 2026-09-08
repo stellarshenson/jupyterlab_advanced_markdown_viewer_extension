@@ -388,6 +388,7 @@ The live update keeps the other Stellars Markdown extensions working; survey of 
   - evidence: two tests in ui-tests/tests/siblings.spec.ts, both needed: 'holds its scroll restore exactly as long as the sibling guard holds' for the settled position, which fails at line 762 with 1000 expected and 49 received when only the three second timer stands, and 'writes no scroll position of its own while the sibling guard holds' for the passivity, which fails when the guard attribute is never read; the settled position alone cannot tell a viewer that yields from one that does not, because the sibling's held position and the viewer's restore target are the same number, so passivity is proved by attributing each scroll write to the bundle whose stack made it; both green on build 0.6.19
   - test: switch to the tab, rewrite the file within 1 s, assert a single stable scroll position
   - test-tags: E2E
+  - mechanism: 2026-09-08T10:49:28Z @kj the marker alone decides: the viewer stays passive exactly while data-jp-scroll-guard is on its widget and restores its scroll on every other render, however recently the tab came to the front; the 3 s fallback timer is gone (DEF-COMPAT-43), so the first switch-tab scrolling fix release that sets the attribute (in that sibling's working tree, unpublished on 2026-09-08) is the minimum this cooperation needs, and an older release fights the viewer for at most its own 3 s hold on image documents
   - mechanism: 2026-09-06T20:55:43Z @kj the switch-tab scrolling fix marks the widget it holds with data-jp-scroll-guard and clears it when it lets go; the viewer reads that attribute rather than assuming the sibling's window, staying passive only while the mark is there, and falls back to a 3 s timer only until the first mark has been seen in the lab
   - mechanism: 2026-09-04T17:47:06Z @kj change to the switch-tab scrolling fix sibling: expose a guard-active signal, and cover the rendered signal too, so one guard owns a widget at a time
   - log: 2026-09-04T17:47:06Z @kj added
@@ -690,6 +691,55 @@ Reader comments anchored to a block of text, stored in the Markdown file as HTML
   - mechanism: 2026-09-07T09:01:37Z @kj the mark command is registered with the command palette and a keybinding whose isEnabled reads the selection; the attachment is resolved from the selection, not from a context-menu hit node
   - log: 2026-09-07T09:01:37Z @kj added
   - log: 2026-09-07T12:50:18Z @kj closed
+- [x] `ACC-NOTES-117` **Marking paints in place without a render** - HIGH; adding a mark, adding a note or changing a colour paints the rendered view in place at once; the viewer is not re-rendered for a write that changes markers alone, so the reader sees no refresh, no image reload and no scroll movement
+  - evidence: Galata 'ACC-NOTES-117 paints a mark in place and drops the render it would have caused' holds the paragraph node through a mark and 2.5 s and sees it replaced by a real disk change; jest 'paints the mark on the render in place', 'drops every render of the written document inside the window, and none after it', 'lets the render through when the document moved on after the write' and the DEF-NOTES-44 pair; 464/464 jest, Galata 121/121 on 0.6.46
+  - test: mark a passage and assert the mark span appears while the render root keeps the same element nodes and the rendered signal has not fired since the mark; then change the text on disk and assert the viewer still re-renders
+  - test-tags: UNIT, E2E
+  - mechanism: 2026-09-08T10:49:28Z @kj the write paints the marks on the render on screen straight after the transaction instead of asking the viewer to render, since the markers are comments the renderer leaves out; the render the viewer schedules on its render timeout is dropped through a Lumino message hook on the viewer widget while the document holds exactly what the write left in it and for at most MARK_RENDER_WINDOW_MS (1500 ms); the write is remembered only when the render on screen is the render of the document the write changed, so a change still waiting on the render timeout is rendered as ever (DEF-NOTES-44)
+  - log: 2026-09-08T09:35:51Z @kj added
+  - log: 2026-09-08T11:38:21Z @kj closed
+- [x] `ACC-NOTES-118` **Note entry is a wide box with its buttons below** - MEDIUM; the note entry box spans the width of the panel with several lines visible, and Save and Cancel sit in a row below the box, never beside it, so the box is not narrowed by them
+  - evidence: Galata 'ACC-NOTES-118 gives the note entry a wide box with its buttons below' measures the box at least 60 px tall and the two buttons in a row beneath it; jest 'lays the entry out as a wide box with its two buttons in a row below' (notes-panel.spec); green on 0.6.46
+  - test: open Add note and assert the box is at least four lines tall, as wide as the form, and that the top of both buttons lies below the bottom of the box
+  - test-tags: E2E
+  - log: 2026-09-08T09:35:51Z @kj added
+  - log: 2026-09-08T11:38:21Z @kj closed
+- [x] `ACC-NOTES-119` **Hovering a mark shows its notes** - MEDIUM; hovering a marked passage in the rendered view shows the mark's notes as a tooltip, one line per note with its author; a bare mark shows no tooltip
+  - evidence: Galata 'ACC-NOTES-119' asserts the mark span's title matches /^[^:\n]+: Say which orchard\.$/; jest 'puts the notes on the painted span as its tooltip, one line each with its author' covers a bare mark, two notes and a two-line note; green on 0.6.46
+  - test: add a note and assert the mark span's title carries the author and the note text; assert a bare mark's span has no title
+  - test-tags: UNIT, E2E
+  - log: 2026-09-08T09:35:51Z @kj added
+  - log: 2026-09-08T11:38:21Z @kj closed
+- [x] `ACC-NOTES-120` **Menu entries carry icons** - MEDIUM; every entry this extension adds to the context menu and the command palette carries an icon: each Mark entry an icon in its own colour, and the note and panel entries an icon that says what they do
+  - evidence: Galata 'ACC-NOTES-120 puts an icon on every entry it offers, one colour per Mark' asserts an svg on the Mark entry, on Add note, on the two panel entries and on the four colour entries of the submenu, with four distinct swatch fills; green on 0.6.46 (logs/galata-0646-notes-siblings-settings.log)
+  - test: open the context menu over a selection and assert every entry of this extension shows an icon, with the four Mark entries showing four different colours
+  - test-tags: E2E
+  - log: 2026-09-08T09:49:16Z @kj added
+  - log: 2026-09-08T11:38:21Z @kj closed
+- [x] `ACC-NOTES-121` **Mark entries show their colour** - MEDIUM; the icon of each Mark entry in the context menu and the command palette is a swatch drawn in the colour that mark paints, and the browser renders it in that colour in the light theme and in the dark theme alike; the theme's icon grey never replaces it
+  - evidence: Galata 'ACC-NOTES-121 draws each Mark entry in the colour it paints, in both themes' reads the computed fill of the four swatches in the light theme and after page.theme.setDarkTheme(): rgb(255,224,0), rgb(0,110,255), rgb(255,40,180), rgb(255,150,20); passes on the installed 0.6.43 (logs/galata-icons-121.log); mutation proof rewrote #ffe000 to #616161 in the bundle in flight and the assertion failed on the first swatch (logs/proof-121.log); screenshot tmp/campaign/menu-icons.png
+  - test: open the context menu over a selection and read the computed fill of each Mark entry's swatch: it is the mark's own hue, four different hues in all; switch to the dark theme and read the same four
+  - test-tags: E2E
+  - log: 2026-09-08T10:30:44Z @kj added
+  - log: 2026-09-08T10:32:04Z @kj closed
+- [x] `ACC-NOTES-122` **Adding a note leaves the view where it is** - HIGH; from the Add note entry of the context menu through to Save of the note, the rendered view neither renders again nor scrolls: the reader who selected a passage and wrote a note about it is left looking at exactly what they were looking at, and a note added from a click on a painted mark is the same
+  - evidence: Galata 'ACC-NOTES-122 neither renders nor scrolls the preview from Add note through Save' holds the scroll position and the paragraph node of a passage far down a long document from the menu entry through Save and 2.5 s beyond; green on 0.6.46; jest 'leaves the reader at the passage when the entry is opened from it' with its mutation caught
+  - test: scroll a long document to a passage near its end, select it, choose Add note, write and save a note; assert the scroll position of the rendered view is unchanged at each step and the paragraph node holding the passage is the same node throughout
+  - test-tags: UNIT, E2E
+  - log: 2026-09-08T10:47:38Z @kj added
+  - log: 2026-09-08T11:38:22Z @kj closed
+- [x] `ACC-NOTES-123` **The colours sit in a Mark submenu** - HIGH; the context menu of the rendered view offers one Mark entry that opens a submenu of the four colours, each named by its colour and carrying its swatch, instead of four Mark entries in the menu itself; the Mark entry is offered only with a selection, as the colour entries were, and choosing a colour marks the selection as before
+  - evidence: Galata 'ACC-NOTES-123 keeps the colours in a Mark submenu' finds one Mark entry and no colour entry in the menu, four labelled colour entries with swatches in the submenu, and a pink mark written from it; 'ACC-NOTES-45' finds no Mark entry without a selection; jest 'offers a Mark submenu of the four colours, the note and the three states' and 'puts the selecting class on the document while a selection is held' (wiring.spec), mutation 'selecting-class-never-set' caught; Galata 80/80 on 0.6.46
+  - test: open the context menu over a selection: it holds one Mark entry and no colour entry; open Mark: a submenu of four colour entries with their swatches; choose one: the passage is marked; without a selection the Mark entry is hidden
+  - test-tags: UNIT, E2E
+  - log: 2026-09-08T11:04:28Z @kj added
+  - log: 2026-09-08T11:38:22Z @kj closed
+- [x] `ACC-NOTES-124` **The colour swatches are muted** - MEDIUM; the swatch of each colour entry in the Mark submenu is the colour as the painted mark shows it, a pale tint over the menu background rather than the full hue at full strength, so the submenu reads as a row of highlights and not as a row of saturated blocks
+  - evidence: swatch() in src/icons.ts draws the rect at fill-opacity TINT[colour] (0.42, 0.24, 0.3, 0.38, the light-theme mark alphas of style/base.css) with a half-opacity stroke; Galata 'ACC-NOTES-124 draws the swatches muted, at the tint the painted mark uses' reads those four fill-opacities from the open submenu and passes on 0.6.47 (logs/galata-0647-notes-siblings-settings.log, 81 passed)
+  - test: open the Mark submenu and read the computed fill-opacity of each swatch: at most a half, and the same tint the painted mark uses; the hue itself is still the mark's, so ACC-NOTES-121 holds
+  - test-tags: E2E
+  - log: 2026-09-08T11:27:07Z @kj added
+  - log: 2026-09-08T11:49:54Z @kj closed
 
 ## Change animation `ANIM`
 
