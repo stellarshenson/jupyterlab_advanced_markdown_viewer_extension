@@ -38,18 +38,6 @@ export const TYPING_CLASS = 'jp-AdvancedMd-typing';
 export const GHOST_HOLD_MS = 750;
 
 /**
- * Whether the operating system asks for reduced motion.
- *
- * `matchMedia` is absent in jsdom, so its presence is checked first.
- */
-export function prefersReducedMotion(): boolean {
-  return (
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  );
-}
-
-/**
  * One decoration being typed or deleted.
  */
 interface IRun {

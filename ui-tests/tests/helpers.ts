@@ -78,6 +78,45 @@ export function settings(overrides: Record<string, unknown> = {}) {
 }
 
 /**
+ * The settings store of a fresh install: nothing of this extension is written
+ * to it, so every value it reads is the one the schema declares. A suite
+ * asserting a shipped default uses this rather than `settings`, which writes
+ * values chosen to make the feature observable.
+ */
+export function shippedSettings(): Record<string, unknown> {
+  return { ...galata.DEFAULT_SETTINGS };
+}
+
+/**
+ * How opaque the settled background of the first added and the first removed
+ * highlight on screen is.
+ *
+ * Both colours are semi-transparent over the page, so the alpha is the
+ * strength the reader sees; the rest of each colour is the theme's own green
+ * and red. Read this past the 500 ms rise, or the rise is what is measured.
+ */
+export function highlightAlphas(
+  page: any
+): Promise<{ added: number; removed: number }> {
+  return page.evaluate(() => {
+    const alphaOf = (selector: string): number => {
+      const element = document.querySelector(selector);
+      if (!element) {
+        throw new Error(`no ${selector} is on screen`);
+      }
+      const parts = (
+        getComputedStyle(element).backgroundColor.match(/[\d.]+/g) ?? []
+      ).map(Number);
+      return parts.length > 3 ? parts[3] : 1;
+    };
+    return {
+      added: alphaOf('.jp-AdvancedMd-added'),
+      removed: alphaOf('.jp-AdvancedMd-removed')
+    };
+  });
+}
+
+/**
  * The computed style of one tab marker: the `::before` of the label of the
  * tab carrying a marker class, beside the label's own colour.
  *

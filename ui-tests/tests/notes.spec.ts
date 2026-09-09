@@ -123,6 +123,18 @@ const MARKED = [
   ''
 ].join('\n');
 
+/** A note line an agent wrote into a marker of the file before the reader. */
+const AGENT_NOTE = '@claude 2026-09-06T16:05:12Z: The intro contradicts this.';
+
+/**
+ * DOC with its first sentence marked by hand and that note line already in
+ * the marker, which is what a file an agent has answered in looks like.
+ */
+const AGENT_NOTED = DOC.replace(
+  P1,
+  `<!-- mark:${ONE} note colour=yellow\n${AGENT_NOTE}\n-->${P1}${closing(ONE)}`
+);
+
 /**
  * DOC with its first sentence marked by hand, the closing marker written
  * between the last word and its full stop.
@@ -281,6 +293,39 @@ const writeExternally = (
   apiPath: string,
   content: string
 ): Promise<void> => page.contents.uploadContent(content, 'text', apiPath);
+
+/**
+ * Select a passage in the editor of the same document and delete it with the
+ * key the reader presses.
+ *
+ * The selection is set through the editor rather than dragged, for the reason
+ * a selection in the preview is built as a range: a drag over wrapped text
+ * selects whatever the layout happens to put under the pointer.
+ */
+async function deleteInEditor(
+  page: any,
+  apiPath: string,
+  passage: string
+): Promise<void> {
+  await page.evaluate(
+    async ({ target, wanted }: { target: string; wanted: string }) => {
+      const app = (window as any).jupyterapp;
+      await app.commands.execute('docmanager:open', {
+        path: target,
+        factory: 'Editor'
+      });
+      const editor = (app.shell.currentWidget as any).content.editor;
+      const at = editor.model.sharedModel.getSource().indexOf(wanted);
+      editor.setSelection({
+        start: editor.getPositionAt(at),
+        end: editor.getPositionAt(at + wanted.length)
+      });
+      editor.focus();
+    },
+    { target: apiPath, wanted: passage }
+  );
+  await page.keyboard.press('Backspace');
+}
 
 /** The scroll position of the rendered view. */
 const scrollTop = (page: any): Promise<number> =>
@@ -518,6 +563,33 @@ test.describe('marking a passage', () => {
     await choose(page, 'Show notes minimap');
     await expect(ticks(page)).toHaveCount(1);
     await expect(painted(page)).toHaveCount(1);
+  });
+
+  test('DEF-NOTES-66 puts the one tick of the minimap on the passage mark, not on the document note', async ({
+    page
+  }) => {
+    // The reporter's own sequence, and the count alone cannot settle it: the
+    // document marker sits at the top of the file, where a passage mark of
+    // the first paragraph draws its tick as well. So the tick is asked whose
+    // it is - a tick carries the identifier of the mark it stands for.
+    await mark(page, P1);
+    await addControl(page).click();
+    await writeNote(page, 'On the whole');
+    // The document note leads the list, so the first row's identifier is its
+    // own.
+    const documentId = await rows(page).first().getAttribute('data-mark');
+    const passageId = await rows(page).nth(1).getAttribute('data-mark');
+
+    await openMenuOnPreview(page);
+    await choose(page, 'Show notes minimap');
+
+    await expect(ticks(page)).toHaveCount(1);
+    await expect(
+      panel(page).locator(`.jp-AdvancedMd-notesTick[data-mark="${passageId}"]`)
+    ).toHaveCount(1);
+    await expect(
+      panel(page).locator(`.jp-AdvancedMd-notesTick[data-mark="${documentId}"]`)
+    ).toHaveCount(0);
   });
 
   test('ACC-NOTES-139 adds the document note from the plus control alone, in both panel states', async ({
@@ -1236,7 +1308,46 @@ test.describe('marking a passage', () => {
     ).toHaveCount(1);
   });
 
-  test('ACC-NOTES-59 lists a mark whose markers a rewrite removed', async ({
+  test('ACC-NOTES-144 removes a mark a rewrite took both markers from', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    // Marked and noted, which is the shape the defect was reported in: the
+    // panel held the passage and the note the rewrite is about to take away.
+    await openMenu(page, await select(page, P1));
+    await choose(page, 'Add note');
+    await writeNote(page, 'Worth checking.');
+    const text = await fileWhen(target, holds =>
+      holds.includes('Worth checking.')
+    );
+    const [only] = openingIds(text);
+
+    // The agent rewrites the document without the two markers, notes and all,
+    // which is what a rewrite of a marked paragraph leaves.
+    await writeExternally(
+      page,
+      target,
+      DOC.replace('cherries and figs', 'quinces and medlars')
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'quinces and medlars'
+    );
+
+    // The mark is gone from the file, so it is gone from the panel, from the
+    // strip of ticks and from the rendered text, notes and all.
+    await expect(panel(page)).toBeVisible();
+    await expect(rows(page)).toHaveCount(0);
+    await expect(painted(page)).toHaveCount(0);
+    await openMenuOnPreview(page);
+    await choose(page, 'Show notes minimap');
+    await expect(ticks(page)).toHaveCount(0);
+    // A break is deleted only once it has stood for the settle, so the file
+    // is waited on rather than read the moment the panel has caught up.
+    await fileWhen(target, holds => !holds.includes(only));
+  });
+
+  test('ACC-NOTES-144 deletes the closing marker a rewrite left behind', async ({
     page,
     tmpPath
   }) => {
@@ -1248,28 +1359,105 @@ test.describe('marking a passage', () => {
     );
     const [only] = openingIds(text);
 
-    // The rewrite takes both markers of the only mark away, which is what an
-    // agent rewriting that paragraph does. Nothing is left to anchor, so the
-    // panel is holding the last mark of the document when it is asked to keep
-    // showing it.
+    // Only the opening marker goes, which is what a rewrite of the first half
+    // of a marked paragraph leaves.
+    await writeExternally(page, target, text.replace(opening(only), ''));
+
+    // The leftover marker is deleted from the file itself, so an agent
+    // reading the file next finds nothing of the mark either. The deletion
+    // waits out the settle first, which is what this poll waits through.
+    await fileWhen(target, holds => !holds.includes(only));
+    await expect(rows(page)).toHaveCount(0);
+    await expect(painted(page)).toHaveCount(0);
+    expect(fileText(target)).toContain(P1);
+    await savedCleanly(page);
+  });
+
+  test('ACC-NOTES-144 deletes both markers of a passage a rewrite emptied', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await mark(page, P1);
+    const text = await fileWhen(
+      target,
+      holds => openingIds(holds).length === 1
+    );
+    const [only] = openingIds(text);
+
+    // The passage between the two markers is taken out and nothing but a
+    // space is left in its place: the mark encloses nothing any more.
+    await writeExternally(page, target, text.replace(P1, ' '));
+
+    // Both markers go once the break has stood for the settle.
+    await fileWhen(target, holds => !holds.includes(only));
+    await expect(rows(page)).toHaveCount(0);
+    await expect(painted(page)).toHaveCount(0);
+    await savedCleanly(page);
+  });
+
+  test('ACC-NOTES-144 keeps a mark whose passage a rewrite rewrote between its markers', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await mark(page, P1);
+    const text = await fileWhen(
+      target,
+      holds => openingIds(holds).length === 1
+    );
+    const [only] = openingIds(text);
+
+    // Both markers survive, so the mark does: it is the new passage that is
+    // listed, and nothing is deleted from the file.
     await writeExternally(
       page,
       target,
-      text
-        .replace(opening(only), '')
-        .replace(closing(only), '')
-        .replace('cherries and figs', 'quinces and medlars')
+      text.replace(P1, 'quinces and medlars')
     );
     await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
       'quinces and medlars'
     );
 
-    // The mark that lost its markers is still listed, and says it is lost.
-    await expect(panel(page)).toBeVisible();
     await expect(rows(page)).toHaveCount(1);
-    await expect(rows(page).filter({ hasText: 'unanchored' })).toHaveCount(1);
-    expect(openingIds(fileText(target))).toEqual([]);
-    await expect(painted(page)).toHaveCount(0);
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesPassage')
+    ).toHaveText('quinces and medlars');
+    // Nothing was deleted, and nothing is deleted later either: the wait is
+    // well past the settle a break would have to stand for.
+    await page.waitForTimeout(2000);
+    expect(openingIds(fileText(target))).toEqual([only]);
+  });
+
+  test('ACC-NOTES-144 keeps the markers and the notes of a passage the reader emptied while the document is unsaved', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await openMenu(page, await select(page, P1));
+    await choose(page, 'Add note');
+    await writeNote(page, 'Worth checking.');
+    const text = await fileWhen(target, holds =>
+      holds.includes('Worth checking.')
+    );
+    const [only] = openingIds(text);
+
+    // The preview and the editor share one document, so the reader selecting
+    // the marked passage there and pressing Backspace, meaning to retype it,
+    // leaves the mark enclosing nothing for as long as they take over it.
+    await deleteInEditor(page, target, P1);
+    const editor = page.locator('.jp-FileEditor .cm-content');
+    await expect(editor).not.toContainText(P1);
+
+    // Their undo has to bring the passage back into a mark that is still
+    // there, so neither marker and no note line is touched while the
+    // document is unsaved, and the file itself is not written at all.
+    await page.waitForTimeout(2000);
+    await expect(editor).toContainText(`<!-- mark:${only}`);
+    await expect(editor).toContainText(closing(only));
+    await expect(editor).toContainText('Worth checking.');
+    expect(fileText(target)).toBe(text);
+    await expect(page.locator('.jp-Dialog')).toHaveCount(0);
   });
   test('ACC-NOTES-99 shows a note another author added to the file', async ({
     page,
@@ -2121,80 +2309,49 @@ async function noteOnFreshDocument(
 test.describe('a lab that names its user', () => {
   test.use({
     mockSettings: settings({ fadeDuration: 500, animation: false }),
+    // The lab knows exactly who the reader is, and it makes no difference:
+    // the setting alone names a note line.
     mockUser: identity('kj', 'Konrad Jelen')
   });
 
-  test('ACC-NOTES-104 signs a note line with the identity username', async ({
+  test('ACC-NOTES-142 signs a note line with the default handle while the setting is empty', async ({
     page,
     tmpPath
   }) => {
     const text = await noteOnFreshDocument(
       page,
       `${tmpPath}/${FILE}`,
-      'The identity names me.'
+      'The setting is empty.'
     );
 
     expect(text).toMatch(
-      /\n@kj \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: The identity names me\.\n/
+      /\n@author \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: The setting is empty\.\n/
     );
+    expect(text).not.toContain('@kj');
     await expect(
       rows(page).first().locator('.jp-AdvancedMd-notesAuthor')
-    ).toHaveText('@kj');
-  });
-});
-
-test.describe('a lab that logs its user in by identifier', () => {
-  test.use({
-    mockSettings: settings({ fadeDuration: 500, animation: false }),
-    // A hub that logs users in by identifier reports a username that names
-    // the reader to the software alone, beside the name a person reads.
-    mockUser: identity('4fcdf4bd-4331-4e06-bdfe-66b0eddbccac', 'Konrad Jelen')
+    ).toHaveText('@author');
   });
 
-  test('ACC-NOTES-104 signs with the name when the username is a generated identifier', async ({
+  test('ACC-NOTES-142 leaves a note line an agent wrote as it stands', async ({
     page,
     tmpPath
   }) => {
-    const text = await noteOnFreshDocument(
-      page,
-      `${tmpPath}/${FILE}`,
-      'The identifier names me to the hub.'
-    );
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(AGENT_NOTED, 'text', target);
+    await openPreview(page, target, FIRST);
 
+    await rows(page).first().locator('.jp-AdvancedMd-notesToggle').click();
+    await panelButton(page, 'Add note').click();
+    await writeNote(page, 'Agreed.');
+    const text = await fileWhen(target, holds => holds.includes('Agreed.'));
+
+    // The agent's line is carried through the rewrite of the marker byte for
+    // byte, and only the line written here is signed with the handle.
+    expect(text).toContain(AGENT_NOTE);
     expect(text).toMatch(
-      /\n@Konrad-Jelen \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: The identifier names me to the hub\.\n/
+      /\n@author \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Agreed\.\n/
     );
-    expect(text).not.toContain('4fcdf4bd');
-    await expect(
-      rows(page).first().locator('.jp-AdvancedMd-notesAuthor')
-    ).toHaveText('@Konrad-Jelen');
-  });
-});
-
-test.describe('a lab that hands out an anonymous identity', () => {
-  test.use({
-    mockSettings: settings({ fadeDuration: 500, animation: false }),
-    // What jupyter_server calls a user it does not know: a name that opens
-    // with Anonymous and an opaque identifier for a username.
-    mockUser: identity('4fcdf4bd-4331-4e06-bdfe-66b0eddbccac', 'Anonymous Kore')
-  });
-
-  test('ACC-NOTES-106 signs with the default handle when nothing names the reader', async ({
-    page,
-    tmpPath
-  }) => {
-    const text = await noteOnFreshDocument(
-      page,
-      `${tmpPath}/${FILE}`,
-      'Nothing names me.'
-    );
-
-    expect(text).toMatch(
-      /\n@reader \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Nothing names me\.\n/
-    );
-    await expect(
-      rows(page).first().locator('.jp-AdvancedMd-notesAuthor')
-    ).toHaveText('@reader');
   });
 });
 
@@ -2210,7 +2367,7 @@ test.describe('the author setting', () => {
     mockUser: identity('someone-else', 'Someone Else')
   });
 
-  test('ACC-NOTES-106 signs note lines with the handle the setting names', async ({
+  test('ACC-NOTES-142 signs note lines with the handle the setting names', async ({
     page,
     tmpPath
   }) => {
@@ -2757,10 +2914,10 @@ test.describe('marking from the keyboard', () => {
   });
 });
 
-test.describe('a note saved after the mark vanished', () => {
+test.describe('a note being written when the mark vanished', () => {
   test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
 
-  test('DEF-NOTES-35 keeps a note whose mark vanished before Save', async ({
+  test('ACC-NOTES-144 takes the row and its open entry with a mark the file lost', async ({
     page,
     tmpPath
   }) => {
@@ -2771,26 +2928,19 @@ test.describe('a note saved after the mark vanished', () => {
     await panelButton(page, 'Add note').click();
     const box = page.locator('.jp-AdvancedMd-notesForm textarea');
     await expect(box).toBeVisible();
-
-    // The markers go from the file while the entry is open: the row stays,
-    // unanchored, and so does the entry.
-    await writeExternally(page, target, DOC);
-    await expect(
-      rows(page).first().locator('.jp-AdvancedMd-notesState')
-    ).toHaveText('unanchored');
     await box.fill('Written into a mark that is gone.');
-    await panelButton(page, 'Save').click();
 
-    // Nothing to write the note into: the text stays in front of the reader
-    // instead of vanishing without a word. The draft is read only after the
-    // save round trip has answered, because until then it is there whatever
-    // the answer will be.
-    await page.waitForTimeout(1500);
-    await expect(box).toHaveValue('Written into a mark that is gone.');
-    await expect(
-      rows(page).first().locator('.jp-AdvancedMd-notesState')
-    ).toHaveText('unanchored');
+    // Every marker goes from the file while the entry is open. The marks are
+    // gone rather than unanchored, so their rows go and the entry goes with
+    // them: what DEF-NOTES-35 kept beside an unanchored row has no row to
+    // stand beside any more.
+    await writeExternally(page, target, DOC);
+
+    await expect(rows(page)).toHaveCount(0);
+    await expect(box).toHaveCount(0);
+    await expect(painted(page)).toHaveCount(0);
     expect(fileText(target)).not.toContain('Written into a mark');
+    expect(openingIds(fileText(target))).toEqual([]);
   });
 });
 

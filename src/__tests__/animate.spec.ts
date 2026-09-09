@@ -1,10 +1,5 @@
 import { changeRanges, diffWords, mapOffsets } from '../diff';
-import {
-  ChangeAnimator,
-  GHOST_HOLD_MS,
-  prefersReducedMotion,
-  TYPING_CLASS
-} from '../animate';
+import { ChangeAnimator, GHOST_HOLD_MS, TYPING_CLASS } from '../animate';
 import { ADDED_CLASS, captureText, decorate, undecorate } from '../highlight';
 
 /**
@@ -307,25 +302,5 @@ describe('ChangeAnimator', () => {
       }
       expect(added(again)[1]).toBe('brown');
     });
-  });
-});
-
-describe('prefersReducedMotion', () => {
-  const original = window.matchMedia;
-
-  afterEach(() => {
-    (window as any).matchMedia = original;
-  });
-
-  it('is false without matchMedia', () => {
-    delete (window as any).matchMedia;
-    expect(prefersReducedMotion()).toBe(false);
-  });
-
-  it('follows the media query when it is there', () => {
-    (window as any).matchMedia = () => ({ matches: false });
-    expect(prefersReducedMotion()).toBe(false);
-    (window as any).matchMedia = () => ({ matches: true });
-    expect(prefersReducedMotion()).toBe(true);
   });
 });

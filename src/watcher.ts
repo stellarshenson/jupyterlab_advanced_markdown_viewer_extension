@@ -27,7 +27,10 @@ import { diffWords } from './diff';
  * Transaction origin marking an edit this extension applied from disk.
  *
  * Other extensions observing the shared model use it to tell a rewrite from
- * disk apart from the user's own typing.
+ * disk apart from the user's own typing, so the text is a wire value: a
+ * sibling matches on it. It is also the prefix every console warning of this
+ * package carries, in the watcher, the channel and the notes controller, so
+ * rewording it for legibility would change what those siblings match on.
  */
 export const EXTERNAL_ORIGIN = 'jupyterlab_advanced_markdown_viewer_extension';
 

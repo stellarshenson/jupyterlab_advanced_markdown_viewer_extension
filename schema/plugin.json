@@ -41,13 +41,24 @@
       "description": "How fast added text is typed in and removed text is deleted from its end in the rendered view. 0 shows a change at once.",
       "type": "integer",
       "minimum": 0,
-      "default": 10
+      "default": 25
     },
     "highlight": {
       "title": "Highlight changes",
       "description": "Show added text on a green background and removed text on a red one.",
       "type": "boolean",
       "default": true
+    },
+    "highlightVisibility": {
+      "title": "Highlight visibility",
+      "description": "How strong the green and red backgrounds of a change are. Medium is the shipped strength, Low a fainter wash for a reader who finds it loud, High a stronger one for a reader who loses it against the page.",
+      "type": "string",
+      "oneOf": [
+        { "const": "low", "title": "Low" },
+        { "const": "medium", "title": "Medium" },
+        { "const": "high", "title": "High" }
+      ],
+      "default": "medium"
     },
     "tabCue": {
       "title": "Mark the document tab",
@@ -63,7 +74,7 @@
     },
     "author": {
       "title": "Note author",
-      "description": "The handle written on every note line you add, without the leading @. Empty takes the JupyterLab user name, and reader where the lab hands out an anonymous identity.",
+      "description": "The handle written on every note line you add, without the leading @. Empty writes @author.",
       "type": "string",
       "default": ""
     }

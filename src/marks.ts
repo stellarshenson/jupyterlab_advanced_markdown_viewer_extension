@@ -284,37 +284,29 @@ function parseNotes(text: string): INoteEntry[] {
 }
 
 /**
- * Every mark of a source, in the order its markers appear.
- *
- * Markers are paired by identifier rather than by nesting, so two marks whose
- * passages overlap are independent pairs and neither disturbs the other.
+ * One readable marker of a source.
  */
-export function parseMarks(source: string): IMark[] {
-  const marks: IMark[] = [];
-  // Identifier to the marks still waiting for their closing marker, oldest
-  // first, so a repeated identifier pairs in the order it was opened.
-  const pending = new Map<string, IMark[]>();
+interface IMarker {
+  id: string;
+  span: ISpan;
+  /** What an opening marker spells out, null for a closing marker. */
+  content: IMarkContent | null;
+}
+
+/**
+ * Every readable marker of a source, in document order.
+ *
+ * A marker the grammar does not admit is dropped here, once, so the pass that
+ * finds the opened identifiers and the pass that builds the marks can never
+ * disagree about which markers the source holds at all.
+ */
+function readMarkers(source: string): IMarker[] {
+  const found: IMarker[] = [];
 
   for (const comment of comments(source)) {
     const closing = CLOSING.exec(comment.inner);
     if (closing) {
-      const waiting = pending.get(closing[1]);
-      const mark = waiting?.shift();
-      if (mark && mark.open) {
-        mark.close = comment.span;
-        mark.passage = { start: mark.open.end, end: comment.span.start };
-      } else {
-        marks.push({
-          id: closing[1],
-          type: '',
-          attributes: [],
-          notes: [],
-          colour: DEFAULT_COLOUR,
-          open: null,
-          close: comment.span,
-          passage: null
-        });
-      }
+      found.push({ id: closing[1], span: comment.span, content: null });
       continue;
     }
 
@@ -330,23 +322,113 @@ export function parseMarks(source: string): IMark[] {
     if (!attributes) {
       continue;
     }
-    const mark: IMark = {
+    found.push({
       id: opening[1],
-      type: opening[2],
-      attributes,
-      notes: parseNotes(split < 0 ? '' : comment.inner.slice(split + 1)),
-      colour: colourOf(attributes),
-      open: comment.span,
+      span: comment.span,
+      content: {
+        id: opening[1],
+        type: opening[2],
+        attributes,
+        notes: parseNotes(split < 0 ? '' : comment.inner.slice(split + 1))
+      }
+    });
+  }
+
+  return found;
+}
+
+/**
+ * The identifiers an opening marker carries, wherever in the source it sits.
+ */
+function openedIds(markers: IMarker[]): Set<string> {
+  const opened = new Set<string>();
+  for (const marker of markers) {
+    if (marker.content) {
+      opened.add(marker.id);
+    }
+  }
+  return opened;
+}
+
+/**
+ * Every mark of a source, in the order its markers appear.
+ *
+ * Markers are paired by identifier rather than by nesting, so two marks whose
+ * passages overlap are independent pairs and neither disturbs the other.
+ *
+ * An identifier names one mark. A reader who copies a marked passage in the
+ * editor copies its markers with it, so a document can carry the same
+ * identifier twice; the mark that identifier names is the one its first
+ * opening marker begins, wherever the closing marker that ends it sits, and
+ * only where the identifier carries no opening marker at all is a lone
+ * closing marker the mark. Every marker that is not one of the two the mark
+ * is made of is left in the source exactly as it stands, the way an
+ * unreadable marker is. Everything downstream finds a mark by its identifier
+ * - the panel's rows and open entries, the painted passages, the rewrite that
+ * adds a note - so a second mark under one identifier would be a second row
+ * holding the first one's note and a write landing on the wrong marker.
+ */
+export function parseMarks(source: string): IMark[] {
+  const markers = readMarkers(source);
+  const withOpening = openedIds(markers);
+  const marks: IMark[] = [];
+  // The one mark each identifier names, from the marker that began it
+  // onwards, so a later marker repeating that identifier can be told apart
+  // from a first one.
+  const byId = new Map<string, IMark>();
+
+  for (const marker of markers) {
+    const mark = byId.get(marker.id);
+
+    if (!marker.content) {
+      if (mark) {
+        // A closing marker pairs with its identifier's mark while that mark
+        // is still waiting for one; a further closing marker repeats a pair
+        // already made and is left where it is.
+        if (mark.open && !mark.close) {
+          mark.close = marker.span;
+          mark.passage = { start: mark.open.end, end: marker.span.start };
+        }
+        continue;
+      }
+      // A closing marker whose identifier an opening marker further down the
+      // source carries belongs to that opening marker's mark: the mark is
+      // read below, and this marker stays where it stands. Only an identifier
+      // with no opening marker anywhere is named by a lone closing marker,
+      // which is the orphan the deletion of a broken mark takes out.
+      if (withOpening.has(marker.id)) {
+        continue;
+      }
+      const orphan: IMark = {
+        id: marker.id,
+        type: '',
+        attributes: [],
+        notes: [],
+        colour: DEFAULT_COLOUR,
+        open: null,
+        close: marker.span,
+        passage: null
+      };
+      marks.push(orphan);
+      byId.set(orphan.id, orphan);
+      continue;
+    }
+
+    // An opening marker repeating an identifier the document has already used
+    // opens nothing: the mark is the one already read, and this marker is a
+    // copy of its own text, which stays in the source untouched.
+    if (mark) {
+      continue;
+    }
+    const opened: IMark = {
+      ...marker.content,
+      colour: colourOf(marker.content.attributes),
+      open: marker.span,
       close: null,
       passage: null
     };
-    marks.push(mark);
-    const waiting = pending.get(mark.id);
-    if (waiting) {
-      waiting.push(mark);
-    } else {
-      pending.set(mark.id, [mark]);
-    }
+    marks.push(opened);
+    byId.set(opened.id, opened);
   }
 
   return marks;

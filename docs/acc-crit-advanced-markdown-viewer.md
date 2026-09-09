@@ -230,6 +230,23 @@ Showing the user what an external change removed and added, in the rendered view
   - mechanism: 2026-09-06T21:33:25Z @kj decorate defers a ghost whose own text node is gone to the first surviving non-heading block, and drops it when no block survives
   - log: 2026-09-06T21:33:25Z @kj added
   - log: 2026-09-06T22:05:17Z @kj closed
+- [x] `ACC-HILITE-140` **Highlight visibility setting with Low, Medium and High** - MEDIUM; A new setting named Highlight visibility offers three choices: Low, Medium and High. Medium is the default. The choice changes only how opaque the green (added) and red (removed) highlights are. Low is 10 percent less opaque than Medium, High is 10 percent more. Changing the choice recolours highlights already on screen, no restart. The setting does not touch the mark colours, the flash on a selected mark or the tab marker.
+  - evidence: jest 'offers the three highlight strengths and starts at the middle one' (schema.spec), the three cases of the 'highlight visibility' describe (controller.spec) and 'hands it the highlight strength, and refuses one the schema forbids' (wiring.spec); Galata 'ACC-HILITE-140 offers three strengths and recolours what is on screen' in ui-tests/tests/settings.spec.ts sets each choice and reads the alpha in both themes; green on the 1.0.6 build with jest 562 of 562, pytest 29 of 29, lint 0 errors, and Galata 147 of 147 in two runs, the last case passing on a re-run after the machine was busy
+  - related: ACC-HILITE-22
+  - test: Set each choice in the settings editor, rewrite the file, read the computed background of an added and a removed highlight in both themes, assert the expected opacity. Enter any other value, assert the settings editor rejects it.
+  - test-tags: UNIT, E2E
+  - mechanism: 2026-09-08T22:31:15Z @kj schema key highlightVisibility, a string declared as oneOf with a const and a title per entry so the settings editor shows Low, Medium and High; readSettings passes it to the controller, which writes data-jp-advancedmd-visibility on the viewer widget node, never on the render root; style/base.css keys two blocks on that attribute and leaves medium at :root, so the highlights on screen take a new strength on the next style pass without being rebuilt
+  - log: 2026-09-08T20:36:10Z @kj added
+  - log: 2026-09-08T20:48:30Z @kj edited title and text and test (replaced)
+  - log: 2026-09-08T22:31:15Z @kj closed
+- [x] `ACC-HILITE-141` **Change highlights become 5 percent more opaque** - MEDIUM; The green and red change highlights are 5 percent more opaque than in 1.0.5. Light theme: added 30 becomes 35 percent, removed 26 becomes 31 percent. Dark theme: added 26 becomes 31 percent, removed 24 becomes 29 percent. These are the Medium values of the visibility setting. Text over a highlight stays readable in both themes, at High too.
+  - evidence: Galata 'ACC-HILITE-141 is the shipped pair of each theme' in ui-tests/tests/live-view.spec.ts reads the computed alpha of an added and a removed decoration in both themes; green on the 1.0.6 build with jest 562 of 562, pytest 29 of 29, lint 0 errors, and Galata 147 of 147 in two runs, the last case passing on a re-run after the machine was busy
+  - related: ACC-HILITE-140
+  - test: With default settings rewrite the file and assert the computed opacity of the added and removed backgrounds: 0.35 and 0.31 in the light theme, 0.31 and 0.29 in the dark theme. At High assert the text over both highlights stays readable in both themes.
+  - test-tags: UNIT, E2E
+  - log: 2026-09-08T20:36:10Z @kj added
+  - log: 2026-09-08T20:48:30Z @kj edited title and text and test (replaced)
+  - log: 2026-09-08T22:31:15Z @kj closed
 
 ## Tab title cue `CUE`
 
@@ -285,16 +302,19 @@ Signalling on the document tab that new content arrived
   - log: 2026-09-04T22:42:07Z @kj added
   - log: 2026-09-06T17:49:03Z @kj edited text
   - log: 2026-09-06T22:05:04Z @kj closed
-- [x] `ACC-CUE-72` **Tab animation respects reduced motion** - MEDIUM; when the reader has asked the system for reduced motion none of the three tab markers moves, and the static circle, square or cross alone shows the state
-  - evidence: 'stand still and keep their shapes' in ui-tests/tests/tab-cue.spec.ts; green on build 0.6.19 with jest 185 of 185, pytest 21 of 21 and Galata 47 of 47
-  - mechanism: 2026-09-06T21:08:32Z @kj the reduced-motion query removes the animation from all three markers and leaves the shapes; together with the tabCue setting, which hides the marker altogether, these are the pause, stop or hide mechanisms WCAG 2.2.2 requires of moving content that starts on its own, runs beyond five seconds and sits beside the content being read
-  - test: emulate prefers-reduced-motion for a document taking changes, one holding a change over unsaved edits and one whose file is gone; assert each marker is present and carries no animation
+- [x] `ACC-CUE-72` **The tab markers are stopped by this extension's own setting, not by the operating system** - MEDIUM; The operating system's reduced-motion preference does not stop the tab markers. It cannot be read as a request about this extension: Windows reports it to every page whenever its own show-animations switch is off, which a reader turns off for speed or taste, and the reader who did so still needs to see that their document changed. The switch that stops the marker is this extension's own tabCue setting, which takes the marker away altogether. That is the Hide of the three ways WCAG 2.2.2 allows for moving content, so the guideline is met by a switch the reader can find in the settings editor. This replaces the earlier rule that no tab marker moves under the operating system preference.
+  - evidence: Galata 'DEF-CUE-68 keep turning and keep their shapes' in ui-tests/tests/tab-cue.spec.ts writes the file under emulated reduced motion and asserts the marker turns and each of the three keeps its shape; jest 'silences no marker for the operating system reduced-motion preference' in `src/__tests__/cue.spec.ts` reads the stylesheet; green on the 1.0.6 build with jest 562 of 562, pytest 29 of 29, lint 0 errors, and Galata 147 of 147 in two runs, the last case passing on a re-run after the machine was busy
+  - mechanism: 2026-09-08T22:31:48Z @kj style/base.css carries no reduced-motion rule at all: the marker turns for every reader, and the tabCue setting takes it away altogether, which is the Hide of the three ways WCAG 2.2.2 allows for moving content
+  - test: Emulate prefers-reduced-motion reduce. Rewrite the file repeatedly and assert the tab marker is the half-filled circle and carries its turning animation. Assert the held-change square and the missing-file cross each keep their own shape. Turn tabCue off and assert no marker is on the tab.
   - test-tags: E2E
   - log: 2026-09-04T22:42:07Z @kj added
   - log: 2026-09-06T17:49:03Z @kj edited text
   - log: 2026-09-06T21:08:32Z @kj edited text
   - log: 2026-09-06T21:08:32Z @kj edited test (replaced)
   - log: 2026-09-06T22:05:04Z @kj closed
+  - log: 2026-09-08T20:41:08Z @kj ruling contested by DEF-CUE-68: the Star Colonel wants the marker to turn on a machine whose browser reports reduced motion; the fix rewrites this criterion
+  - log: 2026-09-08T21:45:44Z @kj edited title and text and test (replaced)
+  - log: 2026-09-08T22:31:48Z @kj edited evidence (replaced)
 - [x] `ACC-CUE-115` **A screen reader can move through the notes list** - LOW; The notes list carries roles a screen reader can move through: the list a list role, each row a listitem role with aria-current on the selected row, and each row's swatch an image role named by the mark's colour
   - evidence: Galata notes.spec.ts 'ACC-CUE-115 lists the marks as list items' passes on 0.6.37; 3 mutations caught (listitem removed, aria-current removed, list role removed); jest notes-panel.spec 'lists the marks with list roles'
   - test: assert the list has a list role and each row a listitem role with aria-current on the selected one and a swatch with role img named by the colour
@@ -515,13 +535,18 @@ Reader comments anchored to a block of text, stored in the Markdown file as HTML
   - test-tags: E2E
   - log: 2026-09-04T22:37:50Z @kj added
   - log: 2026-09-07T00:39:23Z @kj closed
-- [x] `ACC-NOTES-59` **Edge: anchor destroyed by an external rewrite** - MEDIUM; when an external rewrite removes one or both markers, the comment is listed as unanchored rather than dropped silently and the panel says so
-  - evidence: Galata 'ACC-NOTES-59 lists a mark whose markers a rewrite removed' in ui-tests/tests/notes.spec.ts, now the single-mark case the criterion describes; it fails when the panel-state fix is reverted in the installed bundle while both controls pass; green on build 0.6.21 with Galata 86 of 86
+- [x] `ACC-NOTES-59` **Superseded: a mark whose markers a rewrite removed** - MEDIUM; SUPERSEDED by ACC-NOTES-144. This criterion listed such a mark as unanchored and kept it in the panel for the rest of the session. From 1.0.6 the mark is removed instead and its leftover marker is deleted from the file, because the file is the whole store and a mark that is gone from it is gone. The unanchored label survives for the case this criterion did not cover: a mark whose markers are in the file but whose passage the current render does not hold.
+  - evidence: superseded by ACC-NOTES-144 on the 1.0.6 build; the unanchored listing it specified is gone from src/notes.ts and its Galata case was replaced by 'ACC-NOTES-144 keeps a mark whose passage a rewrite rewrote between its markers', which holds the part of the old rule that survives
   - blocked-by: DEF-NOTES-16
-  - test: add a comment, rewrite the file on disk without its markers, assert the comment is shown unanchored
+  - test: Superseded, no test of its own. The part of this rule that survives is tested by ACC-NOTES-144: rewrite the passage between two surviving markers and assert the mark stays listed with its new passage.
   - test-tags: E2E
   - log: 2026-09-04T22:37:50Z @kj added
   - log: 2026-09-07T01:31:53Z @kj closed
+  - log: 2026-09-08T20:39:10Z @kj ruling contested by DEF-NOTES-67: the Star Colonel reads a mark whose markers an agent removed as removed, not unanchored; the fix rewrites this criterion
+  - log: 2026-09-08T20:48:31Z @kj replaced by ACC-NOTES-144 when that is built: a broken mark is removed, not listed as unanchored
+  - log: 2026-09-08T21:45:44Z @kj edited title and text
+  - log: 2026-09-08T22:31:48Z @kj edited evidence (replaced)
+  - log: 2026-09-08T22:33:42Z @kj edited test (replaced)
 - [x] `ACC-NOTES-60` **Edge: selection spanning several blocks** - MEDIUM; a selection crossing block boundaries anchors the comment to the whole run of blocks it covers, with the markers placed outside them
   - evidence: Galata 'ACC-NOTES-60 marks a selection that crosses a block boundary' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
   - test: select from the middle of one paragraph to the middle of the next, add a comment, assert both paragraphs are marked
@@ -657,22 +682,30 @@ Reader comments anchored to a block of text, stored in the Markdown file as HTML
   - mechanism: 2026-09-06T15:44:03Z @kj attribute grammar: key is [a-z][a-z0-9-]*, value is a bare token without whitespace or a double-quoted string; parsing stops at the first newline, the rest of the marker is note lines
   - log: 2026-09-06T15:44:03Z @kj added
   - log: 2026-09-07T00:39:25Z @kj closed
-- [x] `ACC-NOTES-104` **Every note line names its author** - HIGH; the @ token that opens a note line is the handle of whoever wrote that line; the extension writes the JupyterLab user identity, the hub login name where there is one, and reader where there is none; an agent writes its own handle, claude or codex; a line inside the marker that does not start with @ continues the entry above it, so a note can span lines
-  - evidence: Galata 'ACC-NOTES-104 reads a two-line entry as one note under its author' and 'ACC-NOTES-104 signs a note line with the identity username' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
-  - test: add a note while logged in as kj, assert the line opens with @kj; hand-write a two-line entry from @claude and assert the panel shows one entry with both lines under that author
+- [x] `ACC-NOTES-104` **Every note line names its author** - HIGH; The @ token that opens a note line is the handle of whoever wrote that line. The extension writes the handle from the author setting, and @author where that setting is empty, as ACC-NOTES-142 rules. An agent writes its own handle, claude or codex. A line inside the marker that does not start with @ continues the entry above it, so a note can span lines.
+  - evidence: the jest 'author' describe in `src/__tests__/notes.spec.ts` and Galata 'ACC-NOTES-142 leaves a note line an agent wrote as it stands' in ui-tests/tests/notes.spec.ts, which reads a two-line entry from @claude back unchanged; green on the 1.0.6 build with jest 562 of 562, pytest 29 of 29, lint 0 errors, and Galata 147 of 147 in two runs, the last case passing on a re-run after the machine was busy
+  - test: Set author to kj, add a note, assert the line opens with @kj. Hand-write a two-line entry from @claude and assert the panel shows one entry with both lines under that author.
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-07T01:31:54Z @kj the author is the author setting when it is not empty; failing that the first of the identity username, its name and its display name that does not read as a generated identifier, meaning eight characters or more of hexadecimal digits and hyphens carrying at least one digit; failing all three, reader; whitespace and every other character a handle cannot carry becomes a hyphen, so a hub login name is written unchanged and a generated username falls through to the person's name
   - mechanism: 2026-09-06T15:47:05Z @kj author from app.serviceManager.user identity.username, fallback reader; stamp is UTC ISO 8601 to the second
   - log: 2026-09-06T15:47:05Z @kj added
   - log: 2026-09-07T00:39:25Z @kj closed
-- [x] `ACC-NOTES-106` **Author setting overrides the identity** - MEDIUM; the author setting names the handle a note line opens with; where it is empty the identity username is written if it reads as a login name, and the name the lab reports for the reader otherwise
-  - evidence: Galata 'ACC-NOTES-106 signs with the default handle when nothing names the reader' and 'ACC-NOTES-106 signs note lines with the handle the setting names' in ui-tests/tests/notes.spec.ts; green on build 0.6.20 with Galata 86 of 86, jest 399 of 399 and pytest 21 of 21
-  - test: set author to kj, add a note, assert the line opens with @kj; clear the setting on a lab without a hub, add a note, assert @reader
+  - log: 2026-09-08T20:36:49Z @kj the identity clause is superseded by ACC-NOTES-142 once that is built: an empty setting writes author
+  - log: 2026-09-08T21:45:53Z @kj edited text
+  - log: 2026-09-08T21:59:42Z @kj edited test (replaced)
+  - log: 2026-09-08T22:31:48Z @kj edited evidence (replaced)
+- [x] `ACC-NOTES-106` **The author setting names the handle** - MEDIUM; The author setting names the handle a note line opens with, written without the leading @. Where it is empty the handle is the word author, by ACC-NOTES-142. The JupyterLab identity is not consulted at all: the extension is no longer handed the lab's user manager.
+  - evidence: jest 'writes the author setting when it is set' and 'writes the default handle when the setting is empty' in `src/__tests__/notes.spec.ts`; Galata 'ACC-NOTES-142 signs a note line with the default handle while the setting is empty' in ui-tests/tests/notes.spec.ts, under a lab whose identity is kj; green on the 1.0.6 build with jest 562 of 562, pytest 29 of 29, lint 0 errors, and Galata 147 of 147 in two runs, the last case passing on a re-run after the machine was busy
+  - test: Set author to kj, add a note, assert the line opens with @kj. Clear the setting, add a note, assert @author whatever the lab calls the reader.
   - test-tags: UNIT, E2E
   - mechanism: 2026-09-06T15:55:35Z @kj readSettings reads author; the note writer takes author when non-empty, else identity.username unless identity.anonymous, else reader
   - log: 2026-09-06T15:55:35Z @kj added
   - log: 2026-09-07T00:39:25Z @kj closed
   - log: 2026-09-07T01:31:54Z @kj edited text
+  - log: 2026-09-08T20:36:49Z @kj the empty-setting clause is superseded by ACC-NOTES-142 once that is built: an empty setting writes author
+  - log: 2026-09-08T21:45:54Z @kj edited title and text
+  - log: 2026-09-08T21:59:42Z @kj edited test (replaced)
+  - log: 2026-09-08T22:31:48Z @kj edited evidence (replaced)
 - [x] `ACC-NOTES-111` **Markers survive Windows line endings** - MEDIUM; MEDIUM; a marker whose attributes or note lines run over more than one line parses the same in a file written with carriage-return line endings as in one written without, leaving no carriage return inside an attribute value or a note line
   - evidence: the CRLF round-trip test in `src/__tests__/marks.spec.ts`, written while building the grammar; it failed against the first implementation, which left a carriage return in the attribute value, and passes against the shipped parser
   - test: parse a mark with a two-line note from a source using CRLF endings, assert the attribute values and the note text carry no carriage return
@@ -907,6 +940,41 @@ Reader comments anchored to a block of text, stored in the Markdown file as HTML
   - log: 2026-09-08T19:40:25Z @kj round-10 ux finding: _openEntry read a whitespace-only field as a draft that blocks while Save reads it as nothing; the rule now reads this._entry?.text.trim() so both read a draft the same way; jest 'opens the asked row when the field elsewhere holds only whitespace', mutation whitespace-counted-as-a-draft (5 of 5 caught, logs/round11-chain.log); on the 1.0.4 build jest 519/519 (logs/jest-104.log), lint 0 errors and 8 warnings (logs/lint-104.log); Galata 95 passed and 3 failed in the notes suite (logs/galata-104-notes-siblings-settings.log: ACC-NOTES-138 focus under load and two alerts-sibling cases while that sibling was being rebuilt in its own tree) and 41 passed in the rest, the three to be rerun once the sibling builds settle
   - log: 2026-09-08T20:07:22Z @kj edited evidence (replaced)
   - log: 2026-09-08T20:07:22Z @kj the three Galata cases that failed under the concurrent sibling builds rerun green on the settled lab (logs/galata-104-rerun-3.log: 3 passed), so the 1.0.4 build is fully green; round-11 bug-hunter MINOR deferred by its own remedy: a press on Add note elsewhere while a Save's round trip is in flight shows the saving draft's field, and the landing save removes it, so the press is lost without a signal and a second press opens the asked row; the fix is a pending id opened from Save's callback, a new mechanism, and the input needs a round trip longer than the travel between two buttons
+- [x] `ACC-NOTES-142` **Empty author setting signs notes as @author** - MEDIUM; When the Note author setting is empty, every note line the reader writes starts with @author. The JupyterLab login name and the word reader are no longer used. When the setting holds a handle such as kj, the line starts with @kj, as today. Lines written by an agent, such as @claude, are never changed.
+  - evidence: the jest 'author' describe in `src/__tests__/notes.spec.ts` and the three ACC-NOTES-142 cases in ui-tests/tests/notes.spec.ts read the handle back from the file; the identity lookup, the User import and the plugin option are gone; green on the 1.0.6 build with jest 562 of 562, pytest 29 of 29, lint 0 errors, and Galata 147 of 147 in two runs, the last case passing on a re-run after the machine was busy
+  - related: ACC-NOTES-104
+  - related: ACC-NOTES-106
+  - test: With the setting empty and a lab identity present, add a note and assert the line in the file starts with @author. Set the setting to kj, add a note, assert @kj. Assert an existing @claude line is unchanged.
+  - test-tags: UNIT, E2E
+  - mechanism: 2026-09-08T22:31:15Z @kj DEFAULT_AUTHOR in src/notes.ts is author and the handle is the trimmed setting alone; the identity lookup, the User import and the user option the plugin passed are all removed, so there is no identity to fall back to
+  - log: 2026-09-08T20:36:41Z @kj added
+  - log: 2026-09-08T20:48:30Z @kj edited title and text and test (replaced)
+  - log: 2026-09-08T22:31:15Z @kj closed
+- [x] `ACC-NOTES-144` **Broken marks are removed** - HIGH; A mark is broken when an external rewrite removed its opening marker, its closing marker, or both, or removed the whole passage so that nothing but whitespace is left between the markers. A broken mark is removed: any marker of it still in the file is deleted from the file, and once the markers are gone the mark is not listed in the panel, has no tick on the minimap and is not painted in the view. The reader is not asked. Until then the panel shows what the file holds, so a mark whose markers are still there stays listed even while it is broken, and a note being written into its row is not taken away. A mark left with only a closing marker is never listed at all, having no type, no position and no passage to draw a row from. The deletion waits for the file to stop changing and for the document to hold no unsaved edits, so a file an agent is still writing in pieces is never judged mid-write and the reader's own editing of a marked passage never triggers it. It also gives up rather than retrying where it cannot write at all: with live updates off, or where the server refuses the write, the leftover markers wait for the next change to the document or for the setting to come back on, because an unprompted write must not ask a server that cannot answer once every settling window. A closing marker with no opening marker is deleted whatever type the mark once had, because the type is written in the opening marker and what is left is a mark of no type. The other two shapes are read from the opening marker that survives, so a mark of a type this version does not write is left exactly as it is. A mark whose passage text changed but still exists between its two markers is not broken and stays listed. This replaces the unanchored rule of ACC-NOTES-59.
+  - evidence: the jest 'broken marks' describe in `src/__tests__/notes.spec.ts`, 37 cases covering the three broken shapes, the settling step and its re-arming, the unsaved-edits guard at entry and again inside the write, the settled identifiers, the notes-off guard, the refused write, the gone file and the closed tab; six ACC-NOTES-144 cases in `ui-tests/tests/notes.spec.ts` including the reader emptying a passage while the document is unsaved; the draft and focus cases in `src/__tests__/notes-panel.spec.ts`; every guard proved by a mutation in tmp/campaign/siblings/round17/mutations.md; green on the 1.0.6 build with jest 562 of 562, pytest 29 of 29, lint 0 errors, and Galata 147 of 147 in two runs, the last case passing on a re-run after the machine was busy
+  - related: ACC-NOTES-59
+  - test: Rewrite the file from outside without one marker, without the other, without both, and with the passage emptied; assert the file holds no marker of the mark once the writing has stopped, and that the panel loses the row at that moment rather than at the break. Rewrite in two pieces with the closing marker in the second and assert nothing is deleted in between and the row is not taken away. Delete a marked passage by typing in the editor and assert nothing is deleted, and the row stays, while the document is unsaved.
+  - test-tags: UNIT, E2E
+  - log: 2026-09-08T20:48:30Z @kj added
+  - log: 2026-09-08T21:45:44Z @kj edited text
+  - log: 2026-09-08T22:05:36Z @kj edited text and test (replaced)
+  - log: 2026-09-08T22:31:15Z @kj closed
+  - log: 2026-09-08T23:08:55Z @kj edited text and test (replaced)
+  - log: 2026-09-09T00:57:19Z @kj edited evidence (replaced)
+  - log: 2026-09-09T01:12:36Z @kj both the architect and the ux lens of round 18 noted the residue this criterion does not state: with the live-updates setting off the deletion gives up rather than retrying, so the leftover markers wait for the next change to the document; the criterion is extended to say so once the round-18 fixes land
+  - log: 2026-09-09T01:54:23Z @kj edited text
+- [x] `ACC-NOTES-145` **An identifier names one mark** - HIGH; A mark identifier names exactly one mark. Where the document holds an opening marker for an identifier, that marker is the mark, and the first such opening marker in document order wins over later ones; its closing marker is the first one carrying that identifier after it, and where there is none the mark is read as broken and swept. Where an identifier has no opening marker anywhere, a lone closing marker carrying it is the mark, which is how a rewrite that removed the opening marker is seen and cleaned. Every other marker carrying that identifier is left in the file exactly as it is: it is not listed, not painted, not written to and not deleted, because a reader who copied a marked passage made it deliberately and it is not broken. This is what makes the panel's rows, its open note entry and its selection safe to key by identifier.
+  - evidence: the seven parser cases in `src/__tests__/marks.spec.ts` named on DEF-NOTES-70 and the four in `src/__tests__/notes.spec.ts`, covering a duplicated pair, a stray closing marker above a pair, a stray above an opening marker with no closer of its own, a document marker with a stray above it, a lone closing marker nothing opens, and two pairs with different identifiers; each proved by a mutation in tmp/campaign/siblings/round19/mutations.md; green on the 1.0.6 build with jest 582 of 582, pytest 29 of 29, lint 0 errors, and Galata 147 of 147 with 1 skipped
+  - related: ACC-NOTES-48
+  - related: ACC-NOTES-144
+  - test: Parse a document holding two complete pairs with one identifier and assert one mark, the first in document order, with the second pair's markers still in the source. Put a lone closing marker above a whole pair of the same identifier and assert the pair is the mark, listed and painted, with the stray still in the source. Put a lone closing marker above an opening marker that has no closing marker of its own and assert the opening marker is the mark, with its notes, and that the sweep answers it. Give an identifier a lone closing marker and no opening marker anywhere and assert it is the mark and the sweep deletes it. Parse two pairs with different identifiers and assert two marks.
+  - test-tags: UNIT
+  - log: 2026-09-09T01:39:35Z @kj added
+  - log: 2026-09-09T01:52:03Z @kj residue the round-19 ux lens named, recorded rather than coded around: removing a mark whose identifier a copy repeats removes the pair that identifier names, and the copy's pair then becomes that mark, so the row returns showing the notes the copy carried and the header count does not change until a second press. Sweeping every marker of the identifier would need marker-level access the parser no longer exposes and would edit text the reader cannot see.
+  - log: 2026-09-09T01:54:23Z @kj edited text
+  - log: 2026-09-09T02:05:45Z @kj edited test (replaced)
+  - log: 2026-09-09T02:05:45Z @kj second residue the round-19 bug-hunter named, recorded rather than coded around: where a reader copied a marked passage and the first pair then loses its closing marker to a rewrite, the mark reads as whole and its passage runs to the copy's closing marker, so the passage text contains the copy's opening marker and the row draws unanchored. Ending a passage at a repeated opening marker would contradict this criterion's own rule that the closing marker is the first one carrying the identifier after the opening one.
+  - log: 2026-09-09T02:05:54Z @kj closed
 
 ## Change animation `ANIM`
 
@@ -936,7 +1004,7 @@ How an applied change is played out in the rendered view over time, so the reade
   - mechanism: 2026-09-05T08:59:25Z @kj one timer per document advances every animating span by the same character budget per tick; spans are independent, each stops when complete
   - log: 2026-09-05T08:59:25Z @kj added
   - log: 2026-09-05T15:00:12Z @kj closed
-- [x] `ACC-ANIM-76` **Animation speed is a setting** - HIGH; the setting animationSpeed sets how many characters per second the typing and the deletion play at; 0 turns the animation off and text appears and leaves at once as before; intent: the speed is tuned by the user, very fast by default
+- [x] `ACC-ANIM-76` **Animation speed is a setting** - HIGH; The setting animationSpeed sets how many characters per second the typing and the deletion play at. 0 turns the animation off and text appears and leaves at once. The default is 25 characters per second, which ACC-ANIM-143 fixes as the speed a fresh install types at.
   - evidence: unit tests 'a speed of 0 mid-typing completes every run on the next frame' and the speed-0 branch test in controller.spec; Galata 'animation turned off > shows the whole change at once'; 132/132 unit tests via make test, Galata 18/18 on the installed build v0.6.8 (logs/galata.log 2026-09-05), adversarial review (architect, ux-designer, bug-hunter) rounds 4 and 5 clean, SHIP
   - test: set animationSpeed to a low value and observe slow typing; set 0 and observe the whole span present on the first frame
   - test-tags: UNIT, E2E
@@ -944,9 +1012,10 @@ How an applied change is played out in the rendered view over time, so the reade
   - mechanism: 2026-09-05T08:59:25Z @kj schema/plugin.json key animationSpeed (integer, characters per second, minimum 0), read by readSettings and passed to the controller through ILiveViewSettings alongside fadeDuration
   - log: 2026-09-05T08:59:25Z @kj added
   - log: 2026-09-05T15:00:12Z @kj closed
-- [x] `ACC-ANIM-77` **Reduced motion disables the typing animation** - MEDIUM; when the operating system asks for reduced motion the typing and deletion animation is off and the change lands at once, as the fades already do
-  - evidence: unit tests in the 'under reduced motion' describe of controller.spec (speed 0 under a matching media query) and 'ends the animation when the operating system turns reduced motion on'; 132/132 unit tests via make test, Galata 18/18 on the installed build v0.6.8 (logs/galata.log 2026-09-05), adversarial review (architect, ux-designer, bug-hunter) rounds 4 and 5 clean, SHIP
-  - test: emulate prefers-reduced-motion: reduce, rewrite the file: the added span is complete on the first frame
+  - log: 2026-09-08T21:45:44Z @kj edited text
+- [x] `ACC-ANIM-77` **The typing animation is stopped by this extension's own settings, not by the operating system** - MEDIUM; The typing and deletion animation runs whatever the operating system prefers. The same reasoning as ACC-CUE-72: the preference is reported by a Windows host whenever its show-animations switch is off, and a reader who turned that off has not asked this extension to stop showing them what changed. The switches that stop the animation are the extension's own: animation off, or animationSpeed 0, either of which lands a change at once. This replaces the earlier rule that the operating system preference turned the animation off.
+  - evidence: jest 'types the change in all the same', 'keeps typing when the operating system turns reduced motion on' and 'never asks the browser what the operating system prefers' in `src/__tests__/controller.spec.ts`; Galata 'DEF-CUE-68 types the added text in rather than landing it at once' in ui-tests/tests/live-view.spec.ts samples the typing under emulated reduced motion; green on the 1.0.6 build with jest 562 of 562, pytest 29 of 29, lint 0 errors, and Galata 147 of 147 in two runs, the last case passing on a re-run after the machine was busy
+  - test: Emulate prefers-reduced-motion reduce, rewrite the file, and assert the added text is still incomplete on an early sample and complete later, rather than whole on the first frame. Flip the preference on mid-run and assert the run continues. Set animation off and assert the change lands at once.
   - test-tags: UNIT
   - mechanism: 2026-09-05T15:00:13Z @kj the controller reads matchMedia('(prefers-reduced-motion: reduce)') (guarded for jsdom) and treats a match as speed 0, also on a change event of the media query while an animation runs
   - mechanism: 2026-09-05T08:59:25Z @kj the controller reads matchMedia('(prefers-reduced-motion: reduce)') and treats a match as animationSpeed 0
@@ -954,6 +1023,8 @@ How an applied change is played out in the rendered view over time, so the reade
   - log: 2026-09-05T15:00:13Z @kj closed
   - log: 2026-09-05T15:01:12Z @kj reopened: reopened to name the tests exactly in the evidence line; evidence retired: unit tests for reduced motion in controller.spec (speed 0 under a matching media query, and the change listener); 132/132 unit tests via make test, Galata 18/18 on the installed build v0.6.8 (logs/galata.log 2026-09-05), adversarial review (architect, ux-designer, bug-hunter) rounds 4 and 5 clean, SHIP
   - log: 2026-09-05T15:01:12Z @kj closed
+  - log: 2026-09-08T21:45:44Z @kj edited title and text and test (replaced)
+  - log: 2026-09-08T22:31:48Z @kj edited evidence (replaced)
 - [x] `ACC-ANIM-78` **A write during an animation continues it** - HIGH; when the next write arrives while text is still being typed, the text already typed stays on screen and only the fresh part is typed; nothing is retyped and no ghost warns twice
   - evidence: unit tests 'does not retype a run the next render continues' (animate.spec), 'never brings back a ghost already deleted when the next write inserts where it stood', 'keeps the rest of the warning pause when the next write inserts where a ghost stands', 'forgets a ghost when a write puts the removed text back exactly' (controller.spec); 132/132 unit tests via make test, Galata 18/18 on the installed build v0.6.8 (logs/galata.log 2026-09-05), adversarial review (architect, ux-designer, bug-hunter) rounds 4 and 5 clean, SHIP
   - test: rewrite twice within the animation window: the second render's added span starts at the length already shown, not at 0
@@ -979,6 +1050,15 @@ How an applied change is played out in the rendered view over time, so the reade
   - mechanism: 2026-09-05T16:01:49Z @kj schema/plugin.json key animation (boolean, default true) read by readSettings; LiveViewController._speed returns 0 when it is false, the same path as reduced motion and animationSpeed 0, and a settings change re-applies the speed to the running animator
   - log: 2026-09-05T16:01:49Z @kj added
   - log: 2026-09-05T16:10:28Z @kj closed
+- [x] `ACC-ANIM-143` **Typing animation on by default at 25 characters per second** - HIGH; A fresh install animates external changes without any setting touched. The animation setting defaults to on and the speed to 25 characters per second, raised from 10. A user who saved 10 keeps 10. The schema, the code default and the text of ACC-ANIM-76 carry the same number.
+  - evidence: jest 'animates a change out of the box, at 25 characters per second' in `src/__tests__/schema.spec.ts` asserts the schema default and the code default on both sides; Galata 'ACC-ANIM-143 types a change in at 25 characters per second' in ui-tests/tests/live-view.spec.ts reads a fresh settings store; green on the 1.0.6 build with jest 562 of 562, pytest 29 of 29, lint 0 errors, and Galata 147 of 147 in two runs, the last case passing on a re-run after the machine was busy
+  - related: ACC-ANIM-76
+  - related: ACC-ANIM-80
+  - test: Unit: assert the schema default and the code default for animationSpeed are both 25 and animation defaults to true. Browser: on a fresh settings store rewrite the file with a 40-character sentence, assert it is still being typed at 500 ms and finished by 2 s.
+  - test-tags: UNIT, E2E
+  - log: 2026-09-08T20:41:08Z @kj added
+  - log: 2026-09-08T20:48:30Z @kj edited title and text and test (replaced)
+  - log: 2026-09-08T22:31:15Z @kj closed
 
 ## Change detection by file events `EVENT`
 

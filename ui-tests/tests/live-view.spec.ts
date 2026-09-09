@@ -4,9 +4,11 @@ import {
   FILE,
   INITIAL,
   REWRITTEN,
+  highlightAlphas,
   labFixtures,
   openPreview,
   settings,
+  shippedSettings,
   typeInEditor
 } from './helpers';
 
@@ -980,5 +982,160 @@ test.describe('a change inside a fenced code block', () => {
     });
     expect(colours.background).not.toBe('rgba(0, 0, 0, 0)');
     expect(colours.color).toBe(colours.around);
+  });
+});
+
+/**
+ * A sentence of exactly forty characters, so how long it takes to type says
+ * what the speed is.
+ */
+const FORTY = 'The fox jumped over the lazy brown dogs.';
+
+/**
+ * Sample the total length of the added highlights at a fixed interval,
+ * timestamped from the frame the first one appeared on, so a sample is placed
+ * against the moment the typing started rather than against the write.
+ */
+const sampleTyping = (
+  page: any,
+  everyMs: number,
+  count: number,
+  waitMs: number
+): Promise<Array<{ at: number; length: number }>> =>
+  page.evaluate(
+    ([every, wanted, wait]: [number, number, number]) =>
+      new Promise<Array<{ at: number; length: number }>>((resolve, reject) => {
+        const samples: Array<{ at: number; length: number }> = [];
+        const deadline = performance.now() + wait;
+        let started: number | null = null;
+        const timer = setInterval(() => {
+          const spans = Array.from(
+            document.querySelectorAll('.jp-AdvancedMd-added')
+          );
+          const now = performance.now();
+          if (started === null) {
+            if (!spans.length) {
+              if (now > deadline) {
+                clearInterval(timer);
+                reject(new Error('no added highlight appeared'));
+              }
+              return;
+            }
+            started = now;
+          }
+          samples.push({
+            at: Math.round(now - (started as number)),
+            length: spans.reduce(
+              (total, span) => total + (span.textContent ?? '').length,
+              0
+            )
+          });
+          if (samples.length >= wanted) {
+            clearInterval(timer);
+            resolve(samples);
+          }
+        }, every);
+      }),
+    [everyMs, count, waitMs]
+  );
+
+test.describe('a fresh install with no setting touched', () => {
+  // Nothing of this extension is written to the settings store, so the speed
+  // in force is the one the schema declares.
+  test.use({ mockSettings: shippedSettings() });
+
+  test('ACC-ANIM-143 types a change in at 25 characters per second', async ({
+    page,
+    tmpPath
+  }) => {
+    expect(FORTY.length).toBe(40);
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await openPreview(page, path);
+
+    // Sampling is started before the write, so the first sample is taken
+    // within 50 ms of the highlight appearing.
+    const sampling = sampleTyping(page, 50, 50, 30000);
+    await page.contents.uploadContent(`${INITIAL}\n${FORTY}\n`, 'text', path);
+    const samples = await sampling;
+
+    const whole = Math.max(...samples.map(sample => sample.length));
+    expect(whole).toBeGreaterThanOrEqual(FORTY.length);
+
+    // Half a second in, a forty character sentence at 25 characters a second
+    // is a fraction of the way through.
+    const early = samples.filter(sample => sample.at <= 500);
+    expect(early.length).toBeGreaterThan(5);
+    expect(early[early.length - 1].length).toBeLessThan(whole);
+
+    // And it is complete inside two seconds. At the 10 characters a second of
+    // 1.0.5 the same sentence would still be typing at four.
+    const done = samples.find(sample => sample.length === whole);
+    expect((done as { at: number }).at).toBeLessThanOrEqual(2000);
+  });
+});
+
+test.describe('the strength of the change highlights', () => {
+  test.use({ mockSettings: settings() });
+
+  test('ACC-HILITE-141 is the shipped pair of each theme', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await openPreview(page, path);
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await expect(page.locator('.jp-AdvancedMd-removed').first()).toBeVisible({
+      timeout: 20000
+    });
+    // Past the 500 ms rise, so the colour read is the settled one.
+    await page.waitForTimeout(800);
+
+    const light = await highlightAlphas(page);
+    expect(light.added).toBeCloseTo(0.35, 2);
+    expect(light.removed).toBeCloseTo(0.31, 2);
+
+    await page.theme.setDarkTheme();
+    await expect
+      .poll(async () => (await highlightAlphas(page)).added)
+      .not.toBe(light.added);
+    const dark = await highlightAlphas(page);
+    expect(dark.added).toBeCloseTo(0.31, 2);
+    expect(dark.removed).toBeCloseTo(0.29, 2);
+  });
+});
+
+test.describe('the change animation under reduced motion', () => {
+  test.use({ mockSettings: settings({ animationSpeed: 25 }) });
+
+  test('DEF-CUE-68 types the added text in rather than landing it at once', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    expect(
+      await page.evaluate(
+        () => matchMedia('(prefers-reduced-motion: reduce)').matches
+      )
+    ).toBe(true);
+
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await openPreview(page, path);
+
+    const sampling = sampleTyping(page, 50, 40, 30000);
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    const samples = await sampling;
+
+    // The reader on a machine reporting the preference sees the change typed
+    // in, because the browser preference is not this extension's switch: the
+    // animation setting and a speed of 0 are.
+    const whole = Math.max(...samples.map(sample => sample.length));
+    expect(whole).toBeGreaterThan(10);
+    expect(samples[0].length).toBeLessThan(whole);
+    expect(new Set(samples.map(sample => sample.length)).size).toBeGreaterThan(
+      3
+    );
   });
 });

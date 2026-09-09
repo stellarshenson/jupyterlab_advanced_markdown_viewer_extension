@@ -67,8 +67,9 @@ const stylesheet = readFileSync(`${__dirname}/../../style/base.css`, 'utf8');
 /**
  * The declarations of the stylesheet rule written for one selector.
  *
- * The selector is matched whole, so a selector list, such as the one in the
- * reduced motion block, is never taken for the rule of one marker.
+ * The selector is matched whole, so a rule written for a list of selectors,
+ * such as the panel's icon controls, is never taken for the rule of one
+ * marker.
  */
 function ruleFor(selector: string): string {
   const block = stylesheet.split('}').find((part: string) => {
@@ -277,6 +278,16 @@ describe('tab cue', () => {
       expect(markerRule(TAB_UPDATED_CLASS)).toContain('animation');
       expect(markerRule(TAB_BLOCKED_CLASS)).toContain('animation');
       expect(missing).not.toContain('animation');
+    });
+
+    it('silences no marker for the operating system reduced-motion preference', () => {
+      // DEF-CUE-68. A Windows host reports that preference to every page
+      // whenever its own animation switch is off, which readers turn off for
+      // performance, and a marker held still says nothing about what happened
+      // to the file. The switch that stops this motion is the extension's own
+      // tabCue setting, which takes the marker away altogether - the Hide
+      // WCAG 2.2.2 asks for.
+      expect(stylesheet).not.toContain('prefers-reduced-motion');
     });
   });
 });

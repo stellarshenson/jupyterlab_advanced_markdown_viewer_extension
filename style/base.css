@@ -10,8 +10,8 @@
  */
 
 :root {
-  --jp-AdvancedMd-added-bg: rgb(46 160 67 / 30%);
-  --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 26%);
+  --jp-AdvancedMd-added-bg: rgb(46 160 67 / 35%);
+  --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 31%);
   --jp-AdvancedMd-cue-blocked: rgb(218 54 51);
   --jp-AdvancedMd-mark-flash-bg: rgb(128 128 128 / 55%);
   --jp-AdvancedMd-fade-duration: 3000ms;
@@ -20,10 +20,40 @@
 }
 
 body[data-jp-theme-light='false'] {
-  --jp-AdvancedMd-added-bg: rgb(63 185 80 / 26%);
-  --jp-AdvancedMd-removed-bg: rgb(248 81 73 / 24%);
+  --jp-AdvancedMd-added-bg: rgb(63 185 80 / 31%);
+  --jp-AdvancedMd-removed-bg: rgb(248 81 73 / 29%);
   --jp-AdvancedMd-cue-blocked: rgb(248 81 73);
   --jp-AdvancedMd-mark-flash-bg: rgb(220 220 220 / 45%);
+}
+
+/*
+ | Highlight visibility. Medium is the pair above, so a preview whose widget
+ | carries no attribute, or carries medium, is the shipped strength; Low and
+ | High move both colours ten percentage points down and up. The attribute
+ | sits on the document widget, which every decoration is inside, so a change
+ | of the setting recolours the highlights already on screen on the next style
+ | pass. Only these two variables are named here: mark colours, the flash on a
+ | selected mark and the tab marker are the same at every choice.
+ */
+
+[data-jp-advancedmd-visibility='low'] {
+  --jp-AdvancedMd-added-bg: rgb(46 160 67 / 25%);
+  --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 21%);
+}
+
+[data-jp-advancedmd-visibility='high'] {
+  --jp-AdvancedMd-added-bg: rgb(46 160 67 / 45%);
+  --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 41%);
+}
+
+body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='low'] {
+  --jp-AdvancedMd-added-bg: rgb(63 185 80 / 21%);
+  --jp-AdvancedMd-removed-bg: rgb(248 81 73 / 19%);
+}
+
+body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
+  --jp-AdvancedMd-added-bg: rgb(63 185 80 / 41%);
+  --jp-AdvancedMd-removed-bg: rgb(248 81 73 / 39%);
 }
 
 /*
@@ -207,16 +237,13 @@ body[data-jp-theme-light='false'] {
 }
 
 /*
- | Every marker is named here, the still one included, so the rule covers the
- | whole set whatever motion any of them is given later.
+ | No marker is stopped for the operating system's reduced-motion preference
+ | (DEF-CUE-68). A Windows host reports that preference to every page whenever
+ | its own animation switch is off, which readers turn off for performance,
+ | and a marker held still says nothing about what happened to the file. The
+ | switch that stops this motion is the extension's own tabCue setting, which
+ | takes the marker away altogether - the Hide that WCAG 2.2.2 asks for.
  */
-@media (prefers-reduced-motion: reduce) {
-  .lm-TabBar-tab.jp-AdvancedMd-tabUpdated .lm-TabBar-tabLabel::before,
-  .lm-TabBar-tab.jp-AdvancedMd-tabBlocked .lm-TabBar-tabLabel::before,
-  .lm-TabBar-tab.jp-AdvancedMd-tabMissing .lm-TabBar-tabLabel::before {
-    animation: none;
-  }
-}
 
 /*
  | Marks, and the notes panel beside the preview.

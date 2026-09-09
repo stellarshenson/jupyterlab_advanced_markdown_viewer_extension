@@ -5,6 +5,7 @@ import {
   INITIAL,
   PLUGIN_ID,
   REWRITTEN,
+  highlightAlphas,
   labFixtures,
   openPreview,
   settings,
@@ -146,5 +147,84 @@ test.describe('the live-updates switch while a change is held back', () => {
     // which is what this half of the marker proves.
     await setLiveUpdates(page, true);
     await expect(blocked).toHaveCount(1, { timeout: 20000 });
+  });
+});
+
+/** The dropdown the settings editor draws for the highlight strength. */
+const VISIBILITY_FIELD = `#jp-SettingsEditor-${PLUGIN_ID.replace(
+  ':',
+  '\\:'
+)}_highlightVisibility`;
+
+/**
+ * How opaque the added and the removed highlight are at each strength, in each
+ * theme. Medium is the pair the extension ships with, Low ten percentage
+ * points under it and High ten over.
+ */
+const STRENGTHS = [
+  { label: 'Low', light: [0.25, 0.21], dark: [0.21, 0.19] },
+  { label: 'Medium', light: [0.35, 0.31], dark: [0.31, 0.29] },
+  { label: 'High', light: [0.45, 0.41], dark: [0.41, 0.39] }
+];
+
+test.describe('the highlight visibility setting', () => {
+  // A fade of five minutes, so one pair of highlights stands on screen for the
+  // whole test and every strength is read off those same elements.
+  test.use({ mockSettings: settings({ fadeDuration: 300000 }) });
+
+  test('ACC-HILITE-140 offers three strengths and recolours what is on screen', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await openPreview(page, path);
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await expect(page.locator('.jp-AdvancedMd-removed').first()).toBeVisible({
+      timeout: 20000
+    });
+
+    await openSettingsEditor(page);
+    const field = page.locator(VISIBILITY_FIELD);
+    await expect(field).toBeVisible();
+
+    // A closed list is how the editor refuses a strength the declaration does
+    // not name: there is no way to enter a fourth value through the field.
+    expect(
+      (await field.locator('option').allTextContents()).map(text => text.trim())
+    ).toEqual(['Low', 'Medium', 'High']);
+
+    // The strength is chosen by the word the reader sees. The editor draws a
+    // declaration written as oneOf with a title per entry as a list whose
+    // option values are its own, so the label is what names a choice here,
+    // and the colours asserted below are what prove the right one was stored.
+    for (const strength of STRENGTHS) {
+      await field.selectOption({ label: strength.label });
+      // The highlights that were already on screen take the new strength:
+      // nothing is rewritten and nothing is reopened.
+      await expect
+        .poll(async () => (await highlightAlphas(page)).added, {
+          timeout: SAVE_WINDOW * 5
+        })
+        .toBeCloseTo(strength.light[0], 2);
+      expect((await highlightAlphas(page)).removed).toBeCloseTo(
+        strength.light[1],
+        2
+      );
+    }
+
+    await page.theme.setDarkTheme();
+    for (const strength of STRENGTHS) {
+      await field.selectOption({ label: strength.label });
+      await expect
+        .poll(async () => (await highlightAlphas(page)).added, {
+          timeout: SAVE_WINDOW * 5
+        })
+        .toBeCloseTo(strength.dark[0], 2);
+      expect((await highlightAlphas(page)).removed).toBeCloseTo(
+        strength.dark[1],
+        2
+      );
+    }
   });
 });

@@ -210,10 +210,24 @@ test.describe('the marker of a change held back', () => {
   });
 });
 
+/**
+ * The text of every rendered preview on the page, whether its tab is in front
+ * or behind, so a write to a document that is not in front can be waited for.
+ */
+const renderedText = (page: any): Promise<string> =>
+  page.evaluate(() =>
+    Array.from(document.querySelectorAll('.jp-RenderedMarkdown'))
+      .map(node => node.textContent ?? '')
+      .join(' ')
+  );
+
 test.describe('the markers under reduced motion', () => {
   test.use({ mockSettings: settings() });
 
-  test('stand still and keep their shapes', async ({ page, tmpPath }) => {
+  test('DEF-CUE-68 keep turning and keep their shapes', async ({
+    page,
+    tmpPath
+  }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     expect(
       await page.evaluate(
@@ -222,21 +236,43 @@ test.describe('the markers under reduced motion', () => {
     ).toBe(true);
 
     await twoStates(page, tmpPath);
+
+    // A writer at work on a machine reporting the preference: the marker of
+    // the arriving change turns at the fast speed on every write. The browser
+    // preference is not this extension's switch, because a Windows host
+    // reports it to every page whenever its own animation switch is off.
+    const arrivingPath = `${tmpPath}/arriving.md`;
+    for (let i = 1; i <= 3; i++) {
+      await page.contents.uploadContent(
+        `${REWRITTEN}\nWrite ${i}.\n`,
+        'text',
+        arrivingPath
+      );
+      await expect
+        .poll(() => renderedText(page), { timeout: 20000 })
+        .toContain(`Write ${i}.`);
+      const turning = await markerStyle(page, UPDATED);
+      expect(turning.content).toBe(CIRCLE);
+      expect(turning.animationName).toBe('jp-AdvancedMd-tab-turn');
+      expect(turning.timingFunction).toMatch(/steps\(4/);
+      expect(turning.animationDuration).toBe('0.8s');
+    }
+
     await alsoGone(page, tmpPath);
 
-    const blocked = await markerStyle(page, BLOCKED);
     const arriving = await markerStyle(page, UPDATED);
+    const blocked = await markerStyle(page, BLOCKED);
     const gone = await markerStyle(page, MISSING);
 
-    // No marker moves. The still one is read here too, so an animation given
-    // to it later without a line in the reduced motion block is reported.
-    expect(arriving.animationName).toBe('none');
-    expect(blocked.animationName).toBe('none');
-    expect(gone.animationName).toBe('none');
-    // The state is still there to read: the shapes alone carry it.
+    // Each marker keeps its own shape, and its own amount of movement: the
+    // arriving circle turns, the held square nudges, the cross of a file gone
+    // from disk stands still because nothing is waiting behind it.
     expect(arriving.content).toBe(CIRCLE);
     expect(blocked.content).toBe(SQUARE);
     expect(gone.content).toBe(CROSS);
+    expect(arriving.animationName).toBe('jp-AdvancedMd-tab-turn');
+    expect(blocked.animationName).toBe('jp-AdvancedMd-tab-nudge');
+    expect(gone.animationName).toBe('none');
     expect(blocked.color).toBe(BLOCKED_COLOUR);
     expect(gone.color).toBe(BLOCKED_COLOUR);
   });

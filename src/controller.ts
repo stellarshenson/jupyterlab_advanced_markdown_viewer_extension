@@ -14,7 +14,7 @@ import { IDisposable } from '@lumino/disposable';
 import { ISignal, Signal } from '@lumino/signaling';
 import { Title, Widget } from '@lumino/widgets';
 
-import { ChangeAnimator, prefersReducedMotion } from './animate';
+import { ChangeAnimator } from './animate';
 import { ChangeChannel } from './channel';
 import {
   changeRanges,
@@ -110,9 +110,37 @@ const LATE_SCROLL_RESTORE_MS = 150;
 const INPUT_SCROLL_WINDOW_MS = 500;
 
 /**
+ * How opaque the two change highlights are, low being the faintest.
+ */
+export type HighlightVisibility = 'low' | 'medium' | 'high';
+
+/**
+ * The choices the highlight visibility setting offers, in the order the
+ * schema declares them. Named here rather than in the schema alone so the
+ * plugin refuses a value the editor never saw and the schema test compares
+ * the two lists.
+ */
+export const HIGHLIGHT_VISIBILITIES: HighlightVisibility[] = [
+  'low',
+  'medium',
+  'high'
+];
+
+/**
+ * Attribute the visibility choice is written on, on the document widget node.
+ *
+ * The stylesheet keys the two highlight colour variables off it, so a change
+ * of the setting recolours what is already on screen: the decorations are
+ * inside the node and take the new value on the next style pass, with nothing
+ * rebuilt and no render. It is never written on the render root, whose
+ * attributes and direct children sibling extensions read.
+ */
+export const VISIBILITY_ATTRIBUTE = 'data-jp-advancedmd-visibility';
+
+/**
  * Settings the extension reads.
  *
- * The first seven are this controller's own. The last two belong to the notes
+ * The first eight are this controller's own. The last two belong to the notes
  * controller, which is created beside this one and handed the same object, so
  * the extension has one settings shape and the schema test one list to check
  * the declaration against.
@@ -124,6 +152,7 @@ export interface ILiveViewSettings {
   animation: boolean;
   animationSpeed: number;
   highlight: boolean;
+  highlightVisibility: HighlightVisibility;
   tabCue: boolean;
   notes: boolean;
   author: string;
@@ -137,8 +166,9 @@ export const DEFAULT_SETTINGS: ILiveViewSettings = {
   pollInterval: 10,
   fadeDuration: 3000,
   animation: true,
-  animationSpeed: 10,
+  animationSpeed: 25,
   highlight: true,
+  highlightVisibility: 'medium',
   tabCue: true,
   notes: true,
   author: ''
@@ -179,12 +209,7 @@ export class LiveViewController implements IDisposable {
     this._widget.disposed.connect(this._onWidgetDisposed, this);
     this._widget.title.changed.connect(this._onTitleChanged, this);
 
-    // The stylesheet's fades follow the reduced motion preference as it
-    // changes; so does the change animation.
-    if (typeof window.matchMedia === 'function') {
-      this._motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-      this._motionQuery.addEventListener('change', this._applySpeed);
-    }
+    this._applyVisibility();
 
     const node = this._widget.node;
     node.addEventListener('pointerdown', this._onAttention, true);
@@ -246,6 +271,10 @@ export class LiveViewController implements IDisposable {
     if (speedChanged) {
       this._applySpeed();
     }
+    // Written on every settings change: the attribute is what the stylesheet
+    // reads, so the highlights already on screen take the new strength on the
+    // next style pass without being rebuilt.
+    this._applyVisibility();
     if (!settings.enabled || !settings.tabCue) {
       this._setTabState(null);
     }
@@ -273,7 +302,6 @@ export class LiveViewController implements IDisposable {
     node.removeEventListener('keydown', this._onAttention, true);
     node.removeEventListener('wheel', this._onAttention, true);
     node.removeEventListener('scroll', this._onScroll, true);
-    this._motionQuery?.removeEventListener('change', this._applySpeed);
     this._clearDecorations();
     this._setTabState(null);
     this._watcher.dispose();
@@ -596,19 +624,33 @@ export class LiveViewController implements IDisposable {
   }
 
   /**
-   * The animation speed in force: the setting, or 0 when the operating system
-   * asks for reduced motion.
+   * Put the visibility choice on the document widget node, where the
+   * stylesheet reads it.
    */
-  private _speed(): number {
-    return this._settings.animation && !prefersReducedMotion()
-      ? this._settings.animationSpeed
-      : 0;
+  private _applyVisibility(): void {
+    this._widget.node.setAttribute(
+      VISIBILITY_ATTRIBUTE,
+      this._settings.highlightVisibility
+    );
   }
 
   /**
-   * The speed in force changed, by a setting or by the operating system: the
-   * runs in progress take it on their next frame, and the fade waits for the
-   * time they still need.
+   * The animation speed in force: the setting, and nothing else.
+   *
+   * The operating system's reduced-motion preference is deliberately not read
+   * here (DEF-CUE-68). A Windows host reports it to every page whenever its
+   * own animation switch is off, which readers turn off for performance, and
+   * that is not a request for this extension to stop saying what changed. The
+   * switches that stop the motion are this extension's own: animation off, or
+   * a speed of 0.
+   */
+  private _speed(): number {
+    return this._settings.animation ? this._settings.animationSpeed : 0;
+  }
+
+  /**
+   * The speed in force changed: the runs in progress take it on their next
+   * frame, and the fade waits for the time they still need.
    */
   private _applySpeed = (): void => {
     this._animator.speed = this._speed();
@@ -810,7 +852,6 @@ export class LiveViewController implements IDisposable {
   private _lastRendered: string | null = null;
   private _decorations: HTMLElement[] = [];
   private _animator = new ChangeAnimator();
-  private _motionQuery: MediaQueryList | null = null;
   private _pending = false;
   private _disposed = false;
   private _fadeTimer: number | null = null;

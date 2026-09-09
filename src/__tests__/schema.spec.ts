@@ -15,7 +15,11 @@
 
 import plugin from '../../schema/plugin.json';
 
-import { DEFAULT_SETTINGS, ILiveViewSettings } from '../controller';
+import {
+  DEFAULT_SETTINGS,
+  HIGHLIGHT_VISIBILITIES,
+  ILiveViewSettings
+} from '../controller';
 import { COMMANDS, MINIMUMS } from '../index';
 
 // src/index.ts is the plugin declaration, so importing the minimums from it
@@ -34,6 +38,7 @@ interface IDeclaration {
   type?: string;
   default?: unknown;
   minimum?: number;
+  oneOf?: { const: string; title: string }[];
 }
 
 const schema = plugin as {
@@ -78,6 +83,36 @@ describe('the settings schema', () => {
       }
     }
     expect(minimums).toEqual(MINIMUMS);
+  });
+
+  /**
+   * ACC-ANIM-143. A fresh install animates: nothing has to be switched on and
+   * the speed is not the crawl the first releases shipped. The number is
+   * asserted on both sides rather than only compared, so raising one of them
+   * alone is reported here instead of passing quietly.
+   */
+  it('animates a change out of the box, at 25 characters per second', () => {
+    expect(schema.properties.animation.default).toBe(true);
+    expect(DEFAULT_SETTINGS.animation).toBe(true);
+    expect(schema.properties.animationSpeed.default).toBe(25);
+    expect(DEFAULT_SETTINGS.animationSpeed).toBe(25);
+  });
+
+  /**
+   * ACC-HILITE-140. The editor offers exactly the three choices the code
+   * knows, in the code's own order, and opens on the middle one.
+   */
+  it('offers the three highlight strengths and starts at the middle one', () => {
+    // Each strength is declared with the label the settings editor shows, so
+    // the reader chooses Low, Medium or High rather than the code's own word.
+    expect(
+      schema.properties.highlightVisibility.oneOf?.map(entry => entry.const)
+    ).toEqual(HIGHLIGHT_VISIBILITIES);
+    expect(
+      schema.properties.highlightVisibility.oneOf?.map(entry => entry.title)
+    ).toEqual(['Low', 'Medium', 'High']);
+    expect(schema.properties.highlightVisibility.default).toBe('medium');
+    expect(DEFAULT_SETTINGS.highlightVisibility).toBe('medium');
   });
 
   it('refuses a setting it does not declare', () => {

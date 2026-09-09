@@ -25,7 +25,7 @@
 
 import { DocumentRegistry } from '@jupyterlab/docregistry';
 import { MarkdownDocument } from '@jupyterlab/markdownviewer';
-import { ServerConnection, User } from '@jupyterlab/services';
+import { ServerConnection } from '@jupyterlab/services';
 import { IDisposable } from '@lumino/disposable';
 import { IMessageHandler, Message, MessageLoop } from '@lumino/messaging';
 import { ISignal, Signal } from '@lumino/signaling';
@@ -64,6 +64,7 @@ import {
   serialiseOpening,
   serialiseSettings
 } from './marks';
+import { EXTERNAL_ORIGIN } from './watcher';
 
 /**
  * Transaction origin of a marker write.
@@ -85,15 +86,34 @@ export const MARK_ORIGIN = 'jupyterlab_advanced_markdown_viewer_extension:mark';
 export const MARK_RENDER_WINDOW_MS = 1500;
 
 /**
+ * How long a broken mark must stay broken before its leftover markers are
+ * deleted from the file.
+ *
+ * A read runs on every content change, the reader's own typing among them, and
+ * an agent's file reaches the document in pieces: the server coalesces file
+ * events in a 100 ms window and never holds one longer than 400 ms, so a
+ * half-written file is delivered by design. This window sits comfortably past
+ * that cap, so a file still being written is never judged mid-write, and a
+ * passage the reader emptied for a moment while retyping it is not judged at
+ * all.
+ */
+export const BREAK_SETTLE_MS = 750;
+
+/**
  * The class the document widget carries while a selection is recorded, so a
  * context-menu entry that needs one can be offered through its selector.
  */
 export const SELECTING_CLASS = 'jp-AdvancedMd-selecting';
 
 /**
- * Handle written on a note line when nothing else names the reader.
+ * Handle written on a note line while the author setting is empty.
+ *
+ * The setting is the only source of the handle. A lab identity names the
+ * reader to the lab, and a hub that logs users in by identifier names them to
+ * nobody at all, so a note line signed from it tells whoever reads the file
+ * next year less than the plain word does.
  */
-export const DEFAULT_AUTHOR = 'reader';
+export const DEFAULT_AUTHOR = 'author';
 
 /**
  * Settings the notes controller reads.
@@ -107,7 +127,7 @@ export interface INotesSettings {
   enabled: boolean;
   /** Whether marks are painted and listed at all. */
   notes: boolean;
-  /** Handle written on note lines, empty to take the lab identity. */
+  /** Handle written on note lines, empty for the default handle. */
   author: string;
 }
 
@@ -120,8 +140,10 @@ export interface IListedMark extends IMark {
   /** Where the mark sits in the document, 0 at the start and 1 at the end. */
   position: number;
   /**
-   * Whether the mark has lost its place: a marker is missing, or the passage
-   * is not in the rendered view.
+   * Whether the mark has lost its place: the passage is not in the rendered
+   * view, or the mark is of a type this version does not write and has no
+   * passage at all. A mark this version does write whose markers are gone is
+   * broken rather than unanchored, and is not listed.
    */
   unanchored: boolean;
 }
@@ -143,8 +165,6 @@ export interface INotesControllerOptions {
   refresh: () => Promise<void>;
   /** The server the write route is asked on. */
   serverSettings: ServerConnection.ISettings;
-  /** The lab's user manager, for the identity a note line is signed with. */
-  user: User.IManager | null;
   settings: INotesSettings;
 }
 
@@ -185,18 +205,6 @@ const AFTER_MARKER = /^[ \t]*\r?\n?$/;
 
 /** Characters a note handle can carry. */
 const HANDLE = /[^A-Za-z0-9_.-]+/g;
-
-/** The name jupyter_server gives a user it does not know. */
-const ANONYMOUS = /^Anonymous/;
-
-/**
- * A name that is a generated identifier rather than a login name: eight
- * characters or more of hexadecimal digits and hyphens, one of them a digit,
- * which is the shape of a UUID and of the identifiers a hub hands out when it
- * logs users in by identifier. It names the reader to the software that made
- * it and to nobody else, so it is no use as a handle.
- */
-const GENERATED = /^(?=.*[0-9])[0-9a-f-]{8,}$/i;
 
 /**
  * Where a document marker goes: after a leading YAML front matter block, which
@@ -408,7 +416,6 @@ export class NotesController implements IDisposable {
     this._widget = options.widget;
     this._refresh = options.refresh;
     this._serverSettings = options.serverSettings;
-    this._user = options.user;
     this._settings = options.settings;
     // A Markdown preview is built by the text model factory, so its model is
     // always a code model and its shared model always a shared file.
@@ -479,20 +486,20 @@ export class NotesController implements IDisposable {
   }
 
   /**
-   * The marks of the document in document order, followed by the ones this
-   * session saw whose markers a rewrite has since removed.
+   * The marks of the document in document order.
+   *
+   * A mark a rewrite broke stays among them for as long as the file holds
+   * its opening marker: its notes are still in the file, and the reader may
+   * have an entry open on it. It leaves when the deletion's own write reads
+   * a file the markers have gone from. The exception is a mark with no
+   * opening marker, which has no type, no position and no passage, so there
+   * is no row to draw from it at any point.
    */
   get marks(): IListedMark[] {
     const source = this._source;
     const listed = this._marks.map(mark => this._listed(mark, source));
-    const present = new Set(this._marks.map(mark => mark.id));
-    for (const [id, remembered] of this._remembered) {
-      if (!present.has(id)) {
-        listed.push({ ...remembered, unanchored: true });
-      }
-    }
     // A note on the document as a whole leads the list wherever its marker
-    // sits, or sat; the passage marks follow in document order.
+    // sits; the passage marks follow in document order.
     return [
       ...listed.filter(mark => mark.type === DOCUMENT_TYPE),
       ...listed.filter(mark => mark.type !== DOCUMENT_TYPE)
@@ -511,9 +518,26 @@ export class NotesController implements IDisposable {
    * Apply changed settings without reopening the document.
    */
   updateSettings(settings: INotesSettings): void {
+    // Either setting stops the deletion of leftover markers: with notes off
+    // the pass refuses over the setting, and with live updates off its write
+    // gives the file up, having no answer from the route to tell a file that
+    // has gone from one the server still serves.
+    const wasBlocked = !this._settings.notes || !this._settings.enabled;
     this._settings = settings;
     this._paint();
-    this._changed.emit();
+    // A break seen while one of them blocked the deletion left no settle
+    // armed: the pass it fired armed none, and nothing but a content change
+    // reads again. So turning the last of the two back on reads, and the
+    // leftover markers in the file find an owner rather than staying there
+    // for the life of the document. The read cannot move the panel from
+    // here: its state assignment reads the source alone, and the source has
+    // not changed since the last read, so it assigns what that read assigned.
+    // The read emits the change this call owes the panel.
+    if (wasBlocked && settings.notes && settings.enabled) {
+      this._read();
+    } else {
+      this._changed.emit();
+    }
   }
 
   dispose(): void {
@@ -525,6 +549,7 @@ export class NotesController implements IDisposable {
       window.cancelAnimationFrame(this._frame);
       this._frame = null;
     }
+    this._clearSettle();
     this._forgetWritten();
     this._widget.node.removeEventListener('click', this._onClick, true);
     this._widget.node.removeEventListener(
@@ -708,9 +733,6 @@ export class NotesController implements IDisposable {
     if (mark && !known(mark)) {
       return;
     }
-    // A mark the reader removed is gone, so it is not one of the marks this
-    // session remembers for want of its markers.
-    this._remembered.delete(id);
     const written = await this._write(current => {
       const found = parseMarks(current).find(each => each.id === id);
       return [found?.open, found?.close]
@@ -741,28 +763,16 @@ export class NotesController implements IDisposable {
   }
 
   /**
-   * The handle a note line written now is signed with.
+   * The handle a note line written now is signed with: the author setting,
+   * and the default handle while that is empty. Characters a handle cannot
+   * carry, whitespace among them, become a hyphen, so the line reads back as
+   * the entry it was written as.
    *
-   * The setting wins, because a lab without a hub hands every reader the same
-   * anonymous identity and their notes would otherwise carry no name. Failing
-   * that the lab identity is taken: the username, which is the hub login name
-   * where the hub logs users in by name, and otherwise the name it reports for
-   * the reader, because a generated identifier tells whoever reads the note
-   * next year nothing. Failing both, the default handle. Characters a handle
-   * cannot carry, whitespace among them, become a hyphen, so the line reads
-   * back as the entry it was written as.
+   * Only lines written here are signed: a line another author already wrote
+   * into the marker is carried through the rewrite as it stands.
    */
   author(): string {
-    const identity = this._user?.identity ?? null;
-    const named =
-      identity && identity.name && !ANONYMOUS.test(identity.name)
-        ? [identity.username, identity.name, identity.display_name].filter(
-            name => name && !GENERATED.test(name.trim())
-          )
-        : [];
-    const handle = (this._settings.author || named[0] || '')
-      .trim()
-      .replace(HANDLE, '-');
+    const handle = this._settings.author.trim().replace(HANDLE, '-');
     return handle || DEFAULT_AUTHOR;
   }
 
@@ -1070,18 +1080,24 @@ export class NotesController implements IDisposable {
       return;
     }
     const source = this._source;
-    this._marks = parseMarks(source);
-    for (const mark of this._marks) {
-      if (mark.open && (mark.close || mark.type === DOCUMENT_TYPE)) {
-        this._remembered.set(mark.id, this._listed(mark, source));
-      }
-    }
+    const parsed = parseMarks(source);
+    // A break is not acted on where the reader can see it either. A mark that
+    // still holds its opening marker keeps its row, because the file still
+    // holds that marker and the note lines inside it: a note being written
+    // into a mark an agent's first chunk broke is not discarded, and a
+    // passage the reader emptied while retyping it is listed for as long as
+    // their undo can bring it back. The row goes when this read runs over a
+    // file the markers have left, which is the write of the deletion and
+    // nothing earlier. A mark with no opening marker has no type, no position
+    // and no passage, so it is left out at once.
+    const broken = parsed.filter(mark => this._isBroken(mark, source));
+    this._marks = parsed.filter(mark => mark.open);
     // The opening rule lives with the panel, which is what it decides for.
     // A read applies it only where it opens the panel: a rewrite that takes
-    // the last mark away leaves that mark listed as unanchored, and a listing
-    // behind a hidden panel is one the reader cannot read. The state a
-    // document with no marks and no settings marker opens in is the default
-    // this field already holds.
+    // the last mark away leaves the panel as the reader left it, since its
+    // state is the document's and a rewrite elsewhere did not ask for it.
+    // The state a document with no marks and no settings marker opens in is
+    // the default this field already holds.
     const stored = parseSettings(source).settings;
     const hasMarks = this._marks.length > 0;
     if (stored) {
@@ -1090,6 +1106,176 @@ export class NotesController implements IDisposable {
       this._state = openingState(null, hasMarks);
     }
     this._changed.emit();
+    // A break is never acted on the moment it is seen. This read runs on
+    // every content change, so it meets a passage the reader has emptied for
+    // one frame while retyping it, and it meets a file an agent is still
+    // writing, whose closing marker has not arrived yet. Both are answered by
+    // waiting: every further change arms the settle again, so a stream of
+    // chunks pushes the deletion out until the writing stops, and a break
+    // that is whole again by then is never written about.
+    if (broken.length) {
+      this._armSettle(broken.map(mark => mark.id));
+    } else {
+      this._clearSettle();
+    }
+  }
+
+  /**
+   * Arm the settle on the marks a break was seen in, so their leftover
+   * markers are deleted once it has stood for the window.
+   *
+   * Armed by the read that saw the break, and again by a pass that could not
+   * act: a write of this controller in flight and the reader's unsaved edits
+   * both pass, and neither is a change the model reports, so the pass brings
+   * itself back. The marks are named, because a pass may delete only what
+   * stood broken for the window and nothing a refresh brought in meanwhile.
+   */
+  private _armSettle(ids: string[]): void {
+    this._clearSettle();
+    this._settleTimer = window.setTimeout(() => {
+      this._settleTimer = null;
+      this._deleteBroken(ids).catch((reason: unknown) => {
+        // The one write of this extension the reader did not ask for: nothing
+        // of theirs waits on it, so the failure is named here or nowhere. The
+        // settle is not armed again, because _write throws on a failure of
+        // the network alone and a pass every window would ask an unreachable
+        // server for ever.
+        console.warn(
+          `${EXTERNAL_ORIGIN}: the leftover markers of a broken mark could not be deleted - ${reason}; they stay in the file and nothing retries until the document next changes`
+        );
+      });
+    }, BREAK_SETTLE_MS);
+  }
+
+  /**
+   * Disarm the settle a read armed, so nothing of a break it saw is deleted.
+   */
+  private _clearSettle(): void {
+    if (this._settleTimer !== null) {
+      window.clearTimeout(this._settleTimer);
+      this._settleTimer = null;
+    }
+  }
+
+  /**
+   * Whether a rewrite has broken a mark, so that nothing of it means anything
+   * any more: only one of its two markers is left, or the passage between
+   * them holds nothing but whitespace.
+   *
+   * A closing marker whose opening marker is gone is a mark of no type at
+   * all: the type is written in the opening marker, and what is left says
+   * only that some mark once ended there. It is deleted whatever type the
+   * session remembers, because a leftover marker is not kept in the file. The
+   * other two shapes are read from the opening marker that survives, so their
+   * type is known, and a type this version does not write is never broken and
+   * never deleted: only the version that wrote it knows what its markers mean.
+   * A document note has no closing marker by design and no passage to empty,
+   * so nothing but the loss of its own marker can end it, and that leaves
+   * nothing in the file to delete.
+   */
+  private _isBroken(mark: IMark, source: string): boolean {
+    if (!mark.open) {
+      return true;
+    }
+    if (mark.type !== NOTE_TYPE) {
+      return false;
+    }
+    if (!mark.close || !mark.passage) {
+      return true;
+    }
+    return source.slice(mark.passage.start, mark.passage.end).trim() === '';
+  }
+
+  /**
+   * Take every marker of every broken mark out of the file.
+   *
+   * Reached only through the settle a read arms, so a break is deleted only
+   * once it has stood for that long.
+   *
+   * A document holding the reader's unsaved edits is left alone altogether.
+   * The watcher refuses to apply a change from disk into a dirty document, so
+   * a break that came from outside is always met on a clean document; a break
+   * the reader made themselves, by emptying a marked passage as they retype
+   * it, is theirs to undo, and their undo must find the markers and the notes
+   * still there. So is a pass that meets a write of this controller already in
+   * flight.
+   *
+   * The markers are read again from the source of each attempt, inside the
+   * write, so a write the server refuses deletes what is broken by the time it
+   * is made again; only the marks the read saw broken are deleted, because
+   * the refresh pulls newer content in and a break that arrived with it has
+   * not settled at all. One pass does not always finish the work: deleting a
+   * lone closing marker can empty the passage of a mark enclosing it, which
+   * breaks that mark in turn. The deletion's own write is a content change
+   * like any other, so the read that follows it arms the settle again,
+   * carrying the newly broken mark, and the pass after it takes that mark
+   * out. That terminates because every pass only ever removes markers, so the
+   * file runs out of them.
+   *
+   * With the notes setting off nothing of the feature writes, the markers are
+   * left as they are, and the settle is not armed again: a timer rescheduling
+   * itself while the feature does nothing is waste.
+   *
+   * @param ids - the marks the read saw broken, which are the only ones this
+   * pass may delete
+   */
+  private async _deleteBroken(ids: string[]): Promise<void> {
+    if (!this._settings.notes) {
+      return;
+    }
+    if (this._deleting || this._context.model.dirty) {
+      this._armSettle(ids);
+      return;
+    }
+    const settled = new Set(ids);
+    this._deleting = true;
+    try {
+      // The refresh is what every write path makes first: it brings a change
+      // waiting on disk into the document, so the save that may follow the
+      // write is not met with the File Changed dialog.
+      await this._refresh();
+      if (this._disposed) {
+        return;
+      }
+      const written = await this._write(source => {
+        // The setting and the unsaved edits are read again here rather than
+        // at entry alone: the refresh above is a round trip to the server,
+        // and the reader may have turned notes off or begun typing while it
+        // ran. This write is not undoable, so their note lines would be gone
+        // beyond recall.
+        if (!this._settings.notes || this._context.model.dirty) {
+          return [];
+        }
+        const edits: ISourceEdit[] = [];
+        for (const mark of parseMarks(source)) {
+          if (!settled.has(mark.id) || !this._isBroken(mark, source)) {
+            continue;
+          }
+          for (const span of [mark.open, mark.close]) {
+            if (span) {
+              edits.push(markerSpan(source, span));
+            }
+          }
+        }
+        return edits;
+      }, false);
+      // Nothing was written: the pass refused inside the write, or the served
+      // route would not take it. The read that follows arms the settle again,
+      // so the deletion follows once the state that held it back has passed.
+      if (!written) {
+        this._read();
+        // Except where the write gave up - the route turned it down, or was
+        // never asked - which is not a state waiting mends: the read's settle
+        // is disarmed, or every window would spend a refresh on a write that
+        // has already stopped. The markers stay in the document they are
+        // still in.
+        if (this._writeGaveUp) {
+          this._clearSettle();
+        }
+      }
+    } finally {
+      this._deleting = false;
+    }
   }
 
   /**
@@ -1254,14 +1440,34 @@ export class NotesController implements IDisposable {
    * They are made from the end backwards, so the offsets of the earlier ones
    * stand.
    *
+   * @param edits - the edits to make, computed from the source of the attempt
+   * @param mayCreateFile - whether this write may put the file back on disk
+   * when the file may not be there. The route answers 404 for a file deleted
+   * or renamed while the write was on its way, and the Context save would
+   * create it again: the deletion of broken markers is the one write nobody
+   * asked for, so it writes nothing unless the route wrote the file itself.
+   * That covers the route's refusal, the route never asked because live
+   * updates are off, and the route given up on after three refusals, since
+   * the fallback save is the same save in all three. Every write the reader
+   * made keeps the Context path whatever the route says. The guard holds only
+   * while the route answers at all: where a lab has no server extension the
+   * pre-route Context save stands, as it did before the route existed, but
+   * only once the route has been asked, which needs live updates on.
    * @returns whether the edits were written into the document, which they
    * are not when there is nothing to write
    */
   private async _write(
-    edits: (source: string) => ISourceEdit[]
+    edits: (source: string) => ISourceEdit[],
+    mayCreateFile = true
   ): Promise<boolean> {
     let route = !this._routeAbsent;
     let refusals = 0;
+    // The record is the unprompted write's own, as its documentation says, so
+    // a write the reader made neither sets it nor clears what the last
+    // unprompted write left in it.
+    if (!mayCreateFile) {
+      this._writeGaveUp = false;
+    }
     for (;;) {
       const source = this._source;
       const changes = edits(source).sort((a, b) => b.start - a.start);
@@ -1315,6 +1521,27 @@ export class NotesController implements IDisposable {
           continue;
         }
         landed = true;
+      }
+      // Nothing reached disk through the route, and this write may not create
+      // the file: the route turned it down, or it was never asked - live
+      // updates are off, or there is no revision to compare - or three
+      // refusals gave it up. Each of those falls to the Context save, which
+      // would put a file that has gone back on disk. The write records that it
+      // gave up, so the deletion that made it disarms its settle rather than
+      // asking the same question every window for the life of the tab. A lab
+      // with no served route is the exception, and only once the route has
+      // been asked and answered for, which needs live updates on: nothing
+      // answers there, so the pre-route save stands, as it did before the
+      // route existed. With no served route and live updates off the markers
+      // stay in the file and nothing is saved.
+      if (!landed && !mayCreateFile && !this._routeAbsent) {
+        this._writeGaveUp = true;
+        return false;
+      }
+      // The preview closed while the route wrote: its document is not this
+      // controller's to change any more.
+      if (this._disposed) {
+        return false;
       }
       if (landed && this._source !== source) {
         // The document moved while the route wrote: the watcher has already
@@ -1386,10 +1613,8 @@ export class NotesController implements IDisposable {
   private _context: DocumentRegistry.IContext<DocumentRegistry.ICodeModel>;
   private _refresh: () => Promise<void>;
   private _serverSettings: ServerConnection.ISettings;
-  private _user: User.IManager | null;
   private _settings: INotesSettings;
   private _marks: IMark[] = [];
-  private _remembered = new Map<string, IListedMark>();
   private _lost = new Set<string>();
   private _state: PanelState = 'hidden';
   private _painted: string | null = null;
@@ -1399,6 +1624,16 @@ export class NotesController implements IDisposable {
   private _markedTimer: number | null = null;
   private _selection: ISelectionRecord | null = null;
   private _routeAbsent = false;
+  /**
+   * Whether the last write that may not create the file - the deletion of
+   * broken markers - stopped without writing anything: the served route
+   * turned it down, or it was never asked, live updates being off or no
+   * revision being there to compare. A write the reader made keeps the
+   * Context path whatever the route says, so it leaves this alone.
+   */
+  private _writeGaveUp = false;
+  private _deleting = false;
+  private _settleTimer: number | null = null;
   private _frame: number | null = null;
   private _disposed = false;
   private _changed = new Signal<this, void>(this);

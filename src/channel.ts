@@ -20,6 +20,7 @@ import { Poll } from '@lumino/polling';
 import { ISignal, Signal } from '@lumino/signaling';
 
 import { requestAPI } from './request';
+import { EXTERNAL_ORIGIN } from './watcher';
 
 /**
  * The server extension's API namespace.
@@ -245,7 +246,7 @@ export class ChangeChannel implements IDisposable {
     } else {
       this._mode = 'poll';
       console.warn(
-        `${NAMESPACE}: ${reason}; open Markdown files are checked by a batched request at the fallback interval instead`
+        `${EXTERNAL_ORIGIN}: ${reason}; open Markdown files are checked by a batched request at the fallback interval instead`
       );
     }
     void this._poll.start();
@@ -298,7 +299,7 @@ export class ChangeChannel implements IDisposable {
     if (this._failures > 1 && !this._socketWarned) {
       this._socketWarned = true;
       console.warn(
-        `${NAMESPACE}: the event connection could not be opened; open Markdown files are checked by a batched request at the fallback interval instead`
+        `${EXTERNAL_ORIGIN}: the event connection could not be opened; open Markdown files are checked by a batched request at the fallback interval instead`
       );
     }
     this._reconnectTimer = setTimeout(() => {

@@ -333,16 +333,170 @@ describe('parseMarks', () => {
     expect(passageOf(source, marks[1])).toContain('four');
   });
 
-  it('pairs a repeated identifier in the order it was opened', () => {
+  it('reads a repeated identifier as the one mark its first marker opened', () => {
     const open = `<!-- mark:${ID} note -->`;
     const source = `${open}one${open}two${serialiseClosing(ID)} tail`;
 
     const marks = parseMarks(source);
 
-    expect(marks).toHaveLength(2);
+    expect(marks).toHaveLength(1);
+    expect(marks[0].open).toEqual({ start: 0, end: open.length });
     expect(passageOf(source, marks[0])).toBe(`one${open}two`);
-    expect(marks[1].close).toBeNull();
-    expect(marks[1].open).not.toBeNull();
+    // The repeated opening marker is read as nothing and stays where it is,
+    // inside the passage of the mark the first one opened.
+    expect(source.match(/mark:/g)).toHaveLength(3);
+  });
+
+  it('yields one mark for a passage copied with both its markers', () => {
+    // Copying a marked paragraph in the editor copies its markers with it, so
+    // the file holds the identifier twice. An identifier names one mark: the
+    // first pair in document order, the copy being text like any other.
+    const open = `<!-- mark:${ID} note colour=yellow -->`;
+    const close = serialiseClosing(ID);
+    const pair = `Alpha ${open}beta gamma${close} delta.`;
+    const source = `${pair}\n\n${pair}\n`;
+
+    const marks = parseMarks(source);
+
+    expect(marks).toHaveLength(1);
+    expect(passageOf(source, marks[0])).toBe('beta gamma');
+    expect(marks[0].open!.start).toBe(source.indexOf(open));
+    expect(marks[0].close!.end).toBe(source.indexOf(close) + close.length);
+    // Both markers of the copy sit past the mark and are left as they are.
+    expect(marks[0].close!.end).toBeLessThan(source.lastIndexOf(open));
+    expect(source.match(/mark:/g)).toHaveLength(4);
+  });
+
+  it('reads the pair, not the orphan, when a copied closing marker comes first', () => {
+    // A reader who copies the tail of a marked paragraph leaves a closing
+    // marker above the pair it came from. The identifier carries an opening
+    // marker, so the mark is the one that marker begins, and the stray
+    // closing marker above it is left where it stands.
+    const open = [
+      `<!-- mark:${ID} note colour=yellow`,
+      '@kj 2026-09-08T10:00:00Z: Worth checking.',
+      '-->'
+    ].join('\n');
+    const close = serialiseClosing(ID);
+    const source = `Stray ${close} line.\n\nAlpha ${open}beta gamma${close} delta.\n`;
+
+    const marks = parseMarks(source);
+
+    expect(marks).toHaveLength(1);
+    expect(passageOf(source, marks[0])).toBe('beta gamma');
+    expect(marks[0].notes).toEqual([
+      { author: 'kj', stamp: '2026-09-08T10:00:00Z', text: 'Worth checking.' }
+    ]);
+    expect(marks[0].open!.start).toBe(source.indexOf(open));
+    expect(marks[0].close!.start).toBe(source.lastIndexOf(close));
+    // Removing the mark takes its own two markers and leaves the stray one.
+    expect(removeMark(source, marks[0])).toBe(
+      `Stray ${close} line.\n\nAlpha beta gamma delta.\n`
+    );
+  });
+
+  it('reads a lone closing marker as an orphan while another pair stands', () => {
+    const close = serialiseClosing(OTHER);
+    const source = `Alpha <!-- mark:${ID} note -->beta${serialiseClosing(
+      ID
+    )} gamma ${close} delta.\n`;
+
+    const marks = parseMarks(source);
+
+    expect(marks.map(mark => mark.id)).toEqual([ID, OTHER]);
+    expect(passageOf(source, marks[0])).toBe('beta');
+    // The identifier of the lone marker carries no opening marker anywhere
+    // in the source, so the marker is the mark it names, which is what has it
+    // deleted as a leftover.
+    expect(marks[1].open).toBeNull();
+    expect(marks[1].close).not.toBeNull();
+  });
+
+  it('reads the opening marker when the only closing marker sits above it', () => {
+    // An agent reordering the file can put the closing marker above the
+    // opening one it belongs to. The identifier carries an opening marker, so
+    // the marker above it is not the mark: the mark is the one the opening
+    // marker begins, with the notes it holds, and it is unanchored for want
+    // of a closing marker below it.
+    const open = [
+      `<!-- mark:${ID} note colour=yellow`,
+      '@kj 2026-09-08T10:00:00Z: Worth checking.',
+      '-->'
+    ].join('\n');
+    const close = serialiseClosing(ID);
+    const source = `Stray ${close} line.\n\nAlpha ${open}beta gamma delta.\n`;
+
+    const marks = parseMarks(source);
+
+    expect(marks).toHaveLength(1);
+    expect(marks[0].type).toBe('note');
+    expect(marks[0].open!.start).toBe(source.indexOf(open));
+    expect(marks[0].close).toBeNull();
+    expect(marks[0].passage).toBeNull();
+    expect(marks[0].notes).toEqual([
+      { author: 'kj', stamp: '2026-09-08T10:00:00Z', text: 'Worth checking.' }
+    ]);
+  });
+
+  it('reads a document marker a stray closing marker sits above', () => {
+    // A document marker has no closing marker of its own, so a stray one
+    // carrying its identifier never pairs with it. The marker and its thread
+    // are the mark all the same.
+    const open = [
+      `<!-- mark:${ID} document`,
+      '@kj 2026-09-08T10:00:00Z: The whole piece needs a pass.',
+      '-->'
+    ].join('\n');
+    const source = `Stray ${serialiseClosing(ID)} line.\n\n${open}\nAlpha beta.\n`;
+
+    const marks = parseMarks(source);
+
+    expect(marks).toHaveLength(1);
+    expect(marks[0].type).toBe('document');
+    expect(marks[0].open!.start).toBe(source.indexOf(open));
+    expect(marks[0].close).toBeNull();
+    expect(marks[0].notes).toEqual([
+      {
+        author: 'kj',
+        stamp: '2026-09-08T10:00:00Z',
+        text: 'The whole piece needs a pass.'
+      }
+    ]);
+  });
+
+  it('keeps a lone closing marker the mark where nothing opens its identifier', () => {
+    // The other side of the rule: an identifier with no opening marker
+    // anywhere is named by the closing marker alone, whatever other marks the
+    // document holds, which is the leftover the cleanup sweeps.
+    const stray = serialiseClosing(THIRD);
+    const source =
+      `Alpha <!-- mark:${ID} note -->beta${serialiseClosing(ID)} gamma.\n\n` +
+      `Delta ${stray} epsilon.\n\n` +
+      `Zeta <!-- mark:${OTHER} note -->eta delta.\n`;
+
+    const marks = parseMarks(source);
+
+    expect(marks.map(mark => mark.id)).toEqual([ID, THIRD, OTHER]);
+    expect(marks[1].open).toBeNull();
+    expect(source.slice(marks[1].close!.start, marks[1].close!.end)).toBe(
+      stray
+    );
+  });
+
+  it('keeps two pairs with different identifiers as two marks', () => {
+    const pair = (id: string) =>
+      `Alpha <!-- mark:${id} note colour=yellow -->beta gamma${serialiseClosing(
+        id
+      )} delta.`;
+    const source = `${pair(ID)}\n\n${pair(OTHER)}\n`;
+
+    const marks = parseMarks(source);
+
+    expect(marks.map(mark => mark.id)).toEqual([ID, OTHER]);
+    expect(marks.map(mark => passageOf(source, mark))).toEqual([
+      'beta gamma',
+      'beta gamma'
+    ]);
   });
 
   it('lists three marks in document order with their passages', () => {

@@ -29,6 +29,15 @@ import {
  */
 
 const NAMESPACE = 'jupyterlab-advanced-markdown-viewer-extension';
+
+/**
+ * The prefix every warning of this package carries.
+ *
+ * It is the Yjs transaction origin, not the route namespace: the two are
+ * spelled differently, one with underscores and one with hyphens, and a
+ * warning filtered on the wrong one silently matches nothing.
+ */
+const WARNING_PREFIX = 'jupyterlab_advanced_markdown_viewer_extension';
 const THIRD = 'A third paragraph appeared.';
 const FOURTH = 'A fourth paragraph appeared.';
 
@@ -460,7 +469,10 @@ test.describe('the server extension absent', () => {
     const target = `${tmpPath}/${FILE}`;
     const warnings: string[] = [];
     page.on('console', (message: any) => {
-      if (message.type() === 'warning' && message.text().includes(NAMESPACE)) {
+      if (
+        message.type() === 'warning' &&
+        message.text().includes(WARNING_PREFIX)
+      ) {
         warnings.push(message.text());
       }
     });

@@ -38,6 +38,8 @@ import { ChangeChannel } from './channel';
 import { MARK_ICONS, MARK_MENU_ICON, NOTE_ICON, PANEL_ICONS } from './icons';
 import {
   DEFAULT_SETTINGS,
+  HIGHLIGHT_VISIBILITIES,
+  HighlightVisibility,
   ILiveViewSettings,
   LiveViewController
 } from './controller';
@@ -141,6 +143,15 @@ function readSettings(settings: ISettingRegistry.ISettings): ILiveViewSettings {
       ? value
       : (DEFAULT_SETTINGS[key] as string);
   };
+  // A choice outside the declared list is refused here as well as by the
+  // editor, so a settings file edited by hand cannot leave the stylesheet
+  // keyed off a value no rule matches.
+  const visibility = (): HighlightVisibility => {
+    const value = composite.highlightVisibility;
+    return HIGHLIGHT_VISIBILITIES.includes(value as HighlightVisibility)
+      ? (value as HighlightVisibility)
+      : DEFAULT_SETTINGS.highlightVisibility;
+  };
   return {
     enabled: bool('enabled'),
     pollInterval: num('pollInterval'),
@@ -148,6 +159,7 @@ function readSettings(settings: ISettingRegistry.ISettings): ILiveViewSettings {
     animation: bool('animation'),
     animationSpeed: num('animationSpeed'),
     highlight: bool('highlight'),
+    highlightVisibility: visibility(),
     tabCue: bool('tabCue'),
     notes: bool('notes'),
     author: str('author')
@@ -218,7 +230,6 @@ const plugin: JupyterFrontEndPlugin<void> = {
         // the save that follows the write cannot report the file as changed.
         refresh: () => live.refresh(),
         serverSettings: app.serviceManager.serverSettings,
-        user: app.serviceManager.user,
         settings: current
       });
       const root = (): HTMLElement | null =>

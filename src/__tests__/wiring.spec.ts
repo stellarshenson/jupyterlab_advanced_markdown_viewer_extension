@@ -72,7 +72,7 @@ jest.mock('../request', () => ({
 }));
 
 import { ISelectionRange } from '../anchor';
-import { DEFAULT_SETTINGS } from '../controller';
+import { DEFAULT_SETTINGS, VISIBILITY_ATTRIBUTE } from '../controller';
 import { MARK_COLOURS, parseMarks, parseSettings } from '../marks';
 import { MARK_ORIGIN } from '../notes';
 import { CLOSE_CLASS, ROW_CLASS } from '../notes-panel';
@@ -510,24 +510,24 @@ describe('the plugin', () => {
       expect(written[0].text).toBe('This contradicts the intro.');
     });
 
-    it('signs with the lab identity when the setting is empty', async () => {
+    it('signs with author when the setting is empty', async () => {
       const lab = await start(MARKED, { author: '' });
       lab.widget.render(MARKED_HTML);
 
       await writeNote(lab, ID, 'A note.');
 
-      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('lab-user');
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('author');
     });
 
     it('falls back to the declared defaults for a value it cannot use', async () => {
       const lab = await start(MARKED, { author: 42, notes: 'yes' });
       lab.widget.render(MARKED_HTML);
 
-      // author fell back to the empty default, so the identity names the line,
+      // author fell back to the empty default, which signs the line author,
       // and notes fell back to true, so the marking entries are offered.
       await writeNote(lab, ID, 'A note.');
 
-      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('lab-user');
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('author');
       select(lab.widget.rendered, 'beta', 'gamma');
       expect(lab.commands.isVisible(COMMANDS.addNote)).toBe(true);
     });
@@ -1057,6 +1057,16 @@ describe('the plugin', () => {
     it('declares a default for every setting the schema declares', () => {
       expect(Object.keys(DEFAULT_SETTINGS)).toContain('notes');
       expect(Object.keys(DEFAULT_SETTINGS)).toContain('author');
+    });
+
+    it('hands it the highlight strength, and refuses one the schema forbids', async () => {
+      const lab = await start(SOURCE, { highlightVisibility: 'high' });
+      expect(lab.widget.node.getAttribute(VISIBILITY_ATTRIBUTE)).toBe('high');
+      // A settings file edited by hand can carry a fourth value; it falls back
+      // to the default rather than leaving the stylesheet keyed off a value no
+      // rule matches.
+      lab.set({ highlightVisibility: 'garish' });
+      expect(lab.widget.node.getAttribute(VISIBILITY_ATTRIBUTE)).toBe('medium');
     });
   });
 });

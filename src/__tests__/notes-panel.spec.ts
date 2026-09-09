@@ -767,23 +767,25 @@ describe('writing a note', () => {
     expect(rows()[0].dataset.mark).toBe('b');
   });
 
-  it('moves the focus to the Hide button when Remove took the last row away', () => {
+  it('moves the focus to the panel body when Remove took the last row away', () => {
     const remove = rows()[0].querySelector<HTMLButtonElement>(
       `.${REMOVE_CLASS}`
     )!;
     remove.focus();
     remove.click();
     panel.setMarks([]);
-    expect(document.activeElement).toBe(
-      panel.node.querySelector(`.${CLOSE_CLASS}`)
-    );
+    const body = panel.node.querySelector<HTMLElement>(`.${LIST_CLASS}`)!;
+    expect(document.activeElement).toBe(body);
+    // Out of the Tab order, so catching the focus moves nothing else.
+    expect(body.tabIndex).toBe(-1);
   });
 
-  it('moves the focus to the Hide button when the rows become ticks', () => {
+  it('moves the focus to the panel body when the rows become ticks', () => {
     rows()[0].focus();
     panel.state = 'minimap';
+    // The strip is the body under its other class.
     expect(document.activeElement).toBe(
-      panel.node.querySelector(`.${CLOSE_CLASS}`)
+      panel.node.querySelector(`.${MAP_CLASS}`)
     );
   });
 
@@ -821,14 +823,32 @@ describe('writing a note', () => {
     viewer.remove();
   });
 
-  it('moves the focus to the Hide control when the rows become ticks while a note is typed', () => {
+  it('moves the focus to the panel body when the rows become ticks while a note is typed', () => {
     press(rows()[0], 'Add note');
     type('half a thought');
     panel.node.querySelector('textarea')!.focus();
     panel.state = 'minimap';
     expect(document.activeElement).toBe(
-      panel.node.querySelector(`.${CLOSE_CLASS}`)
+      panel.node.querySelector(`.${MAP_CLASS}`)
     );
+  });
+
+  it('ends the focus chain on the body, and not on a control Space acts on', () => {
+    // The chain used to end on Hide, whose activation key is Space, so a
+    // reader who simply kept typing hid the whole panel within a word or two
+    // and was told nothing. The body is a plain div with no activation key.
+    press(rows()[0], 'Add note');
+    type('half a thought');
+    panel.node.querySelector('textarea')!.focus();
+    panel.setMarks([]);
+    const body = panel.node.querySelector<HTMLElement>(`.${LIST_CLASS}`)!;
+    const hide = panel.node.querySelector<HTMLElement>(`.${CLOSE_CLASS}`)!;
+    expect(document.activeElement).toBe(body);
+    expect(body.tagName).toBe('DIV');
+    expect(body.tabIndex).toBe(-1);
+    // The control the chain used to end on is still there, and skipped.
+    expect(hide.tagName).toBe('BUTTON');
+    expect(document.activeElement).not.toBe(hide);
   });
 
   it('draws a document note with the word Document and no swatch wherever it is handed', () => {
@@ -1114,16 +1134,244 @@ describe('writing a note', () => {
     expect([after.selectionStart, after.selectionEnd]).toEqual([5, 5]);
   });
 
-  it('drops the entry when the mark it belonged to is gone', () => {
+  it('keeps the entry when the reader cuts the marked passage and pastes it back', () => {
     press(rows()[0], 'Add note');
     type('half a thought');
+    // The document holds no marker for a moment, so the mark is absent from
+    // that parse; the file on disk held both markers throughout, so the panel
+    // must not say the mark is gone, and the draft stays.
     panel.setMarks([item('b', 'another passage')]);
     expect(panel.node.querySelector('textarea')).toBeNull();
 
-    // The mark comes back, and the note that was being written does not.
     panel.setMarks([item('a', 'first passage')]);
-    expand(rows()[0]);
+    expect(panel.node.querySelector('textarea')!.value).toBe('half a thought');
+  });
+
+  it('brings the row back open, with the text, after one absence', () => {
+    // An agent rewrites the file in pieces and the first chunk stops before
+    // the marked passage, so one parse holds no mark and the next holds it
+    // whole. ACC-NOTES-144 promises a note being written is not taken away.
+    press(rows()[0], 'Add note');
+    type('half a thought');
+
+    panel.setMarks([]);
     expect(panel.node.querySelector('textarea')).toBeNull();
+
+    panel.setMarks([item('a', 'first passage')]);
+    const after = panel.node.querySelector('textarea')!;
+    expect(after.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('a');
+    // The row is open, which is what its controls being drawn says.
+    expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
+    expect(after.value).toBe('half a thought');
+    // The text without the focus would leave the reader looking at their own
+    // draft with their typing landing nowhere. The panel remembers that the
+    // rebuild which lost the row took the focus off a field, so the field
+    // built in its place takes it back.
+    expect(document.activeElement).toBe(after);
+  });
+
+  it('returns the reader to their field when a second mark held a row for the focus', () => {
+    // With another mark still listed there is a row to park the focus on, so
+    // where the focus sits says nothing about where the reader was: the panel
+    // has to remember that it took the focus off a field.
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+    press(rows()[0], 'Add note');
+    type('half a thought');
+    expect(document.activeElement).toBe(panel.node.querySelector('textarea'));
+
+    panel.setMarks([item('b', 'second passage')]);
+    expect(panel.node.querySelector('textarea')).toBeNull();
+    expect(document.activeElement).toBe(rows()[0]);
+    expect(rows()[0].dataset.mark).toBe('b');
+
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+    const after = panel.node.querySelector('textarea')!;
+    expect(after.value).toBe('half a thought');
+    // Left on the other row, their keystrokes would land on it and the Enter
+    // they meant as a newline would select that mark and flash the preview at
+    // its passage.
+    expect(document.activeElement).toBe(after);
+  });
+
+  it('returns the reader to their field after two rebuilds without one', () => {
+    // A mark absent from two parses running is the ordinary shape of a
+    // streamed rewrite, not an edge: an agent's chunks land one after the
+    // other and the panel is handed the marks of each. Left on the body, the
+    // reader's typing goes nowhere and the Enter they meant as a newline is
+    // read by whatever holds the focus.
+    press(rows()[0], 'Add note');
+    type('half a thought');
+
+    panel.setMarks([]);
+    panel.setMarks([]);
+    expect(panel.node.querySelector('textarea')).toBeNull();
+
+    panel.setMarks([item('a', 'first passage')]);
+    const after = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(after.value).toBe('half a thought');
+    expect(document.activeElement).toBe(after);
+  });
+
+  it('leaves a reader who moved out of the panel where they went', () => {
+    // The draft waits, but the reader is working somewhere else: the rebuilt
+    // field must not take the focus off the control they chose.
+    const elsewhere = document.createElement('button');
+    document.body.appendChild(elsewhere);
+    press(rows()[0], 'Add note');
+    type('half a thought');
+
+    panel.setMarks([]);
+    elsewhere.focus();
+
+    panel.setMarks([item('a', 'first passage')]);
+    expect(panel.node.querySelector('textarea')!.value).toBe('half a thought');
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
+  });
+
+  it('leaves a reader who was on a row out of the field when the rows return', () => {
+    press(rows()[0], 'Add note');
+    type('half a thought');
+    // The reader moved off the field onto the row itself and stopped typing.
+    rows()[0].focus();
+
+    panel.setMarks([]);
+    const body = panel.node.querySelector<HTMLElement>(`.${LIST_CLASS}`)!;
+    expect(document.activeElement).toBe(body);
+
+    panel.setMarks([item('a', 'first passage')]);
+    // The draft is still there and the field is built again, but the reader
+    // was not in it: pulling them in would land their next keystrokes in a
+    // note they had left.
+    expect(panel.node.querySelector('textarea')!.value).toBe('half a thought');
+    expect(document.activeElement).toBe(body);
+  });
+
+  it('returns the reader to their field after a run of rebuilds without one', () => {
+    // The parking has to survive every rebuild of a streamed rewrite, not one
+    // or two: it names the element the last rebuild left the focus on, and
+    // each rebuild that finds the reader still there names it again.
+    press(rows()[0], 'Add note');
+    type('half a thought');
+
+    panel.setMarks([]);
+    panel.setMarks([]);
+    panel.setMarks([]);
+    const body = panel.node.querySelector<HTMLElement>(`.${LIST_CLASS}`)!;
+    expect(document.activeElement).toBe(body);
+
+    panel.setMarks([item('a', 'first passage')]);
+    const after = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(after.value).toBe('half a thought');
+    expect(document.activeElement).toBe(after);
+  });
+
+  it('leaves a reader who parked and hid the panel on the control the badge gave them', () => {
+    // The panel stays hidden as long as the reader leaves it hidden, and the
+    // rewrites keep arriving behind it. Showing it again puts the reader on
+    // the Hide control, and a parking made before the hide must not pull them
+    // off the place the panel has just given them.
+    const viewer = document.createElement('div');
+    viewer.className = 'jp-MarkdownViewer';
+    viewer.tabIndex = 0;
+    document.body.appendChild(viewer);
+    viewer.appendChild(root);
+    document.body.appendChild(panel.badge);
+    press(rows()[0], 'Add note');
+    type('half a thought');
+    panel.setMarks([]);
+
+    panel.state = 'hidden';
+    // The mark is back before the panel is shown, so the field is there to be
+    // built the moment it is.
+    panel.setMarks([item('a', 'first passage')]);
+    panel.badge.focus();
+    panel.badge.click();
+    panel.state = 'expanded';
+
+    expect(panel.node.querySelector('textarea')!.value).toBe('half a thought');
+    expect(document.activeElement).toBe(
+      panel.node.querySelector(`.${CLOSE_CLASS}`)
+    );
+    panel.badge.remove();
+    viewer.remove();
+  });
+
+  it('leaves a reader who parked and collapsed the panel on the control the expand gave them', () => {
+    // The body is never destroyed by a change of state, so a parking made on
+    // it outlives the collapse; what ends it is the reader being moved off it,
+    // which pressing a header control does.
+    press(rows()[0], 'Add note');
+    type('half a thought');
+    panel.setMarks([]);
+
+    const collapse = panel.node.querySelector<HTMLButtonElement>(
+      `.${COLLAPSE_CLASS}`
+    )!;
+    collapse.focus();
+    collapse.click();
+    panel.state = 'minimap';
+    panel.setMarks([item('a', 'first passage')]);
+
+    const expandControl = panel.node.querySelector<HTMLButtonElement>(
+      `.${EXPAND_CLASS}`
+    )!;
+    expandControl.focus();
+    expandControl.click();
+    panel.state = 'expanded';
+
+    expect(panel.node.querySelector('textarea')!.value).toBe('half a thought');
+    expect(document.activeElement).toBe(
+      panel.node.querySelector(`.${CLOSE_CLASS}`)
+    );
+  });
+
+  it('leaves a reader who parked and moved to a control of the panel on that control', () => {
+    press(rows()[0], 'Add note');
+    type('half a thought');
+    panel.setMarks([]);
+    const hide = panel.node.querySelector<HTMLElement>(`.${CLOSE_CLASS}`)!;
+    // The reader has stopped typing and moved to the control themselves.
+    hide.focus();
+
+    panel.setMarks([item('a', 'first passage')]);
+    // Pulled into the rebuilt field, the Space or Enter they meant for the
+    // control would be typed into the note instead.
+    expect(panel.node.querySelector('textarea')!.value).toBe('half a thought');
+    expect(document.activeElement).toBe(hide);
+  });
+
+  it('opens an entry elsewhere once the draft mark has gone for good', () => {
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+    press(rows()[0], 'Add note');
+    type('half a thought');
+
+    // This rewrite really did take the markers, so the mark never comes back.
+    // A draft kept through an absence must not block every other row for the
+    // rest of the session.
+    panel.setMarks([item('b', 'second passage')]);
+    expand(rows()[0]);
+    press(rows()[0], 'Add note');
+
+    const field = panel.node.querySelector('textarea')!;
+    expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('b');
+    expect(field.value).toBe('');
+  });
+
+  it('drops the selection when its mark leaves, and keeps the draft', () => {
+    renderMarks('a');
+    panel.selectMark('a');
+    press(rows()[0], 'Add note');
+    type('half a thought');
+
+    panel.setMarks([]);
+    // No row is current while the mark is absent, so the selection goes. The
+    // open set and the held entry are read by identifier, so they are kept.
+    expect(panel.selected).toBeNull();
+
+    panel.setMarks([item('a', 'first passage')]);
+    expect(panel.node.querySelectorAll(`.${SELECTED_CLASS}`)).toHaveLength(0);
+    expect(panel.node.querySelector('textarea')!.value).toBe('half a thought');
   });
 });
 
@@ -1499,10 +1747,10 @@ describe('the mark colours in the stylesheet', () => {
     // belongs to, and a colour ramp is not motion - the same reading that
     // kept the removal ghost's opacity fade under this preference. Losing it
     // would leave a reduced-motion reader with a scroll and no locate signal.
-    // Written against the class rather than against a media block, because a
-    // rule put back as the second one inside the existing reduced-motion
-    // block is the likely shape of the regression, and a match bounded by the
-    // first closing brace would step straight over it.
+    // Written against the class rather than against a media block, so it
+    // catches the rule wherever a regression puts it back. The stylesheet
+    // carries no reduced-motion block at all since DEF-CUE-68, and cue.spec
+    // guards that; this guards the flash on its own terms.
     const guard = new RegExp(
       `\\.${FLASH_CLASS}[^{]*\\{[^}]*animation:\\s*none`
     );

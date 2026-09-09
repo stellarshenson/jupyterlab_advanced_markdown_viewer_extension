@@ -312,6 +312,12 @@ export class NotesPanel extends Widget {
     header.appendChild(this._close);
 
     this._body = document.createElement('div');
+    // The last resort of the focus chain in _render, for the rebuild that
+    // leaves no row to take the focus. Minus one keeps the body out of the Tab
+    // order, so it moves nothing, and the body activates nothing: a Space
+    // typed there scrolls the list of notes, where the Hide control it
+    // replaces acts on Space and hid the whole panel within a word.
+    this._body.tabIndex = -1;
     this.node.appendChild(header);
     this.node.appendChild(this._body);
 
@@ -358,21 +364,28 @@ export class NotesPanel extends Widget {
    * Which rows are open, which is selected and a note still being written are
    * all kept, the caret with the text, because the marks are re-read on every
    * change of the document and a reader typing a note must not lose it, or
-   * their place in it, to a change elsewhere.
+   * their place in it, to a change elsewhere. A mark missing from one list is
+   * no exception: an agent writing the file in pieces, or the reader cutting
+   * the marked passage to paste it back, takes the mark out of the parse for a
+   * frame and brings it back whole. The draft therefore survives its mark's
+   * absence and returns with the row, open, with its text, which is the
+   * ACC-NOTES-144 promise that a note being written into a row is not taken
+   * away. The cursor returns to the end of that text: there is no field to
+   * read a caret from while the mark is absent, so the returning field is
+   * given the text alone.
+   *
+   * The selection alone is pruned, because it names the current row and there
+   * is no such row while the mark is absent. The open set and the held entry
+   * are read by identifier, so an identifier no list holds is inert and costs
+   * nothing to keep.
    */
   setMarks(items: INotesPanelItem[]): void {
     this._items = items;
-    const ids = new Set(items.map(item => item.mark.id));
-    for (const id of this._open) {
-      if (!ids.has(id)) {
-        this._open.delete(id);
-      }
-    }
-    if (this._selected && !ids.has(this._selected)) {
+    if (
+      this._selected &&
+      !items.some(item => item.mark.id === this._selected)
+    ) {
       this._selected = null;
-    }
-    if (this._entry && !ids.has(this._entry.id)) {
-      this._entry = null;
     }
     this._render();
   }
@@ -425,10 +438,20 @@ export class NotesPanel extends Widget {
    * A field holding only whitespace is no draft, as Save reads it.
    */
   private _openEntry(id: string): void {
-    const entry = this._entry?.text.trim() ? this._entry : { id, text: '' };
+    const held = this._entry?.text.trim() ? this._entry : null;
+    // The hold lasts only while the draft's own mark is still listed. setMarks
+    // keeps a draft through its mark's absence, so a mark that never came back
+    // would otherwise block every entry for the rest of the session; the
+    // reader opening an entry elsewhere is them saying they have moved on.
+    const entry =
+      held && this._items.some(item => item.mark.id === held.id)
+        ? held
+        : { id, text: '' };
     this._entry = entry;
     this._open.add(entry.id);
-    this._focus = true;
+    // The reader asked for this field, so it takes the focus wherever they
+    // were: a click on the marked passage opens the entry from the preview.
+    this._focus = 'asked';
   }
 
   /**
@@ -510,18 +533,30 @@ export class NotesPanel extends Widget {
     const active = document.activeElement;
     const inside = active instanceof HTMLElement && this._body.contains(active);
     const typing = inside && active instanceof HTMLTextAreaElement;
-    const keepFocus = this._focus || typing;
+    // A reader in a note field is kept in it, and the record carries a reader
+    // whose field the last rebuild had none to give back: the place the focus
+    // was parked on then says nothing about where they were, because a
+    // rebuild that still lists another mark parks it on that mark's row. A
+    // parking holds only while the focus is still on the element it was made
+    // on: a reader who has moved, to another control of the panel or out of
+    // the panel altogether, is where they chose to be, and pulling them back
+    // into the rebuilt field would be the panel moving them. An ask is read
+    // without that test, because it arrives with the focus outside the panel
+    // whenever a click on the marked passage opened the entry.
+    const keepFocus =
+      typing ||
+      this._focus === 'asked' ||
+      (this._focus !== null && this._focus === active);
     const caret = typing ? [active.selectionStart, active.selectionEnd] : null;
     // The body is rebuilt whole, so a control the reader had focused is
     // destroyed with it; its row is what they were at, and the row built in
     // its place takes the focus, which keeps their place in the tab order.
     // A row that is gone, its mark removed or the rows now ticks, hands the
-    // focus to the row at its place, else to the Hide button, so it never
+    // focus to the row at its place, else to the panel body, so it never
     // falls to the page body.
     const row = inside ? active.closest<HTMLElement>(`.${ROW_CLASS}`) : null;
     const at = row?.dataset.mark ?? null;
     const index = row ? Array.from(this._body.children).indexOf(row) : -1;
-    this._focus = false;
 
     this._count.textContent = countLabel(this._items.length);
     // The count, then the action, under the name the menu gives it.
@@ -566,11 +601,20 @@ export class NotesPanel extends Widget {
           `.${ROW_CLASS}[${MARK_ATTRIBUTE}="${at}"]`
         ) ??
         rows[Math.min(index, rows.length - 1)] ??
-        this._close;
+        this._body;
       // A rebuild the reader did not ask for, a change from disk, must not
       // scroll the panel to the row.
       target.focus({ preventScroll: true });
     }
+    // Parked on the element the focus ended on, when the focus is being kept
+    // and this rebuild had no field to put it in, so the render that brings
+    // the mark back puts the reader into the field again: a mark missing from
+    // two parses running is the ordinary shape of a streamed rewrite, and the
+    // parking has to outlast all of them. Written after the placement above,
+    // since the element the parking names is the one that placement chose.
+    // Cleared otherwise, so a reader who was only ever on a row is left on one
+    // rather than pulled into a field they never typed in.
+    this._focus = keepFocus && !text ? document.activeElement : null;
   }
 
   /**
@@ -813,7 +857,15 @@ export class NotesPanel extends Widget {
   private _selected: string | null = null;
   private _entry: { id: string; text: string } | null = null;
   private _close: HTMLButtonElement;
-  private _focus = false;
+  /**
+   * Where the reader is to be put when the body is rebuilt: null for wherever
+   * the rebuild leaves them, asked when they opened an entry themselves, and
+   * the parked element when a rebuild took their note field away and left them
+   * on a row or on the body. The two are kept apart because an ask is good
+   * with the focus anywhere, where a parking is good only while the focus is
+   * still on the element the parking put it on.
+   */
+  private _focus: 'asked' | Element | null = null;
   private _flash: number | null = null;
 }
 

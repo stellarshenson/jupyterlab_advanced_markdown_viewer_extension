@@ -31,13 +31,22 @@ import {
   LiveViewController,
   TAB_ACTIVE_CLASS,
   TAB_BLOCKED_CLASS,
-  TAB_UPDATED_CLASS
+  TAB_UPDATED_CLASS,
+  VISIBILITY_ATTRIBUTE
 } from '../controller';
 import { GHOST_HOLD_MS, TYPING_CLASS } from '../animate';
 import { ADDED_CLASS, DECORATION_CLASS, REMOVED_CLASS } from '../highlight';
 import { MAX_LCS_TOKENS, tokenize } from '../diff';
 
 const watcherModule = jest.requireMock('../watcher') as { __instances: any[] };
+
+// The test compiler options carry the jest types alone, so the two things the
+// stylesheet check needs from the module system are declared where they are
+// used.
+declare const __dirname: string;
+const { readFileSync } = jest.requireActual('fs') as {
+  readFileSync(file: string, encoding: string): string;
+};
 
 /**
  * A stand-in for the Markdown preview: a node holding the render root, a
@@ -576,27 +585,52 @@ describe('LiveViewController', () => {
       expect(addedText(root)).toEqual([' More']);
     });
 
-    describe('under reduced motion', () => {
+    /**
+     * DEF-CUE-68. The operating system's reduced-motion preference is not this
+     * extension's switch. A Windows host reports it to every page whenever its
+     * own animation switch is off, which readers turn off for performance, and
+     * that is not a request for the preview to stop showing how a change
+     * arrived. The switches are the extension's own: the animation setting and
+     * a speed of 0.
+     */
+    describe('with the operating system asking for reduced motion', () => {
       const original = window.matchMedia;
+      let asked: string[];
 
       beforeEach(() => {
-        (window as any).matchMedia = jest.fn(() => ({ matches: true }));
+        asked = [];
+        (window as any).matchMedia = jest.fn((query: string) => {
+          asked.push(query);
+          return {
+            matches: true,
+            addEventListener: jest.fn(),
+            removeEventListener: jest.fn()
+          };
+        });
+        setup();
       });
 
       afterEach(() => {
         (window as any).matchMedia = original;
       });
 
-      it('lands the change at once', () => {
+      it('types the change in all the same', () => {
         render('<p>alpha</p>');
         applied();
         render(`<p>alpha</p>\n<p>${SENTENCE}</p>`);
-        expect(addedText(root)).toEqual([SENTENCE]);
+        const samples = sample(() => addedText(root)[0].length, 20, 40);
+        expect(samples[0]).toBe(0);
+        expect(new Set(samples).size).toBeGreaterThan(2);
+        expect(samples[samples.length - 1]).toBe(SENTENCE.length);
         expect(typingCount(root)).toBe(0);
-        jest.advanceTimersByTime(4500 - 1);
-        expect(decorationCount(root)).toBe(1);
-        jest.advanceTimersByTime(1);
-        expect(decorationCount(root)).toBe(0);
+      });
+
+      it('never asks the browser what the operating system prefers', () => {
+        render('<p>alpha</p>');
+        applied();
+        render(`<p>alpha</p>\n<p>${SENTENCE}</p>`);
+        jest.advanceTimersByTime(1000);
+        expect(asked).toEqual([]);
       });
     });
 
@@ -854,7 +888,7 @@ describe('LiveViewController', () => {
       expect(typingCount(root)).toBe(0);
     });
 
-    it('ends the animation when the operating system turns reduced motion on', () => {
+    it('keeps typing when the operating system turns reduced motion on', () => {
       const original = window.matchMedia;
       const listeners: Array<() => void> = [];
       let reduce = false;
@@ -871,12 +905,20 @@ describe('LiveViewController', () => {
         applied();
         render(`<p>alpha</p>\n<p>${SENTENCE}</p>`);
         jest.advanceTimersByTime(100);
-        expect(addedText(root)[0].length).toBeLessThan(SENTENCE.length);
+        const shown = addedText(root)[0].length;
+        expect(shown).toBeLessThan(SENTENCE.length);
+        // The preference turns on while the text is being typed. Nothing here
+        // listens for it (DEF-CUE-68), so any listener that was registered is
+        // fired, to show that the change reaches nothing.
         reduce = true;
-        listeners[0]();
-        jest.advanceTimersByTime(16);
-        expect(addedText(root)).toEqual([SENTENCE]);
-        expect(typingCount(root)).toBe(0);
+        for (const listener of listeners) {
+          listener();
+        }
+        jest.advanceTimersByTime(100);
+        const later = addedText(root)[0].length;
+        expect(later).toBeGreaterThan(shown);
+        expect(later).toBeLessThan(SENTENCE.length);
+        expect(typingCount(root)).toBeGreaterThan(0);
       } finally {
         (window as any).matchMedia = original;
       }
@@ -1213,6 +1255,68 @@ describe('LiveViewController', () => {
       jest.advanceTimersByTime(GHOST_HOLD_MS + 'quickjumps '.length * 10 + 32);
       expect(ghosts()).toEqual([]);
       expect(root.textContent).toBe('alpha The over');
+    });
+  });
+
+  /**
+   * ACC-HILITE-140. The choice is written where the stylesheet can key the two
+   * change colours off it, and nowhere the marks, the flash on a selected mark
+   * or the tab marker can reach.
+   */
+  describe('highlight visibility', () => {
+    // jsdom computes nothing for a custom property, so the two blocks are read
+    // as text here and what a browser makes of them is a Galata test.
+    const stylesheet = readFileSync(
+      `${__dirname}/../../style/base.css`,
+      'utf8'
+    );
+
+    /** The declarations of every block keyed on one choice. */
+    const blocksFor = (choice: string): string[] =>
+      stylesheet
+        .split('}')
+        .filter(part => part.includes(`${VISIBILITY_ATTRIBUTE}='${choice}'`))
+        .map(part => part.split('{')[1].trim());
+
+    it('writes the choice on the document widget, never on the render root', () => {
+      expect(widget.node.getAttribute(VISIBILITY_ATTRIBUTE)).toBe('medium');
+      // Sibling extensions count the direct children of the rendered Markdown
+      // and read its attributes, so nothing of this is written there.
+      expect(root.hasAttribute(VISIBILITY_ATTRIBUTE)).toBe(false);
+    });
+
+    it('rewrites the choice without rebuilding the highlights on screen', () => {
+      render('<p>alpha</p>');
+      applied();
+      render('<p>alpha beta</p>');
+      const before = Array.from(root.querySelectorAll(`.${DECORATION_CLASS}`));
+      expect(before.length).toBeGreaterThan(0);
+
+      controller.updateSettings({ ...settings, highlightVisibility: 'high' });
+
+      expect(widget.node.getAttribute(VISIBILITY_ATTRIBUTE)).toBe('high');
+      // The same elements: the new colour reaches them through the attribute,
+      // so nothing is taken out and made again and no render is asked for.
+      expect(Array.from(root.querySelectorAll(`.${DECORATION_CLASS}`))).toEqual(
+        before
+      );
+    });
+
+    it('moves the two change colours and nothing else', () => {
+      for (const choice of ['low', 'high']) {
+        // One block per theme, and each declares those two variables alone,
+        // so no choice can reach a mark, the mark flash or the tab marker.
+        const blocks = blocksFor(choice);
+        expect(blocks).toHaveLength(2);
+        for (const block of blocks) {
+          expect(block.split(';').filter(line => line.trim())).toHaveLength(2);
+          expect(block).toContain('--jp-AdvancedMd-added-bg');
+          expect(block).toContain('--jp-AdvancedMd-removed-bg');
+        }
+      }
+      // Medium is the pair at the top of the file, so a preview at the default
+      // carries no rule of its own.
+      expect(blocksFor('medium')).toHaveLength(0);
     });
   });
 });

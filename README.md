@@ -54,12 +54,13 @@ All settings live under Settings, Advanced Settings Editor, Advanced Markdown Vi
 - `enabled` - on by default; off, the preview keeps what it showed until the document is reloaded; marks and notes have their own setting
 - `pollInterval` - the interval of the fallback check for filesystems that raise no file events, in seconds; file events through the server extension are the primary path, so a lower value does not make updates faster
 - `highlight` - green and red backgrounds on changed text
+- `highlightVisibility` - how strong those two backgrounds are: Low, Medium or High, Medium by default
 - `fadeDuration` - how long the highlight stays on changed text, in milliseconds; it rises over 0.5 s and fades away over the last 0.75 s
 - `animation` - on by default; changes play out as typing
 - `animationSpeed` - typing and deletion speed in characters per second; 0 shows a change at once
 - `tabCue` - the markers on the document tab
 - `notes` - on by default; off, the panel, the marks and the marking entries are hidden and the markers in the file are left alone
-- `author` - the handle a note line opens with; empty, the extension uses the name the lab reports for the reader
+- `author` - the handle a note line opens with, without the leading @; empty writes `@author`
 
 ## Requirements
 
