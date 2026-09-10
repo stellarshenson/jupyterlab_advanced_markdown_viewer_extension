@@ -1285,6 +1285,7 @@ describe('NotesController', () => {
           addNote: async () => true,
           setColour: () => undefined,
           removeMark: () => undefined,
+          removeEmptyDocument: () => undefined,
           markDocument: async () => null,
           setState: () => undefined
         },
@@ -2522,6 +2523,36 @@ describe('NotesController', () => {
       expect(h.source()).toBe(BARE);
     });
 
+    it('removes a document marker that holds no note', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      const id = (await h.controller.markDocument())!;
+
+      await h.controller.removeEmptyDocument(id);
+
+      expect(h.source()).toBe(BARE);
+    });
+
+    it('keeps a document marker a note reached before the removal was written', async () => {
+      // The reader cancelled on an empty document note while another writer
+      // put a note into the marker: the removal reads the file it writes over.
+      const id = '0d4b0d0a-4a4e-4f6a-9d8c-1d6b0a3c2e11';
+      const noted = `<!-- mark:${id} document\n@ab 2026-09-10T10:00:00Z: Kept\n-->\n${BARE}`;
+      const h = open(`<!-- mark:${id} document -->\n${BARE}`);
+      await ready();
+      h.render(BARE_HTML);
+      h.duringRefresh(() => {
+        h.external(noted, 'h1');
+        h.duringRefresh(() => undefined);
+      });
+
+      await h.controller.removeEmptyDocument(id);
+
+      expect(h.source()).toBe(noted);
+      expect(route).not.toHaveBeenCalled();
+    });
+
     it('lists a document note first wherever its marker sits', async () => {
       const passage = '0d4b0d0a-4a4e-4f6a-9d8c-1d6b0a3c2e11';
       const whole = '7f2c9c58-3b8a-4b8f-8f7d-2e1a5b6c7d80';
@@ -2908,6 +2939,106 @@ describe('NotesController', () => {
         `${BARE}\n<!-- marks:settings panel=minimap -->\n`
       );
       expect(h.order).toEqual(['refresh', 'transact', 'save']);
+    });
+
+    it('keeps the state the reader asked for while an older state write lands', async () => {
+      // The reader hid the panel and opened it again before the hide reached
+      // the document: the file the next refresh brings in still says hidden,
+      // and a read while the newer write is on its way must not put that
+      // older state back over the one the reader asked for (DEF-NOTES-71).
+      const h = open(BARE);
+      await ready();
+      route.mockResolvedValue(answer(200, { hash: 'h1' }));
+      await h.controller.setPanelState('expanded');
+      jest.advanceTimersByTime(20);
+
+      let releaseHide: () => void = () => undefined;
+      route.mockImplementationOnce(
+        () =>
+          new Promise(
+            resolve =>
+              (releaseHide = () => resolve(answer(200, { hash: 'h2' })))
+          )
+      );
+      const hide = h.controller.setPanelState('hidden');
+      for (let turn = 0; turn < 20 && route.mock.calls.length < 2; turn++) {
+        await ready();
+      }
+      expect(route.mock.calls).toHaveLength(2);
+
+      // The server has written the hide; the refresh of the next request
+      // brings that file in, and a frame passes while its write is out.
+      h.duringRefresh(() => {
+        h.external(`${BARE}\n<!-- marks:settings panel=hidden -->\n`, 'h2');
+        h.duringRefresh(() => undefined);
+      });
+      let releaseShow: () => void = () => undefined;
+      route.mockImplementationOnce(
+        () =>
+          new Promise(
+            resolve =>
+              (releaseShow = () => resolve(answer(200, { hash: 'h3' })))
+          )
+      );
+      const seen: string[] = [];
+      h.controller.changed.connect(() => seen.push(h.controller.panelState));
+      const show = h.controller.setPanelState('expanded');
+      for (let turn = 0; turn < 20 && route.mock.calls.length < 3; turn++) {
+        await ready();
+      }
+      expect(route.mock.calls).toHaveLength(3);
+      jest.advanceTimersByTime(20);
+
+      releaseHide();
+      await hide;
+      releaseShow();
+      await show;
+      jest.advanceTimersByTime(20);
+
+      expect(seen).not.toContain('hidden');
+      expect(h.controller.panelState).toBe('expanded');
+      expect(h.source()).toContain('<!-- marks:settings panel=expanded -->');
+    });
+
+    it('stores the newer state when an older state write is refused and retried after the newer one lands', async () => {
+      // The route refused the hide, and its retry was answered only after the
+      // reader had opened the panel again and that write had landed: the
+      // retry stores the state as it stands, not the hide (DEF-NOTES-73).
+      const h = open(BARE);
+      await ready();
+      route.mockResolvedValue(answer(200, { hash: 'h1' }));
+      await h.controller.setPanelState('expanded');
+      jest.advanceTimersByTime(20);
+
+      route.mockImplementationOnce(async () =>
+        answer(409, { message: 'changed' })
+      );
+      let releaseRetry: () => void = () => undefined;
+      route.mockImplementationOnce(
+        () =>
+          new Promise(
+            resolve =>
+              (releaseRetry = () =>
+                resolve(answer(409, { message: 'changed' })))
+          )
+      );
+      const hide = h.controller.setPanelState('hidden');
+      for (let turn = 0; turn < 20 && route.mock.calls.length < 3; turn++) {
+        await ready();
+      }
+      expect(route.mock.calls).toHaveLength(3);
+      await h.controller.setPanelState('expanded');
+      jest.advanceTimersByTime(20);
+
+      releaseRetry();
+      await hide;
+      jest.advanceTimersByTime(20);
+      expect(h.source()).toContain('<!-- marks:settings panel=expanded -->');
+
+      // The next change to the file reads the stored state.
+      h.external(`Zeta.\n${h.source()}`, 'h9');
+      await ready();
+      expect(h.controller.panelState).toBe('expanded');
     });
 
     it('leaves exactly one settings marker after three changes', async () => {

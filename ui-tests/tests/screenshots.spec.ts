@@ -1,6 +1,13 @@
 /**
- * The README screenshots of the marks and notes, taken in the JupyterLab
- * Dark theme and written to docs/images.
+ * The README screenshots, taken in the Galaxa Dark Theme - Steel with dates in
+ * en-GB, and written to docs/images.
+ *
+ * Every shot is the window below JupyterLab's top bar, which carries the menu
+ * and the lab's branding, at 2560 by 1440 pixels: the window is made taller by
+ * the bar's height, so the 1280 by 720 area below it, drawn at twice the pixel
+ * density, is a 16:9 picture of the lab at its usual size. The theme comes
+ * from the galaxalabs_jupyterlab_steel_dark_theme extension, which has to be
+ * installed in the lab the suite starts.
  *
  * Not a test of the extension: the file runs only with SCREENSHOTS set, so
  * the suite proper is untouched by it. Run from ui-tests with
@@ -9,7 +16,41 @@
 import { expect, test } from '@jupyterlab/galata';
 import * as path from 'path';
 
-import { choose, openMenu, openMarkMenu, openPreview, select } from './helpers';
+import { openPreview, settings } from './helpers';
+
+const THEME = 'Galaxa Dark Theme - Steel';
+const WIDTH = 1280;
+const HEIGHT = 720;
+const WINDOW = {
+  viewport: { width: WIDTH, height: HEIGHT },
+  deviceScaleFactor: 2,
+  locale: 'en-GB'
+};
+
+const IMAGES = path.join(__dirname, '..', '..', 'docs', 'images');
+
+/** The bottom edge of JupyterLab's top bar, in whole pixels. */
+async function topBarBottom(page: any): Promise<number> {
+  const bar = (await page.locator('#jp-top-panel').boundingBox())!;
+  return Math.ceil(bar.y + bar.height);
+}
+
+/** Make the window taller by the top bar, so the area below it is 16:9. */
+async function makeRoomForTopBar(page: any): Promise<void> {
+  await page.setViewportSize({
+    width: WIDTH,
+    height: HEIGHT + (await topBarBottom(page))
+  });
+}
+
+/** Write the area below the top bar to docs/images. */
+async function shot(page: any, name: string): Promise<void> {
+  const top = await topBarBottom(page);
+  await page.screenshot({
+    path: path.join(IMAGES, `${name}.png`),
+    clip: { x: 0, y: top, width: WIDTH, height: HEIGHT }
+  });
+}
 
 const FILE = 'report.md';
 const ONE = '0d4b0d0a-4a4e-4f6a-9d8c-1d6b0a3c2e11';
@@ -40,25 +81,48 @@ const DOC = [
   ''
 ].join('\n');
 
-const IMAGES = path.join(__dirname, '..', '..', 'docs', 'images');
-const shot = (name: string) => path.join(IMAGES, `notes-${name}.png`);
+const WEEKLY = [
+  '# Weekly report',
+  '',
+  'The build pipeline is stable and the release went out on Monday.',
+  '',
+  'Open items:',
+  '',
+  '- review the onboarding guide',
+  '- publish the metrics dashboard',
+  ''
+].join('\n');
 
-test.describe('README screenshots', () => {
+/** The weekly report with one word replaced, a list item and a line added. */
+const WEEKLY_REWRITTEN = [
+  '# Weekly report',
+  '',
+  'The build pipeline is stable and the release went out on Tuesday.',
+  '',
+  'Open items:',
+  '',
+  '- review the onboarding guide',
+  '- publish the metrics dashboard',
+  '- schedule the retrospective',
+  '',
+  'The team closed twelve tickets this week.',
+  ''
+].join('\n');
+
+test.describe('README screenshots of the marks and notes', () => {
   test.skip(!process.env.SCREENSHOTS, 'run with SCREENSHOTS=1');
-  test.use({ viewport: { width: 1000, height: 560 } });
+  test.use(WINDOW);
 
   test.beforeEach(async ({ page, tmpPath }) => {
-    await page.theme.setDarkTheme();
+    await page.theme.setTheme(THEME);
+    await makeRoomForTopBar(page);
     await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
     await openPreview(page, `${tmpPath}/${FILE}`, 'The first section');
     await page.sidebar.close('left');
     await expect(page.locator('.jp-AdvancedMd-notes:visible')).toBeVisible();
   });
 
-  test('the panel, the minimap, the badge and the Mark submenu', async ({
-    page
-  }) => {
-    const dock = page.locator('#jp-main-dock-panel');
+  test('the notes panel', async ({ page }) => {
     const panel = page.locator('.jp-AdvancedMd-notes:visible');
 
     // The expanded panel: the document note listed first, collapsed, and the
@@ -70,35 +134,42 @@ test.describe('README screenshots', () => {
       .click();
     await page.waitForTimeout(2200);
     await page.mouse.move(5, 5);
-    await dock.screenshot({ path: shot('01-panel') });
+    await shot(page, 'notes-01-panel');
+  });
+});
 
-    // The minimap strip: the hide control, the plus and the expand caret over
-    // the ticks.
-    await page.mouse.click(300, 300);
-    await page.mouse.click(300, 300, { button: 'right' });
-    await choose(page, 'Show notes minimap');
-    await expect(panel).toHaveClass(/jp-AdvancedMd-notes-minimap/);
-    await page.waitForTimeout(400);
-    await page.mouse.move(5, 5);
-    await dock.screenshot({ path: shot('02-minimap') });
+test.describe('README screenshots of a change', () => {
+  test.skip(!process.env.SCREENSHOTS, 'run with SCREENSHOTS=1');
+  test.use({ ...WINDOW, mockSettings: settings({ animationSpeed: 25 }) });
 
-    // The badge over the preview while the panel is hidden.
-    await page.mouse.click(300, 300, { button: 'right' });
-    await choose(page, 'Hide minimap');
-    await expect(
-      page.locator('.jp-AdvancedMd-notesBadge:visible')
-    ).toBeVisible();
-    await page.waitForTimeout(400);
-    await page.mouse.move(5, 5);
-    await dock.screenshot({ path: shot('03-badge') });
+  test.beforeEach(async ({ page }) => {
+    await page.theme.setTheme(THEME);
+    await makeRoomForTopBar(page);
+    await page.sidebar.close('left');
+  });
 
-    // The Mark submenu over a selection.
-    await openMenu(page, await select(page, 'The appendix', 'assumptions'));
-    await openMarkMenu(page);
-    await page.waitForTimeout(300);
-    await page.mouse.move(5, 5);
-    await dock.screenshot({ path: shot('04-mark-menu') });
-    await page.keyboard.press('Escape');
-    await page.keyboard.press('Escape');
+  test('a change part way through', async ({ page, tmpPath }) => {
+    const file = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(WEEKLY, 'text', file);
+    await openPreview(page, file, 'The build pipeline');
+    await page.contents.uploadContent(WEEKLY_REWRITTEN, 'text', file);
+
+    // Taken while the added lines are still typing and the removed word is
+    // still on screen, before it is deleted.
+    await page.waitForFunction(
+      () => {
+        const typing = document.querySelectorAll(
+          '.jp-AdvancedMd-added.jp-AdvancedMd-typing'
+        );
+        const last = typing[typing.length - 1];
+        return (
+          (last?.textContent ?? '').length >= 10 &&
+          document.querySelector('.jp-AdvancedMd-removed') !== null
+        );
+      },
+      undefined,
+      { polling: 'raf', timeout: 20000 }
+    );
+    await shot(page, 'animation-01');
   });
 });

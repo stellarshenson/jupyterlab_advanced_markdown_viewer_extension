@@ -2805,7 +2805,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@jupyterlab/ui-components@npm:^4.6.3":
+"@jupyterlab/ui-components@npm:^4.0.0, @jupyterlab/ui-components@npm:^4.6.3":
   version: 4.6.3
   resolution: "@jupyterlab/ui-components@npm:4.6.3"
   dependencies:
@@ -3077,7 +3077,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@lumino/messaging@npm:^2.0.4, @lumino/messaging@npm:^2.0.5":
+"@lumino/messaging@npm:^2.0.0, @lumino/messaging@npm:^2.0.4, @lumino/messaging@npm:^2.0.5":
   version: 2.0.5
   resolution: "@lumino/messaging@npm:2.0.5"
   dependencies:
@@ -7649,7 +7649,9 @@ __metadata:
     "@jupyterlab/services": ^7.0.0
     "@jupyterlab/settingregistry": ^4.0.0
     "@jupyterlab/testutils": ^4.0.0
+    "@jupyterlab/ui-components": ^4.0.0
     "@lumino/disposable": ^2.0.0
+    "@lumino/messaging": ^2.0.0
     "@lumino/polling": ^2.0.0
     "@lumino/signaling": ^2.0.0
     "@lumino/widgets": ^2.0.0

@@ -25,6 +25,14 @@ import {
 test.use(labFixtures);
 
 /**
+ * The continuous-integration runner installs this extension alone, so a case
+ * that needs a sibling is skipped there. GitHub Actions sets CI and this lab
+ * does not, so every case runs here.
+ */
+const SIBLINGS_ABSENT =
+  'the sibling extensions are not installed on the continuous-integration runner';
+
+/**
  * A document whose middle block is a GitHub alert, long enough to scroll.
  */
 const ALERT = [
@@ -80,6 +88,7 @@ const previewScrollTop = (page: any): Promise<number> =>
 
 test.describe('the GitHub alerts sibling', () => {
   test.use({ mockSettings: settings() });
+  test.skip(!!process.env.CI, SIBLINGS_ABSENT);
 
   test('renders a changed alert block through the Markdown parser again', async ({
     page,
@@ -126,6 +135,7 @@ test.describe('the GitHub alerts sibling', () => {
 
 test.describe('the colourful tab sibling', () => {
   test.use({ mockSettings: settings() });
+  test.skip(!!process.env.CI, SIBLINGS_ABSENT);
 
   test('keeps the colour it gave the tab while the marker shows', async ({
     page,
@@ -182,6 +192,7 @@ test.describe('the colourful tab sibling', () => {
 
 test.describe('the forced render', () => {
   test.use({ mockSettings: settings() });
+  test.skip(!!process.env.CI, SIBLINGS_ABSENT);
 
   test('runs every listener twice for one change without a sibling misbehaving', async ({
     page,
@@ -293,6 +304,7 @@ async function activateTab(page: any, label: string): Promise<void> {
 
 test.describe('the refresh view sibling', () => {
   test.use({ mockSettings: settings() });
+  test.skip(!!process.env.CI, SIBLINGS_ABSENT);
 
   const UNSAVED = 'A sentence nobody saved.';
 
@@ -349,6 +361,7 @@ test.describe('the refresh view sibling', () => {
 
 test.describe('the export sibling', () => {
   test.use({ mockSettings: settings() });
+  test.skip(!!process.env.CI, SIBLINGS_ABSENT);
 
   const UNSAVED = 'A sentence nobody saved.';
 
@@ -798,6 +811,7 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     page,
     tmpPath
   }) => {
+    test.skip(!!process.env.CI, SIBLINGS_ABSENT);
     const { path, parked } = await openAndPark(page, tmpPath);
 
     // A change that arrives while the guard is holding the position.
@@ -894,6 +908,7 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     page,
     tmpPath
   }) => {
+    test.skip(!!process.env.CI, SIBLINGS_ABSENT);
     const { path, parked } = await openAndPark(page, tmpPath);
 
     // With the anchor held for as long as the guard holds, the position the

@@ -240,6 +240,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
           addNote: (id, text) => notes.addNote(id, text),
           setColour: (id, colour) => void notes.setColour(id, colour),
           removeMark: id => void notes.remove(id),
+          removeEmptyDocument: id => void notes.removeEmptyDocument(id),
           markDocument: () => notes.markDocument(),
           setState: state => void notes.setPanelState(state)
         },

@@ -384,11 +384,12 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 
 /*
  | The minimap strip has room for icons alone: its header stacks its controls,
- | the hide control at the top, then the plus and the expand control. The
- | expand control exists only there, since the expanded panel is already what
- | it would open; the collapse control is its mirror, shown in the expanded
- | state alone, at the left edge of the header where it reads as collapse and
- | not as a second close.
+ | the hide control at the top, then the expand control. The expand control
+ | exists only there, since the expanded panel is already what it would open;
+ | the collapse control is its mirror, shown in the expanded state alone, at
+ | the left edge of the header where it reads as collapse and not as a second
+ | close. The plus is shown in the expanded state alone as well, so the strip
+ | offers no control that adds a note.
  */
 .jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesHeader {
   flex-direction: column;
@@ -429,17 +430,18 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   height: 14px;
 }
 
-.jp-AdvancedMd-notesClose,
-.jp-AdvancedMd-notesAdd {
+.jp-AdvancedMd-notesClose {
   display: inline-flex;
 }
 
+.jp-AdvancedMd-notesAdd,
 .jp-AdvancedMd-notesExpand,
 .jp-AdvancedMd-notesCollapse {
   display: none;
 }
 
 .jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesExpand,
+.jp-AdvancedMd-notes-expanded .jp-AdvancedMd-notesAdd,
 .jp-AdvancedMd-notes-expanded .jp-AdvancedMd-notesCollapse {
   display: inline-flex;
 }
@@ -600,6 +602,8 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   box-sizing: border-box;
   resize: vertical;
   color: inherit;
+  font-family: inherit;
+  font-size: calc(var(--jp-ui-font-size1) * 0.75);
   background: var(--jp-layout-color0);
   border: 1px solid var(--jp-border-color2);
 }

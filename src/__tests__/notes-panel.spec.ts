@@ -153,6 +153,7 @@ const handlers: INotesPanelHandlers = {
   },
   setColour: (id, colour) => asked.push(`colour ${id} ${colour}`),
   removeMark: id => asked.push(`remove ${id}`),
+  removeEmptyDocument: id => asked.push(`empty document ${id}`),
   markDocument: async () => {
     asked.push('document');
     onMarkDocument();
@@ -228,10 +229,11 @@ function press(row: Element, label: string): void {
 }
 
 /**
- * Open a row, which is what the toggle of its head does.
+ * Open a row, which is what a click on its head does; a closed row carries no
+ * triangle (ACC-NOTES-148).
  */
 function expand(row: Element): void {
-  row.querySelector<HTMLButtonElement>(`.${TOGGLE_CLASS}`)!.click();
+  row.querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
 }
 
 beforeAll(() => {
@@ -413,8 +415,50 @@ describe('a row', () => {
     expand(rows()[0]);
     expect(texts(rows()[0])).toHaveLength(2);
     expect(texts(rows()[1])).toEqual(['other']);
-    expand(rows()[0]);
+    rows()[0].querySelector<HTMLButtonElement>(`.${TOGGLE_CLASS}`)!.click();
     expect(texts(rows()[0])).toEqual(['first line']);
+  });
+
+  it('shows the triangle on an open row alone, and opens a row from a click or Enter on it', () => {
+    const triangle = (row: Element): HTMLButtonElement | null =>
+      row.querySelector<HTMLButtonElement>(`.${TOGGLE_CLASS}`);
+    // A closed row opens from a click on it, so it carries no triangle.
+    expect(triangle(rows()[0])).toBeNull();
+    rows()[0].querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
+    expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
+    expect(triangle(rows()[0])!.title).toBe('Collapse');
+    expect(triangle(rows()[1])).toBeNull();
+
+    triangle(rows()[0])!.click();
+    expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).toBeNull();
+    expect(triangle(rows()[0])).toBeNull();
+
+    rows()[1].dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+    );
+    expect(rows()[1].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
+
+    panel.setMarks([item('c', '', { anchored: false })]);
+    rows()[0].querySelector<HTMLElement>(`.${STATE_CLASS}`)!.click();
+    expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
+  });
+
+  it('selects and opens a row from a click on one of its notes (DEF-NOTES-76)', () => {
+    rows()[1].querySelector<HTMLElement>(`.${TEXT_CLASS}`)!.click();
+    expect(panel.selected).toBe('b');
+    expect(rows()[1].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
+  });
+
+  it('leaves a row alone when a click ends a selection of its note text', () => {
+    // This test environment's Range cannot select contents, so the selection
+    // a drag over the note leaves is given directly.
+    const selection = jest
+      .spyOn(window, 'getSelection')
+      .mockReturnValue({ isCollapsed: false } as Selection);
+    rows()[1].querySelector<HTMLElement>(`.${TEXT_CLASS}`)!.click();
+    selection.mockRestore();
+    expect(panel.selected).toBeNull();
+    expect(rows()[1].querySelector(`.${CONTROLS_CLASS}`)).toBeNull();
   });
 
   it('carries the stamp as local time and the file value in its title', () => {
@@ -540,8 +584,11 @@ describe('selecting a mark', () => {
 
   it('leaves Enter to the control inside the row that was typed in', () => {
     // Every control of a row is a descendant of it, so a row handler that
-    // took every Enter that bubbled up would take the one that opens a row
-    // and the one that ends a line of a note.
+    // took every Enter that bubbled up would take the one that closes a row
+    // and the one that ends a line of a note. Only an open row has the
+    // triangle, so the row is opened first and the scroll it made forgotten.
+    rows()[1].querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
+    scrolled.length = 0;
     const toggle = rows()[1].querySelector<HTMLElement>(`.${TOGGLE_CLASS}`)!;
     toggle.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
@@ -919,11 +966,10 @@ describe('writing a note', () => {
     expect(document.activeElement).toBe(field);
   });
 
-  it('opens the document note the file holds from the plus control on the minimap', async () => {
+  it('opens the document note the file holds from the plus control', async () => {
     // The file holds the document mark: the controller answers its id and
-    // writes nothing; the entry needs the expanded state and asks for it.
+    // writes nothing; the entry opens on the row already listed.
     panel.setMarks([documentItem('d'), item('a', 'first passage')]);
-    panel.state = 'minimap';
     documentId = 'd';
     const control = panel.node.querySelector<HTMLButtonElement>(
       `.${ADD_CLASS}`
@@ -931,8 +977,7 @@ describe('writing a note', () => {
     control.click();
     await settle();
 
-    expect(asked).toEqual(['document', 'state expanded']);
-    panel.state = 'expanded';
+    expect(asked).toEqual(['document']);
     expect(rows()).toHaveLength(2);
     expect(rows()[0].querySelector('textarea')).not.toBeNull();
   });
@@ -1030,6 +1075,66 @@ describe('writing a note', () => {
     expect(asked).toEqual(['document']);
     expect(rows()).toHaveLength(1);
     expect(panel.node.querySelector('textarea')).toBeNull();
+  });
+
+  it('removes the document note the plus wrote when its field is cancelled', async () => {
+    // A document marker holds nothing but its notes: the one the plus wrote
+    // for a note the reader then cancelled is taken back out of the file.
+    panel.setMarks([item('a', 'first passage')]);
+    documentId = 'd';
+    onMarkDocument = () =>
+      panel.setMarks([documentItem('d'), item('a', 'first passage')]);
+    panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!.click();
+    await settle();
+    type('never mind');
+    press(rows()[0], 'Cancel');
+
+    expect(asked).toEqual(['document', 'empty document d']);
+    expect(panel.node.querySelector('textarea')).toBeNull();
+  });
+
+  it('removes the document note left empty by Save and by the field opened on another row', async () => {
+    panel.setMarks([documentItem('d'), item('a', 'first passage')]);
+    documentId = 'd';
+    const plus = panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!;
+    plus.click();
+    await settle();
+    type('   ');
+    press(rows()[0], 'Save');
+    expect(asked).toEqual(['document', 'empty document d']);
+
+    asked = [];
+    plus.click();
+    await settle();
+    panel.selectMark('a');
+    press(rows()[1], 'Add note');
+
+    expect(asked).toEqual(['document', 'empty document d']);
+    const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('a');
+  });
+
+  it('keeps a document note that holds a note, and a passage mark, when the field is cancelled', async () => {
+    panel.setMarks([
+      item('d', '', {
+        mark: mark('d', {
+          type: 'document',
+          close: null,
+          passage: null,
+          notes: [note('ab', '2026-09-10T10:00:00Z', 'kept')]
+        })
+      }),
+      item('a', 'first passage')
+    ]);
+    documentId = 'd';
+    panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!.click();
+    await settle();
+    press(rows()[0], 'Cancel');
+    panel.selectMark('a');
+    press(rows()[1], 'Add note');
+    press(rows()[1], 'Cancel');
+
+    expect(asked).toEqual(['document']);
   });
 
   it('shows the badge while hidden, muted without notes and named by the count', () => {
@@ -1403,14 +1508,67 @@ describe('the controls of a row', () => {
     expect(asked).toEqual([`colour a ${MARK_COLOURS[2]}`]);
   });
 
+  it('leaves Add note out of a row while its note is written, and keeps the colours', async () => {
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+    expand(rows()[1]);
+    const offersNote = (row: Element): boolean =>
+      Array.from(row.querySelectorAll('button')).some(
+        control => control.textContent === 'Add note'
+      );
+
+    press(rows()[0], 'Add note');
+    expect(rows()[0].querySelector('textarea')).not.toBeNull();
+    expect(offersNote(rows()[0])).toBe(false);
+    expect(rows()[0].querySelectorAll(`.${DOT_CLASS}`)).toHaveLength(
+      MARK_COLOURS.length
+    );
+    expect(rows()[0].querySelector(`.${REMOVE_CLASS}`)).not.toBeNull();
+    expect(offersNote(rows()[1])).toBe(true);
+
+    press(rows()[0], 'Cancel');
+    expect(offersNote(rows()[0])).toBe(true);
+
+    press(rows()[0], 'Add note');
+    const field = rows()[0].querySelector('textarea')!;
+    field.value = 'a thought';
+    field.dispatchEvent(new Event('input'));
+    press(rows()[0], 'Save');
+    // Add note returns once the note is written, not at the press.
+    expect(offersNote(rows()[0])).toBe(false);
+    await Promise.resolve();
+    expect(offersNote(rows()[0])).toBe(true);
+  });
+
+  it('keeps the colour dots in place when Add note leaves the row', () => {
+    const places = (): number[] =>
+      Array.from(rows()[0].querySelector(`.${CONTROLS_CLASS}`)!.children)
+        .map((control, index) =>
+          control.classList.contains(DOT_CLASS) ? index : -1
+        )
+        .filter(index => index >= 0);
+    const before = places();
+    expect(before).toHaveLength(MARK_COLOURS.length);
+    press(rows()[0], 'Add note');
+    expect(rows()[0].querySelector('textarea')).not.toBeNull();
+    expect(places()).toEqual(before);
+  });
+
   it('asks for the mark to be removed', () => {
     press(rows()[0], 'Remove this mark');
     expect(asked).toEqual(['remove a']);
   });
 
   it('names every button for assistive technology by its title', () => {
+    // Add note is left out once its field is open (ACC-NOTES-147), so it is
+    // taken before the press.
+    const addNote = Array.from(rows()[0].querySelectorAll('button')).find(
+      control => control.textContent === 'Add note'
+    )!;
     press(rows()[0], 'Add note');
-    const buttons = Array.from(panel.node.querySelectorAll('button'));
+    const buttons = [
+      addNote,
+      ...Array.from(panel.node.querySelectorAll('button'))
+    ];
     // The expand, collapse, add and close controls, the toggle, Add note,
     // the six dots, Remove, Save and Cancel.
     expect(buttons).toHaveLength(15);
@@ -1627,7 +1785,7 @@ describe('the mark colours in the stylesheet', () => {
   it('puts the hide control at the top of the minimap strip', () => {
     // The strip's column follows the header's order, collapse to close; the
     // hide control is ordered ahead of the rest there by the ruling of
-    // 2026-09-08, so the x sits above the plus and the expand caret.
+    // 2026-09-08, so the x sits above the expand caret.
     expect(
       declaration(
         '.jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesClose',
@@ -1658,7 +1816,7 @@ describe('the mark colours in the stylesheet', () => {
     return bodies;
   }
 
-  it('gives the plus control the 24 px target of the icon controls and shows it in both states', () => {
+  it('gives the plus control the 24 px target of the icon controls', () => {
     // The control is named in the shared selector lists; each rule naming
     // it is read for the declarations the control needs.
     const declared: Record<string, string> = {};
@@ -1670,16 +1828,15 @@ describe('the mark colours in the stylesheet', () => {
     }
     expect(declared['min-height']).toBe('24px');
     expect(declared['min-width']).toBe('24px');
-    expect(declared.display).toBe('inline-flex');
   });
 
-  it('shows the expand and the collapse controls in their own state alone', () => {
-    // The two controls are hidden by a bare rule and shown by a state-gated
-    // one; a later bare rule that sets any other display would show both
-    // carets in every state, as build 0.6.55 did (DEF-NOTES-59). Every rule
-    // whose selector list names a control without a state prefix may set
+  it('shows the plus, the expand and the collapse controls in their own state alone', () => {
+    // The three controls are hidden by a bare rule and shown by a state-gated
+    // one; a later bare rule that sets any other display would show them in
+    // every state, as build 0.6.55 did with the carets (DEF-NOTES-59). Every
+    // rule whose selector list names a control without a state prefix may set
     // display to none alone.
-    for (const control of [EXPAND_CLASS, COLLAPSE_CLASS]) {
+    for (const control of [ADD_CLASS, EXPAND_CLASS, COLLAPSE_CLASS]) {
       let hidden = false;
       for (const body of rulesNaming(control)) {
         const display = /display: ([^;]+);/.exec(body);

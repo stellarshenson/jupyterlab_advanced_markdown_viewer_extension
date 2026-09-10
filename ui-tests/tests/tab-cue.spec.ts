@@ -206,7 +206,10 @@ test.describe('the marker of a change held back', () => {
       .locator(`.lm-TabBar-tab.${BLOCKED}`)
       .getAttribute('title');
     expect(tooltip).toContain('unsaved edits');
-    expect(tooltip).toContain('Save or revert');
+    // A save opens the File Changed dialog, whose Revert takes the held
+    // change; the File menu's Revert to Checkpoint writes the checkpoint over
+    // it (DEF-CUE-74, DEF-CUE-75).
+    expect(tooltip).toContain('choose Revert in the File Changed dialog');
   });
 });
 

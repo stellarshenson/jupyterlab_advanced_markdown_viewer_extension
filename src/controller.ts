@@ -67,7 +67,7 @@ const TAB_CAPTIONS: { [className: string]: string | undefined } = {
   [TAB_UPDATED_CLASS]:
     'The file changed on disk and the preview shows the new content; added and removed text is highlighted.',
   [TAB_BLOCKED_CLASS]:
-    'A change on disk is held back by unsaved edits in this document. Save or revert the document to take the change.',
+    'A change on disk is held back by unsaved edits in this document. To take the change, save and choose Revert in the File Changed dialog; Overwrite keeps your version and drops the change.',
   [TAB_MISSING_CLASS]:
     'The file is gone from disk. This view keeps the last content that was read.'
 };

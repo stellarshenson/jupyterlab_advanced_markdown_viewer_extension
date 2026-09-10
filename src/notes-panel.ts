@@ -155,6 +155,11 @@ export interface INotesPanelHandlers {
   /** Remove both markers of a mark, leaving the passage as it is. */
   removeMark(id: string): void;
   /**
+   * Remove the document mark while it holds no note, which the controller
+   * reads from the file as it writes the removal.
+   */
+  removeEmptyDocument(id: string): void;
+  /**
    * Mark the document as a whole, or answer the document mark the file
    * already holds; null when nothing could be written.
    */
@@ -447,11 +452,32 @@ export class NotesPanel extends Widget {
       held && this._items.some(item => item.mark.id === held.id)
         ? held
         : { id, text: '' };
+    // A field left empty for another row's field is closed as Cancel closes
+    // it.
+    if (this._entry && this._entry.id !== entry.id) {
+      this._closeEntry(this._entry.id);
+    }
     this._entry = entry;
     this._open.add(entry.id);
     // The reader asked for this field, so it takes the focus wherever they
     // were: a click on the marked passage opens the entry from the preview.
     this._focus = 'asked';
+  }
+
+  /**
+   * Close the note entry on a mark without writing a note.
+   *
+   * A document note that holds no note goes with the entry: the plus wrote its
+   * marker for the note the reader has now left, and a document marker holds
+   * nothing else. A passage mark stays, since its colour still marks the
+   * passage.
+   */
+  private _closeEntry(id: string): void {
+    this._entry = null;
+    const mark = this._items.find(item => item.mark.id === id)?.mark;
+    if (mark?.type === DOCUMENT_TYPE && mark.notes.length === 0) {
+      this._handlers.removeEmptyDocument(id);
+    }
   }
 
   /**
@@ -664,24 +690,19 @@ export class NotesPanel extends Widget {
       passage.textContent = shorten(item.passage);
     }
     head.appendChild(passage);
-    head.appendChild(
-      button(
-        TOGGLE_CLASS,
-        open ? '▾' : '▸',
-        open ? 'Collapse' : 'Expand',
-        event => {
-          // The toggle sits inside the head, whose own click selects the row,
-          // and opening a row is not selecting it.
+    // A click on a closed row opens it, so only an open row carries the
+    // triangle, which closes it.
+    if (open) {
+      head.appendChild(
+        button(TOGGLE_CLASS, '▾', 'Collapse', event => {
+          // The triangle sits inside the head, whose own click selects the
+          // row, and closing a row is not selecting it.
           event.stopPropagation();
-          if (open) {
-            this._open.delete(mark.id);
-          } else {
-            this._open.add(mark.id);
-          }
+          this._open.delete(mark.id);
           this._render();
-        }
-      )
-    );
+        })
+      );
+    }
     row.appendChild(head);
 
     // A mark of a type this version does not know is listed with its type and
@@ -696,39 +717,57 @@ export class NotesPanel extends Widget {
       const line = document.createElement('div');
       line.className = STATE_CLASS;
       line.textContent = state;
+      line.addEventListener('click', () => this.selectMark(mark.id));
       row.appendChild(line);
     }
 
     for (const note of open ? mark.notes : mark.notes.slice(0, 1)) {
-      row.appendChild(entryRow(note, open));
+      const entry = entryRow(note, open);
+      // A note is part of its row, so a click on it selects the row as a
+      // click on the head does; a click that ends a selection of the note's
+      // text is the reader copying it, and is left alone.
+      entry.addEventListener('click', () => {
+        if (window.getSelection()?.isCollapsed ?? true) {
+          this.selectMark(mark.id);
+        }
+      });
+      row.appendChild(entry);
     }
 
     if (open && known(mark)) {
-      row.appendChild(this._controls(mark));
-      if (this._entry?.id === mark.id) {
-        row.appendChild(this._form(mark.id, this._entry.text));
+      const entry = this._entry?.id === mark.id ? this._entry : null;
+      row.appendChild(this._controls(mark, entry === null));
+      if (entry) {
+        row.appendChild(this._form(mark.id, entry.text));
       }
     }
     return row;
   }
 
   /**
-   * The controls of an open row: a note, the six colours, and a removal.
+   * The controls of an open row: the six colours, a note, and a removal.
+   * Add note follows the colours, so the colours stay in place when it leaves
+   * the row, and the second click of a double click lands on no control.
+   *
+   * @param offerNote - false while the row's note field is open: the field is
+   * the note being added, so Add note is left out until the field closes
    */
-  private _controls(mark: IMark): HTMLElement {
+  private _controls(mark: IMark, offerNote: boolean): HTMLElement {
     const controls = document.createElement('div');
     controls.className = CONTROLS_CLASS;
-    controls.appendChild(
-      button(BUTTON_CLASS, 'Add note', 'Add note to this mark', () => {
-        this._openEntry(mark.id);
-        this._render();
-      })
-    );
     for (const colour of mark.type === DOCUMENT_TYPE ? [] : MARK_COLOURS) {
       controls.appendChild(
         button(`${DOT_CLASS} ${colourClass(colour)}`, '', colour, () =>
           this._handlers.setColour(mark.id, colour)
         )
+      );
+    }
+    if (offerNote) {
+      controls.appendChild(
+        button(BUTTON_CLASS, 'Add note', 'Add note to this mark', () => {
+          this._openEntry(mark.id);
+          this._render();
+        })
       );
     }
     const remove = button(
@@ -746,8 +785,9 @@ export class NotesPanel extends Widget {
    * The note entry: a text box, and the two ways out of it in a row below
    * the box, so the box keeps the panel's whole width.
    *
-   * Saving blank text writes nothing, so a mark stays bare rather than gaining
-   * an empty note line. The draft stays until the controller says whether the
+   * Saving blank text writes nothing, so a passage mark stays bare rather than
+   * gaining an empty note line, and a document note with no note is removed as
+   * Cancel removes it. The draft stays until the controller says whether the
    * markers were found: a note on a mark whose markers vanished is kept in
    * front of the reader, beside the row's unanchored line, rather than
    * dropped.
@@ -770,7 +810,7 @@ export class NotesPanel extends Widget {
       button(BUTTON_CLASS, 'Save', 'Save this note', () => {
         const written = text.value.trim();
         if (!written) {
-          this._entry = null;
+          this._closeEntry(id);
           this._render();
           return;
         }
@@ -784,7 +824,7 @@ export class NotesPanel extends Widget {
     );
     buttons.appendChild(
       button(BUTTON_CLASS, 'Cancel', 'Cancel this note', () => {
-        this._entry = null;
+        this._closeEntry(id);
         this._render();
       })
     );

@@ -745,6 +745,28 @@ export class NotesController implements IDisposable {
   }
 
   /**
+   * Remove a document marker that holds no note, which is what the plus wrote
+   * for a note the reader then left without writing. The test runs inside the
+   * edit, on the source of each attempt, so a note another writer put into the
+   * marker meanwhile keeps it.
+   */
+  async removeEmptyDocument(id: string): Promise<void> {
+    await this._refresh();
+    if (this._disposed) {
+      return;
+    }
+    await this._write(current => {
+      const found = parseMarks(current).find(each => each.id === id);
+      if (found?.type !== DOCUMENT_TYPE || found.notes.length > 0) {
+        return [];
+      }
+      return [found.open, found.close]
+        .filter((span): span is ISpan => !!span)
+        .map(span => markerSpan(current, span));
+    });
+  }
+
+  /**
    * Store the state of the notes panel in the document.
    */
   async setPanelState(state: PanelState): Promise<void> {
@@ -753,13 +775,23 @@ export class NotesController implements IDisposable {
       return;
     }
     // The panel follows at once; the document follows when the write lands.
+    // Until every such write has returned, a read finds the file holding a
+    // state the reader has already moved on from, so it leaves this one be.
+    // Each attempt of the write reads the state as it stands, not the state
+    // this call was given, so a refused write retried after a newer state
+    // landed stores the newer state.
     this._state = state;
+    this._panelWrites++;
     this._changed.emit();
-    await this._refresh();
-    if (this._disposed) {
-      return;
+    try {
+      await this._refresh();
+      if (this._disposed) {
+        return;
+      }
+      await this._write(source => settingsEdits(source, this._state));
+    } finally {
+      this._panelWrites--;
     }
-    await this._write(source => settingsEdits(source, state));
   }
 
   /**
@@ -1100,10 +1132,15 @@ export class NotesController implements IDisposable {
     // the default this field already holds.
     const stored = parseSettings(source).settings;
     const hasMarks = this._marks.length > 0;
-    if (stored) {
-      this._state = stored.panel;
-    } else if (hasMarks) {
-      this._state = openingState(null, hasMarks);
+    // While a state the reader asked for is still being written, the file
+    // says what the panel was before it, and applying that would hide or
+    // move the panel under the reader until the write lands.
+    if (this._panelWrites === 0) {
+      if (stored) {
+        this._state = stored.panel;
+      } else if (hasMarks) {
+        this._state = openingState(null, hasMarks);
+      }
     }
     this._changed.emit();
     // A break is never acted on the moment it is seen. This read runs on
@@ -1633,6 +1670,8 @@ export class NotesController implements IDisposable {
    */
   private _writeGaveUp = false;
   private _deleting = false;
+  /** Panel-state writes started and not yet returned. */
+  private _panelWrites = 0;
   private _settleTimer: number | null = null;
   private _frame: number | null = null;
   private _disposed = false;

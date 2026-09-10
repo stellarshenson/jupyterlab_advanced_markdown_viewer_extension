@@ -8,44 +8,45 @@
 [![Brought To You By KOLOMOLO](https://img.shields.io/badge/Brought%20To%20You%20By-KOLOMOLO-00ffff?style=flat)](https://kolomolo.com)
 [![Donate PayPal](https://img.shields.io/badge/Donate-PayPal-blue?style=flat)](https://www.paypal.com/donate/?hosted_button_id=B4KPBJDLLXTSA)
 
-Keep open Markdown files live. When an AI agentic tool or any other process rewrites a Markdown file on disk, the open rendered view picks up the change on its own: the tab title signals it, removed text is struck on a pale red background, added text stands on a pale green background, and both fade. No more reloading the tab to see the latest content. You can also mark passages and attach notes to them, kept in the Markdown file itself.
-
-**Full disclosure:** the rest of your JupyterLab stays exactly as it was. This extension only makes sure that the Markdown file you are looking at is the one that is actually on disk.
+See the changes an AI agent, or any other program, makes to a Markdown file as it makes them. The JupyterLab Markdown Preview shows each change without a reload: added text is typed in on green, and removed text is struck through on red, then deleted. While the agent works, you can mark passages and write notes on them, stored in the Markdown file itself.
 
 ## Features
 
-- **Live updates** - open Markdown documents refresh automatically when the file changes on disk
-- **Tab title cue** - the document tab signals that new content arrived
-- **Change highlighting** - removed text is struck through on a pale red background, added text stands on a pale green background, both fading out calmly. The strike is deliberate: a reader who cannot tell red from green still sees which text is going by its line, not only by its colour
-- **Changes play out as typing** - added text appears letter by letter on its green background, in every changed place at once; removed text first turns red, then is deleted from its last letter backwards. The reader follows a change as it happens and no text disappears without warning. The `animation` setting turns this off; `animationSpeed` sets the speed in characters per second
-- **Rendered view** - live updates apply to the rendered Markdown view; an editor open on the same file keeps JupyterLab's own File Changed dialog for a save over unsaved edits
-- **Unsaved edits are never overwritten** - a change arriving while the document has unsaved edits is held, shown as a red square on the tab, and applied once the document is clean again
-- **A file that is gone says so** - a document whose file has been deleted carries a still cross on the tab, distinct from the held change by shape and by movement, and takes the new content if the file comes back
-- **Marks and notes in the file itself** - select a passage in the rendered view, right-click and mark it in one of six colours, with notes attached to it; or select with caret browsing (F7) and press Accel Shift M, also in the command palette as Mark the selected passage. A mark is a pair of HTML comments around the passage, so the Markdown file carries everything and any other renderer shows the document with no trace of it
-- **Notes on the document as a whole** - press the plus control in the notes panel's header; the note is stored in a marker at the top of the file, after any front matter, with no passage, and listed first in the panel. While the panel is hidden a small notes badge sits at the top right of the preview, faint without notes and in the chrome's own grey with them, and opens the panel
-- **A panel beside the preview** - the marks of the open document listed in order, each with its passage and its notes; a narrow strip of ticks instead, or nothing at all. The state you leave it in is written into the file, so the document opens the way you left it
-- **Marking while the agent writes** - a mark is written through the extension's own server route, which compares the file with what the preview holds and writes under a lock, so marking while writes stream in raises no File Changed dialog and the preview keeps following. A writer appending faster than about one line per 50 ms can still lose a line that lands inside the server's own write, a few milliseconds wide. A lab without the server extension, a document holding your unsaved edits, or live updates turned off keeps JupyterLab's save and its File Changed dialog; there, choose Revert, which keeps the agent's text
+- **Changes show as they are written** - the Markdown Preview shows a change to the file within half a second, with no reload
+- **Watch each change happen** - added text is typed in on green; removed text is struck through on red, then deleted
+- **Your place is kept** - the preview keeps the same text in view when the file changes outside it
+- **See which tab changed** - a half-filled circle for a new change, a red square for a change held back, a cross for a deleted file
+- **Unsaved edits are kept** - a change from disk waits while you have unsaved edits; save, then choose Revert in the File Changed dialog to take it, or Overwrite to keep your version
+- **Mark and note while the agent writes** - six colours, notes on a passage or on the whole document, all listed beside the preview
+- **Notes are stored in the file** - as HTML comments that other Markdown renderers do not show; a note line an agent adds appears in the thread
 
-![A change part way through: added text typed in on green, the last line still mid-word, and the removed text struck on red before it is deleted](docs/images/animation-01.png)
+## Screenshots
 
-![The three tab markers side by side: a half-filled circle part way through its turn on report.md, whose change is waiting to be read; a red square on draft.md, whose change is held back because the editor beside it holds unsaved edits; and a red cross on archive.md, whose file is gone from disk](docs/images/tab-05-three-markers.png)
+The screenshots use a dark theme; the colours of changes and marks change with the active JupyterLab theme.
+
+![A change being typed into the Markdown Preview](docs/images/animation-01.png)
+
+A change arriving from disk: "Monday." is struck through on red before it is deleted, "Tuesday." has been typed in on green, and two new lines are still being typed. The half-filled circle on the report.md tab shows that the file changed.
+
+![The notes panel beside the preview](docs/images/notes-01-panel.png)
+
+Notes beside the preview: a note on the whole document, then three marked passages. Each note shows who wrote it and when, and all of them are stored in report.md as HTML comments.
 
 ## Usage
 
-The screenshots below show the JupyterLab Dark theme; the colours follow the active theme.
-
-- Open a Markdown file with the Markdown Preview. It follows the file from then on; a change arriving from disk is highlighted and the tab shows a marker until you look
-- Select a passage in the preview, right-click and pick a colour under **Mark**; or select with caret browsing (F7) and press Accel Shift M. Choose **Add note** to mark and write a note in one step
+- Right-click a Markdown file in the file browser and choose **Open With**, then **Markdown Preview**. From then on a change arriving from disk is highlighted, and the tab shows an icon until you look
+- Select a passage in the preview, right-click and pick a colour under **Mark**; or select with caret browsing (F7) and press Ctrl Shift M (Cmd Shift M on macOS). Choose **Add note** to mark and write a note in one step
 - Press the plus in the notes panel header for a note on the document as a whole; the panel is shown from the badge at the top right of the preview or from Show notes in the context menu. The context menu and the palette offer no entry for the document note itself
 - Click a row in the panel to reveal its passage and open its notes, colours and removal control; the caret at the header's left edge collapses the panel to a strip of ticks, the cross hides it. With the panel hidden, the notes badge at the top right of the preview brings it back
 
-![The notes panel beside the preview: three marked passages in yellow, blue and pink, a note on the document as a whole listed first, the yellow row open with its note, Add note, colour dots and removal control, and the pink row with its note](docs/images/notes-01-panel.png)
+## Limitations
 
-![The panel collapsed to the minimap: a narrow strip of ticks at the marks' positions, with the hide control at the top, the plus and the expand caret under it](docs/images/notes-02-minimap.png)
-
-![The panel hidden: the small notes badge at the top right of the preview, in the chrome's own grey because the document holds notes](docs/images/notes-03-badge.png)
-
-![The context menu over a selection with the Mark submenu open, each of the six colours drawn with the swatch the panel shows](docs/images/notes-04-mark-menu.png)
+- A file open only in an editor is not followed; open it in the Markdown Preview. An editor open beside the preview keeps JupyterLab's own File Changed dialog for a save over unsaved edits
+- On network drives, Windows drives under WSL2 and other mounts that raise no file events, the first change can take up to 10 seconds to show; after it, the file is checked every second
+- A line an agent appends during the few milliseconds a mark is being written can be lost
+- With unsaved edits, a new mark stays in the document and reaches the file with your next save
+- With live updates off, or without the server extension, a mark is saved through JupyterLab, whose File Changed dialog can appear if an agent wrote in between; Revert keeps the agent's text and drops the new mark
+- Showing, collapsing or hiding the notes panel stores that state in the file as an HTML comment
 
 ## Settings
 
