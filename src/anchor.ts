@@ -668,6 +668,32 @@ function widen(
 const LINE_PREFIX = /^[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)?$/;
 
 /**
+ * Whether an offset sits on a row of a table: a run of lines without a blank
+ * one whose second line is the separator row and whose first holds a pipe.
+ * A marker on such a row must stay on the row (ACC-NOTES-154).
+ */
+export function inTableRow(source: string, offset: number): boolean {
+  const lines = lineRanges(source);
+  let first = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = source.slice(lines[i].start, lines[i].end);
+    if (BLANK.test(raw)) {
+      first = i + 1;
+      continue;
+    }
+    if (lines[i].start <= offset && offset <= lines[i].end) {
+      if (first + 1 >= lines.length) {
+        return false;
+      }
+      const head = source.slice(lines[first].start, lines[first].end);
+      const second = source.slice(lines[first + 1].start, lines[first + 1].end);
+      return head.includes('|') && isSeparator(second);
+    }
+  }
+  return false;
+}
+
+/**
  * Place the opening marker so it never starts a line.
  *
  * CommonMark reads `<!--` at the start of a line as an HTML block and takes
@@ -689,7 +715,11 @@ function placeOpening(
     return { at: offset, ownLine };
   }
   const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
-  if (!LINE_PREFIX.test(source.slice(lineStart, offset))) {
+  // A line of its own inside a table would end the table (ACC-NOTES-154).
+  if (
+    !LINE_PREFIX.test(source.slice(lineStart, offset)) ||
+    inTableRow(source, offset)
+  ) {
     return { at: offset, ownLine: false };
   }
   if (lineStart === 0) {

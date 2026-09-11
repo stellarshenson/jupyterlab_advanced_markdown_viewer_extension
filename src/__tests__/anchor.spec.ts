@@ -1,5 +1,6 @@
 import {
   IPassage,
+  inTableRow,
   IRenderedRange,
   ISelectionRange,
   ISourceRange,
@@ -604,6 +605,31 @@ describe('selectionToSource', () => {
     expect(applyMarkers(source, range)).toBe(
       '- one item<!-- mark:m note -->\n- two item<!-- /mark:m -->'
     );
+  });
+
+  it('keeps the opening marker inline on a table row, even at the first word of a cell (ACC-NOTES-154)', () => {
+    const source =
+      'Intro line.\n\n| Fruit | Count |\n| --- | --- |\n| apples and pears | 3 |\n| plums | 4 |';
+    // The table as marked writes it, a newline between every tag.
+    const root = render(
+      '<p>Intro line.</p>\n<table>\n<thead>\n<tr>\n<th>Fruit</th>\n<th>Count</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>apples and pears</td>\n<td>3</td>\n</tr>\n<tr>\n<td>plums</td>\n<td>4</td>\n</tr>\n</tbody>\n</table>'
+    );
+    const range = sourceRange(root, source, 'apples', 'pears');
+    expect(range.startOwnLine).toBe(false);
+    expect(range.endOwnLine).toBe(false);
+    expect(applyMarkers(source, range)).toBe(
+      'Intro line.\n\n| Fruit | Count |\n| --- | --- |\n| <!-- mark:m note -->apples and pears<!-- /mark:m --> | 3 |\n| plums | 4 |'
+    );
+  });
+
+  it('says which offsets sit on a table row (ACC-NOTES-154)', () => {
+    const source =
+      'Intro line.\n\n| Fruit | Count |\n| --- | --- |\n| apples | 3 |\n\nAfter the table.\n\n| not | a table |\n| no separator | here |';
+    expect(inTableRow(source, source.indexOf('Intro'))).toBe(false);
+    expect(inTableRow(source, source.indexOf('Fruit'))).toBe(true);
+    expect(inTableRow(source, source.indexOf('apples'))).toBe(true);
+    expect(inTableRow(source, source.indexOf('After'))).toBe(false);
+    expect(inTableRow(source, source.indexOf('separator'))).toBe(false);
   });
 
   it('places the marker before a blockquote it starts, not after its marker', () => {

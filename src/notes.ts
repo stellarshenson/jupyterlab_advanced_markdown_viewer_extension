@@ -31,6 +31,7 @@ import { IMessageHandler, Message, MessageLoop } from '@lumino/messaging';
 import { ISignal, Signal } from '@lumino/signaling';
 
 import {
+  inTableRow,
   IRenderedRange,
   ISourceScan,
   passageToRendered,
@@ -840,7 +841,10 @@ export class NotesController implements IDisposable {
     const target = event.target as Element | null;
     const element = target?.closest?.(`.${MARK_CLASS}`) as HTMLElement | null;
     const id = element?.dataset.mark;
-    if (id) {
+    // A click that ends a drag over the passage is the reader selecting text
+    // inside the mark, not asking for its row: an activation would move the
+    // focus into the note field and take the selection away (DEF-NOTES-91).
+    if (id && (window.getSelection()?.isCollapsed ?? true)) {
       this._activated.emit(id);
     }
   };
@@ -1447,7 +1451,10 @@ export class NotesController implements IDisposable {
         {
           start: mark.open.start,
           end: mark.open.end,
-          text: serialiseOpening(change(mark))
+          text: serialiseOpening(
+            change(mark),
+            inTableRow(source, mark.open.start)
+          )
         }
       ];
     });

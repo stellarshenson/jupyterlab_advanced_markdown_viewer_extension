@@ -918,6 +918,29 @@ describe('NotesController', () => {
       expect(h.saves).toHaveLength(1);
     });
 
+    it('writes the note on one line when the mark sits in a table row (ACC-NOTES-154)', async () => {
+      const h = open(
+        `| Fruit | Count |\n| --- | --- |\n| <!-- mark:${ONE} note colour=yellow -->beta gamma<!-- /mark:${ONE} --> | 3 |\n`
+      );
+      await ready();
+
+      await h.controller.addNote(ONE, 'first line\nwith a | pipe');
+
+      const [mark] = parseMarks(h.source());
+      expect(mark.notes[0].text).toBe('first line\nwith a | pipe');
+      const opening = h.source().slice(mark.open!.start, mark.open!.end);
+      expect(opening).not.toContain('\n');
+      expect(opening).toContain('first line\\nwith a \\| pipe');
+      // The table still has three rows of two cells.
+      expect(
+        h
+          .source()
+          .split('\n')
+          .filter(line => line.trim())
+      ).toHaveLength(3);
+      expect(h.source()).toContain(`<!-- /mark:${ONE} --> | 3 |`);
+    });
+
     it('writes the note into the first of the two pairs a copy left behind', async () => {
       // A reader who copies a marked paragraph in the editor copies its
       // markers with it. The identifier then names one mark, the first pair,
@@ -2882,6 +2905,23 @@ describe('NotesController', () => {
       );
 
       expect(seen).toEqual([ONE]);
+    });
+
+    it('says nothing when the click ends a selection inside the passage (DEF-NOTES-91)', async () => {
+      const h = open(marked());
+      await ready();
+      h.render(markedHtml());
+      const seen: string[] = [];
+      h.controller.activated.connect((_, id) => seen.push(id));
+      // The mouse came up at the end of a drag over the marked text: the
+      // window holds a selection that is not collapsed.
+      stubSelection({ isCollapsed: false, rangeCount: 1 });
+
+      painted(h.root)[0].dispatchEvent(
+        new MouseEvent('click', { bubbles: true })
+      );
+
+      expect(seen).toEqual([]);
     });
 
     it('says nothing when the click is not on a marked passage', async () => {

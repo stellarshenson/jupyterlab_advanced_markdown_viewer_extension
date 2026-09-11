@@ -179,6 +179,32 @@ const ATTRIBUTE = /([a-z][a-z0-9-]*)=(?:"([^"]*)"|([^\s"]+))[ \t]*/y;
 const ENTRY =
   /^@([A-Za-z0-9_.-]+) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z):[ ]?(.*)$/;
 
+/** Where the escaped notes of a single-line marker begin: the first entry head. */
+const INLINE_NOTES =
+  /(?:^|[ \t])@[A-Za-z0-9_.-]+ \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z:/;
+
+/**
+ * The note lines of a marker written on one line, as a table row needs it
+ * (ACC-NOTES-154): a newline is written as a backslash and n, a pipe as a
+ * backslash and a pipe, so the row's cells stay where they are, and a
+ * backslash is doubled so the two read back apart.
+ */
+function escapeInline(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/\|/g, '\\|');
+}
+
+/**
+ * The inverse of {@link escapeInline}; any other backslash stays as it is.
+ */
+function unescapeInline(text: string): string {
+  return text.replace(/\\([\\n|])/g, (_, char: string) =>
+    char === 'n' ? '\n' : char
+  );
+}
+
 /**
  * One HTML comment of the source.
  */
@@ -318,7 +344,20 @@ function readMarkers(source: string): IMarker[] {
     if (!opening) {
       continue;
     }
-    const attributes = parseAttributes(opening[3]);
+    // A marker on one line never holds notes in the multi-line form, so a
+    // tail that carries an entry head after the attributes is the escaped
+    // form a table row takes (ACC-NOTES-154): the notes are unescaped and
+    // read as the lines they stand for.
+    let tail = opening[3];
+    let escaped = '';
+    if (split < 0) {
+      const at = tail.search(INLINE_NOTES);
+      if (at >= 0) {
+        escaped = tail.slice(at).replace(/^[ \t]+|[ \t]+$/g, '');
+        tail = tail.slice(0, at);
+      }
+    }
+    const attributes = parseAttributes(tail);
     if (!attributes) {
       continue;
     }
@@ -329,7 +368,9 @@ function readMarkers(source: string): IMarker[] {
         id: opening[1],
         type: opening[2],
         attributes,
-        notes: parseNotes(split < 0 ? '' : comment.inner.slice(split + 1))
+        notes: parseNotes(
+          split < 0 ? unescapeInline(escaped) : comment.inner.slice(split + 1)
+        )
       }
     });
   }
@@ -480,18 +521,23 @@ function noteLines(notes: INoteEntry[]): string[] {
  * Write the opening marker of a mark.
  *
  * A bare mark is one line; with notes the comment closes with `-->` on its own
- * line. Attributes are written in the order they are held, so the ones this
- * version does not define survive the rewrite.
+ * line, unless the marker is asked inline, when the note lines are escaped
+ * onto the one line. Attributes are written in the order they are held, so
+ * the ones this version does not define survive the rewrite.
  */
-export function serialiseOpening(mark: IMarkContent): string {
+export function serialiseOpening(mark: IMarkContent, inline = false): string {
   const attributes = mark.attributes
     .map(attribute => ` ${attribute.key}=${serialiseValue(attribute.value)}`)
     .join('');
   const head = `mark:${mark.id} ${mark.type}${attributes}`;
   const lines = noteLines(mark.notes);
-  return lines.length
-    ? `<!-- ${head}\n${lines.join('\n')}\n-->`
-    : `<!-- ${head} -->`;
+  if (!lines.length) {
+    return `<!-- ${head} -->`;
+  }
+  // Inside a table row the marker must stay on its line (ACC-NOTES-154).
+  return inline
+    ? `<!-- ${head} ${escapeInline(lines.join('\n'))} -->`
+    : `<!-- ${head}\n${lines.join('\n')}\n-->`;
 }
 
 /**

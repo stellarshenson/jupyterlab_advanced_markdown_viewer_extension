@@ -713,6 +713,45 @@ describe('selecting a mark', () => {
     expect(asked).toEqual(['state expanded']);
   });
 
+  it('opens the row alone from a click on a passage whose mark holds a note (ACC-NOTES-153)', () => {
+    panel.setMarks([
+      item('a', 'first passage', {
+        mark: mark('a', { notes: [note('kj', '2026-09-11', 'already said')] })
+      })
+    ]);
+    panel.openFromPassage('a');
+    // The row is open with its note and its controls, no field is on screen
+    // and Add note is offered; the passage, where the reader is, is not
+    // scrolled to.
+    expect(panel.selected).toBe('a');
+    expect(rows()[0].textContent).toContain('already said');
+    expect(
+      rows()[0].querySelector('.jp-AdvancedMd-notesControls')
+    ).not.toBeNull();
+    expect(panel.node.querySelector('textarea')).toBeNull();
+    expect(
+      Array.from(rows()[0].querySelectorAll('button')).map(b => b.textContent)
+    ).toContain('Add note');
+    expect(scrolled).toEqual([]);
+  });
+
+  it('opens the note entry from a click on a bare mark (ACC-NOTES-153)', () => {
+    panel.openFromPassage('a');
+    expect(panel.node.querySelector('textarea')).not.toBeNull();
+    expect(scrolled).toEqual([]);
+  });
+
+  it('asks for the expanded state from a click on a passage in the minimap', () => {
+    panel.state = 'minimap';
+    panel.setMarks([
+      item('a', 'first passage', {
+        mark: mark('a', { notes: [note('kj', '2026-09-11', 'already said')] })
+      })
+    ]);
+    panel.openFromPassage('a');
+    expect(asked).toEqual(['state expanded']);
+  });
+
   it('names what the hide control hides', () => {
     const control = panel.node.querySelector<HTMLButtonElement>(
       `.${CLOSE_CLASS}`
@@ -836,6 +875,57 @@ describe('writing a note', () => {
     ).toEqual(['jp-AdvancedMd-notesButton', 'jp-AdvancedMd-notesButton']);
     expect(box.placeholder).toBe('Write a note');
     expect(form.querySelectorAll('button')).toHaveLength(2);
+  });
+
+  // jsdom lays nothing out, so the measurements the box grows by are given.
+  const measure = (box: HTMLTextAreaElement, scroll: number): void => {
+    Object.defineProperty(box, 'scrollHeight', {
+      configurable: true,
+      get: () => scroll
+    });
+    Object.defineProperty(box, 'offsetHeight', {
+      configurable: true,
+      get: () => 82
+    });
+    Object.defineProperty(box, 'clientHeight', {
+      configurable: true,
+      get: () => 80
+    });
+  };
+
+  it('grows the box to what its content needs as the note is typed (ACC-NOTES-152)', () => {
+    press(rows()[0], 'Add note');
+    const box = panel.node.querySelector('textarea')!;
+    const heights: string[] = [];
+    // The inline height is cleared before the measurement, so the rows set
+    // the floor and a box shrinks back when lines are deleted.
+    Object.defineProperty(box.style, 'height', {
+      configurable: true,
+      get: () => heights[heights.length - 1] ?? '',
+      set: (value: string) => {
+        heights.push(value);
+      }
+    });
+    measure(box, 80);
+    type('one line');
+    expect(heights).toEqual(['', '82px']);
+    measure(box, 150);
+    type('one line\nand six\nmore\nlines\nof\na\nnote');
+    expect(heights.slice(2)).toEqual(['', '152px']);
+  });
+
+  it('opens a restored draft at the height its lines need (ACC-NOTES-152)', async () => {
+    press(rows()[0], 'Add note');
+    type('a draft\nof\nfive\nlines\nhere');
+    // The rows become ticks and rows again: the form is built anew with the
+    // draft, off the document, and measured once it is in it.
+    panel.state = 'minimap';
+    panel.state = 'expanded';
+    const box = panel.node.querySelector('textarea')!;
+    expect(box.value).toBe('a draft\nof\nfive\nlines\nhere');
+    measure(box, 120);
+    await Promise.resolve();
+    expect(box.style.height).toBe('122px');
   });
 
   it('writes what was typed', async () => {

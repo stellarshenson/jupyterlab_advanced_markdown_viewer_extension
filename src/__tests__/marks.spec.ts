@@ -572,6 +572,57 @@ describe('parseMarks', () => {
     expect(passageOf(source, marks[0])).toBe('passage');
     expect(serialiseOpening(marks[0])).toBe(written);
   });
+
+  it('writes a marker asked inline on one line with its notes escaped, and reads it back (ACC-NOTES-154)', () => {
+    const notes = [
+      {
+        author: 'kj',
+        stamp: '2026-09-11T18:40:00Z',
+        text: 'first line\nsecond line with a | pipe and a \\ backslash'
+      },
+      { author: 'kj', stamp: '2026-09-11T18:41:00Z', text: 'another note' }
+    ];
+    const written = serialiseOpening(
+      {
+        id: ID,
+        type: 'note',
+        attributes: [{ key: 'colour', value: 'yellow' }],
+        notes
+      },
+      true
+    );
+
+    // One line, and neither a newline nor a bare pipe inside it.
+    expect(written).not.toContain('\n');
+    expect(written).toBe(
+      `<!-- mark:${ID} note colour=yellow @kj 2026-09-11T18:40:00Z: first line\\nsecond line with a \\| pipe and a \\\\ backslash\\n@kj 2026-09-11T18:41:00Z: another note -->`
+    );
+    const source = `| cell ${written}passage${serialiseClosing(ID)} more | 3 |`;
+    const marks = parseMarks(source);
+    expect(marks).toHaveLength(1);
+    expect(marks[0].colour).toBe('yellow');
+    expect(marks[0].notes).toEqual(notes);
+    expect(passageOf(source, marks[0])).toBe('passage');
+    // Rewritten inline it is the same text; rewritten in the multi-line form
+    // it reads back the same notes.
+    expect(serialiseOpening(marks[0], true)).toBe(written);
+    expect(
+      parseMarks(`x ${serialiseOpening(marks[0])}p${serialiseClosing(ID)}`)[0]
+        .notes
+    ).toEqual(notes);
+  });
+
+  it('reads the multi-line form as before, backslashes untouched', () => {
+    const open = [
+      `<!-- mark:${ID} note`,
+      '@kj 2026-09-11T18:40:00Z: a path C:\\temp\\new and a literal \\n',
+      '-->'
+    ].join('\n');
+    const marks = parseMarks(`x ${open}p${serialiseClosing(ID)}`);
+    expect(marks[0].notes[0].text).toBe(
+      'a path C:\\temp\\new and a literal \\n'
+    );
+  });
 });
 
 describe('settings marker', () => {

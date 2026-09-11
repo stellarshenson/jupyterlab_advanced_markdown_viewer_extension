@@ -623,13 +623,16 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
  | The note field is a rounded box with room around the text and no resize
  | grip. While it holds the focus its border takes the brand colour, in place
  | of the browser's outline and with no ring around the box. The text being
- | written is in the font and at the size of the notes shown in the rows.
+ | written is in the font and at the size of the notes shown in the rows. The
+ | box grows with its content (NotesPanel._form sets its height), so it never
+ | needs a scrollbar of its own.
  */
 .jp-AdvancedMd-notesForm textarea {
   width: 100%;
   padding: 8px 10px;
   box-sizing: border-box;
   resize: none;
+  overflow-y: hidden;
   color: inherit;
   font-family: inherit;
   font-size: inherit;

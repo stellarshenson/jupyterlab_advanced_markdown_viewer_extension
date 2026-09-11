@@ -271,8 +271,9 @@ const plugin: JupyterFrontEndPlugin<void> = {
         );
       };
       notes.changed.connect(sync);
-      // A click on a marked passage is the second way to the note entry.
-      notes.activated.connect((_, id) => panel.selectMark(id, true));
+      // A click on a marked passage opens its row, and the note entry with
+      // it on a mark that holds no note yet (ACC-NOTES-153).
+      notes.activated.connect((_, id) => panel.openFromPassage(id));
       sync();
 
       attachments.set(widget, { widget, live, notes, panel });

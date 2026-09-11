@@ -440,17 +440,19 @@ export class NotesPanel extends Widget {
    * passage into sight and flash it.
    *
    * @param id - the mark to select
-   * @param openNote - also open the note entry, which is what a click on the
-   * marked passage itself asks for; the passage is where the reader is, so
+   * @param openNote - also open the note entry
+   * @param fromPassage - the ask came from the marked passage itself, as an
+   * opened entry does by default; the passage is where the reader is, so
    * nothing is scrolled unless the panel's opening pushed it out of the view
    */
-  selectMark(id: string, openNote = false): void {
+  selectMark(id: string, openNote = false, fromPassage = openNote): void {
     if (!this._items.some(item => item.mark.id === id)) {
       return;
     }
-    // A note entry exists only in the expanded state, and a reader who asked
-    // for the entry asked for the state that holds it.
-    if (openNote && this._state !== 'expanded') {
+    // A note entry, and a row a click on the passage asked for, exist only in
+    // the expanded state, and a reader who asked for either asked for the
+    // state that holds it.
+    if ((openNote || fromPassage) && this._state !== 'expanded') {
       this._handlers.setState('expanded');
     }
     this._selected = id;
@@ -459,9 +461,9 @@ export class NotesPanel extends Widget {
       this._openEntry(id);
     }
     this._render();
-    // The entry is opened from the passage itself, where the reader already
-    // is; a row selected in the panel is what needs the passage brought in.
-    if (!openNote) {
+    // A click on the passage comes from where the reader already is; a row
+    // selected in the panel is what needs the passage brought in.
+    if (!fromPassage) {
       this._reveal(id);
     } else {
       // The first mark of a document opened the panel, which took its width
@@ -470,6 +472,18 @@ export class NotesPanel extends Widget {
       // the check reads the new layout; an open panel leaves nothing to do.
       MessageLoop.flush();
       this._keepInView(id);
+    }
+  }
+
+  /**
+   * A click on the marked passage: the row opens, and the note entry with it
+   * only on a mark that holds no note yet (ACC-NOTES-153). A mark that has a
+   * note is shown, not written on again.
+   */
+  openFromPassage(id: string): void {
+    const mark = this._items.find(item => item.mark.id === id)?.mark;
+    if (mark) {
+      this.selectMark(id, mark.notes.length === 0, true);
     }
   }
 
@@ -858,9 +872,20 @@ export class NotesPanel extends Widget {
     text.placeholder = 'Write a note';
     text.setAttribute('aria-label', 'Note');
     text.value = draft;
+    // The box follows its content: the inline height is cleared, so the four
+    // rows set the floor, then set to what the content needs plus the border
+    // (ACC-NOTES-152). A scroll height is never below the client height, so
+    // the box never falls under its four rows.
+    const grow = (): void => {
+      text.style.height = '';
+      text.style.height = `${text.scrollHeight + text.offsetHeight - text.clientHeight}px`;
+    };
     text.addEventListener('input', () => {
       this._entry = { id, text: text.value };
+      grow();
     });
+    // A restored draft is measured once the form is in the document.
+    void Promise.resolve().then(grow);
     form.appendChild(text);
     const buttons = document.createElement('div');
     buttons.className = FORM_BUTTONS_CLASS;

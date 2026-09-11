@@ -1255,6 +1255,188 @@ test.describe('marking a passage', () => {
     await expect.poll(border).not.toBe(brand);
   });
 
+  test('ACC-NOTES-152 grows the note field with its content as a note is typed, and shrinks it back', async ({
+    page
+  }) => {
+    await mark(page, P1);
+    await openRow(page);
+    await panelButton(page, 'Add note').click();
+    const field = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(field).toBeFocused();
+    const size = () =>
+      field.evaluate((node: Element) => {
+        const box = node as HTMLTextAreaElement;
+        return {
+          height: box.getBoundingClientRect().height,
+          client: box.clientHeight,
+          scroll: box.scrollHeight
+        };
+      });
+    const opened = await size();
+
+    // Seven short lines need more than the four rows the box opens with:
+    // the box is taller and holds every line without a scrollbar of its own.
+    await field.pressSequentially('one\ntwo\nthree\nfour\nfive\nsix\nseven');
+    await expect
+      .poll(async () => (await size()).height)
+      .toBeGreaterThan(opened.height);
+    const grown = await size();
+    expect(grown.client).toBeGreaterThanOrEqual(grown.scroll);
+
+    // The lines deleted, the box is back at the height it opened with.
+    await field.press('ControlOrMeta+a');
+    await field.press('Backspace');
+    await expect.poll(async () => (await size()).height).toBe(opened.height);
+
+    // A draft restored after a rebuild opens at the height its lines need.
+    await field.pressSequentially('one\ntwo\nthree\nfour\nfive\nsix\nseven');
+    await expect.poll(async () => (await size()).height).toBe(grown.height);
+    await panel(page).locator('.jp-AdvancedMd-notesCollapse').click();
+    await expect(page.locator('.jp-AdvancedMd-notesForm textarea')).toHaveCount(
+      0
+    );
+    await panel(page).locator('.jp-AdvancedMd-notesExpand').click();
+    await expect(field).toHaveValue('one\ntwo\nthree\nfour\nfive\nsix\nseven');
+    await expect.poll(async () => (await size()).height).toBe(grown.height);
+  });
+
+  test('ACC-NOTES-153 opens the row and no note entry from a click on a passage whose mark holds a note, and still marks inside it', async ({
+    page,
+    tmpPath
+  }) => {
+    await mark(page, P1);
+    await openRow(page);
+    await panelButton(page, 'Add note').click();
+    await writeNote(page, 'Say which orchard.');
+    await fileWhen(`${tmpPath}/${FILE}`, holds =>
+      holds.includes('Say which orchard.')
+    );
+    await expect(page.locator('.jp-AdvancedMd-notesForm textarea')).toHaveCount(
+      0
+    );
+
+    // The mark holds a note: the click opens the row, shows the note and
+    // starts no entry; Add note stays on offer.
+    await painted(page).first().click();
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesControls')
+    ).toBeVisible();
+    await expect(rows(page).first()).toContainText('Say which orchard.');
+    await page.waitForTimeout(500);
+    await expect(page.locator('.jp-AdvancedMd-notesForm textarea')).toHaveCount(
+      0
+    );
+    await expect(panelButton(page, 'Add note')).toBeVisible();
+
+    // A second mark inside the first is still written.
+    await mark(page, 'and pears', undefined, 'blue');
+    const text = await fileWhen(
+      `${tmpPath}/${FILE}`,
+      holds => openingIds(holds).length === 2
+    );
+    expect(new Set(closingIds(text))).toEqual(new Set(openingIds(text)));
+    await expect(rows(page)).toHaveCount(2);
+  });
+
+  test('DEF-NOTES-91 lets the mouse select text inside a marked passage', async ({
+    page
+  }) => {
+    await mark(page, P1);
+    await expect(painted(page).first()).toBeVisible();
+    await expect(page.locator('.jp-AdvancedMd-selecting')).toHaveCount(0);
+    await expect(page.locator('.jp-AdvancedMd-notesForm textarea')).toHaveCount(
+      0
+    );
+
+    // The two ends of "and pears" inside the painted passage, on screen.
+    const ends = await page.evaluate(() => {
+      const span = document.querySelector<HTMLElement>(
+        '.jp-RenderedMarkdown [data-mark]'
+      );
+      if (!span) {
+        throw new Error('no painted passage');
+      }
+      const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node && !(node.textContent ?? '').includes('and pears')) {
+        node = walker.nextNode();
+      }
+      if (!node) {
+        throw new Error('the painted passage does not read "and pears"');
+      }
+      const at = (node.textContent ?? '').indexOf('and pears');
+      const range = document.createRange();
+      range.setStart(node, at);
+      range.setEnd(node, at + 'and pears'.length);
+      const box = range.getBoundingClientRect();
+      return {
+        x1: box.left + 1,
+        x2: box.right - 1,
+        y: box.top + box.height / 2
+      };
+    });
+
+    // A drag with the mouse, as the reader selects: the mouse comes up on the
+    // mark, which is also a click on it.
+    await page.mouse.move(ends.x1, ends.y);
+    await page.mouse.down();
+    await page.mouse.move(ends.x2, ends.y, { steps: 8 });
+    await page.mouse.up();
+
+    // The selection stands, and no note field was opened over it.
+    await page.waitForTimeout(500);
+    expect(await selectedText(page)).toContain('and pears');
+    await expect(page.locator('.jp-AdvancedMd-notesForm textarea')).toHaveCount(
+      0
+    );
+  });
+
+  test('ACC-NOTES-154 keeps a table whole when a cell is marked and a two-line note with a pipe is written on it', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/table.md`;
+    const table = [
+      '# Fruit',
+      '',
+      'A table follows.',
+      '',
+      '| Fruit | Count |',
+      '| --- | --- |',
+      '| apples and pears | 3 |',
+      '| plums and figs | 4 |',
+      ''
+    ].join('\n');
+    await page.contents.uploadContent(table, 'text', path);
+    await openPreview(page, path, 'A table follows.');
+    const cells = page.locator('.jp-RenderedMarkdown:visible table td');
+    await expect(cells).toHaveCount(4);
+
+    // A mark on words of a cell, and a note of two lines with a pipe in it.
+    await mark(page, 'and pears');
+    await openRow(page);
+    await panelButton(page, 'Add note').click();
+    await writeNote(page, 'first line\nwith a | pipe');
+    const text = await fileWhen(path, holds => holds.includes('first line'));
+
+    // The marker stays on the row, one line, the note escaped inside it, so
+    // the table keeps its four lines and its cells.
+    const lines = text.split('\n').filter(line => line.startsWith('|'));
+    expect(lines).toHaveLength(4);
+    expect(lines[2]).toContain('first line\\nwith a \\| pipe');
+    expect(lines[2]).toContain('<!-- /mark:');
+    expect(lines[2].endsWith('| 3 |')).toBe(true);
+    expect(text).not.toContain('\n-->');
+
+    // The preview still renders a table of four cells, and the panel lists
+    // the note with its two lines and its pipe.
+    await expect(cells).toHaveCount(4);
+    await expect(cells.nth(0)).toContainText('apples and pears');
+    await expect(painted(page)).toHaveCount(1);
+    await expect(rows(page).first()).toContainText('first line');
+    await expect(rows(page).first()).toContainText('with a | pipe');
+  });
+
   test('ACC-NOTES-147 leaves Add note out of the row whose note is being written, and keeps its colours', async ({
     page
   }) => {
