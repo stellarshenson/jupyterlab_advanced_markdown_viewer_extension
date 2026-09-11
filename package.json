@@ -1,6 +1,6 @@
 {
     "name": "jupyterlab_advanced_markdown_viewer_extension",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "description": "Live Markdown preview for JupyterLab: an open rendered Markdown document follows the file on disk without a reload, with changes typed in on a green background, removed text shown red before it goes, and a tab cue",
     "keywords": [
         "jupyter",
