@@ -32,6 +32,7 @@ import { ISignal, Signal } from '@lumino/signaling';
 
 import {
   IRenderedRange,
+  ISourceScan,
   passageToRendered,
   renderedToSource,
   renderedWords,
@@ -497,7 +498,9 @@ export class NotesController implements IDisposable {
    */
   get marks(): IListedMark[] {
     const source = this._source;
-    const listed = this._marks.map(mark => this._listed(mark, source));
+    // One scan of the whole source serves every row, as it does in _paint.
+    const scan = tokeniseSource(source);
+    const listed = this._marks.map(mark => this._listed(mark, source, scan));
     // A note on the document as a whole leads the list wherever its marker
     // sits; the passage marks follow in document order.
     return [
@@ -1318,11 +1321,24 @@ export class NotesController implements IDisposable {
   /**
    * A mark in the shape the panel lists it in.
    */
-  private _listed(mark: IMark, source: string): IListedMark {
+  private _listed(mark: IMark, source: string, scan: ISourceScan): IListedMark {
+    // The passage is listed by its words as the renderer shows them, not by
+    // the source between the markers: a marker placed on its own line before
+    // a list item takes the item's number into the passage, and one widened
+    // out of emphasis takes the delimiters (DEF-NOTES-84). The words are the
+    // scan's tokens that overlap the passage, read in the context of their
+    // own line: a slice read on its own would take a dash or a hash at its
+    // start for a bullet or a heading marker (DEF-NOTES-87).
+    const passage = mark.passage;
     return {
       ...mark,
-      text: mark.passage
-        ? source.slice(mark.passage.start, mark.passage.end)
+      text: passage
+        ? scan.tokens
+            .filter(
+              token => token.end > passage.start && token.start < passage.end
+            )
+            .map(token => token.text)
+            .join(' ')
         : '',
       position: mark.open ? mark.open.start / Math.max(source.length, 1) : 0,
       unanchored:

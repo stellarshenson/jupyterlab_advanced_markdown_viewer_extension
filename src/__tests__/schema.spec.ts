@@ -91,11 +91,20 @@ describe('the settings schema', () => {
    * asserted on both sides rather than only compared, so raising one of them
    * alone is reported here instead of passing quietly.
    */
-  it('animates a change out of the box, at 25 characters per second', () => {
+  it('animates a change out of the box, at 50 characters per second', () => {
     expect(schema.properties.animation.default).toBe(true);
     expect(DEFAULT_SETTINGS.animation).toBe(true);
-    expect(schema.properties.animationSpeed.default).toBe(25);
-    expect(DEFAULT_SETTINGS.animationSpeed).toBe(25);
+    expect(schema.properties.animationSpeed.default).toBe(50);
+    expect(DEFAULT_SETTINGS.animationSpeed).toBe(50);
+  });
+
+  /**
+   * ACC-HILITE-21. The highlight stays five seconds once the change has
+   * finished arriving, on both sides for the same reason as above.
+   */
+  it('keeps a highlight for five seconds out of the box', () => {
+    expect(schema.properties.fadeDuration.default).toBe(5000);
+    expect(DEFAULT_SETTINGS.fadeDuration).toBe(5000);
   });
 
   /**

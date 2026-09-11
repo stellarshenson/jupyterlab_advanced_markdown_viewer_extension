@@ -275,6 +275,13 @@ export function tokeniseSource(source: string): ISourceScan {
     }
     const tag = TAG.exec(rest);
     if (tag) {
+      // A br is a line break in the render, where the words either side of
+      // it are two words, so it ends the word here too; any other tag sits
+      // inside the word it interrupts (DEF-NOTES-86). The parser makes a br
+      // of the end-tag spelling as well.
+      if (/^<\/?br\b/i.test(tag[0])) {
+        flush();
+      }
       spans.push({ kind: 'html', start: i, end: i + tag[0].length });
       return i + tag[0].length;
     }

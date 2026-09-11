@@ -144,6 +144,7 @@ function makeFixture(text: string) {
   };
   context.saveState = new Signal(context);
   context.pathChanged = new Signal(context);
+  context.fileChanged = new Signal(context);
 
   const write = (content: string, hash: string) => {
     disk.content = content;
@@ -179,6 +180,11 @@ describe('FileWatcher', () => {
     return settle();
   };
   const reads = () => fixture.contents.get.mock.calls.length;
+  // Unsaved edits: the reader types, which the shared model reports as
+  // dirty. A flag flipped without a change of text is what a reload leaves
+  // behind, and the watcher treats that as nothing unsaved (DEF-CUE-85).
+  const type = (text = 'typed ') =>
+    fixture.model.sharedModel.updateSource(0, 0, text);
   // Build a watcher over the fixture and let the check its registration
   // starts finish.
   const create = async () => {
@@ -287,12 +293,12 @@ describe('FileWatcher', () => {
   });
 
   it('reports a change once while the document is dirty, then applies it once clean', async () => {
-    fixture.model.dirty = true;
+    type();
     fixture.write('alpha beta\n', 'h1');
     await change();
     await change();
     expect(events).toEqual(['blocked:dirty']);
-    expect(fixture.source()).toBe('alpha\n');
+    expect(fixture.source()).toBe('typed alpha\n');
 
     fixture.model.dirty = false;
     fixture.model.stateChanged.emit({
@@ -306,7 +312,7 @@ describe('FileWatcher', () => {
   });
 
   it('lets a held change go when a save from this session overwrote it', async () => {
-    fixture.model.dirty = true;
+    type();
     fixture.write('alpha beta\n', 'h1');
     await change();
     fixture.model.dirty = false;
@@ -321,14 +327,167 @@ describe('FileWatcher', () => {
     expect(events).toEqual(['blocked:dirty', 'unblocked']);
   });
 
+  /**
+   * What Reload from Disk does to the Context: it writes the file into the
+   * model, records the revision it read and reports it. It clears no dirty
+   * flag and emits no save state, and the file does not move, so the channel
+   * reports nothing.
+   */
+  const reload = () => {
+    fixture.model.sharedModel.updateSource(
+      0,
+      fixture.source().length,
+      'alpha beta\n'
+    );
+    fixture.context.contentsModel = {
+      ...fixture.context.contentsModel,
+      hash: 'h1',
+      last_modified: 't-h1'
+    };
+    fixture.context.fileChanged.emit(fixture.context.contentsModel);
+  };
+
   it('lets a held change go when a reload brought it into the document', async () => {
-    fixture.model.dirty = true;
+    type();
     fixture.write('alpha beta\n', 'h1');
     await change();
-    fixture.model.dirty = false;
-    fixture.model.sharedModel.updateSource(0, 6, 'alpha beta\n');
+    reload();
+    await settle();
+    expect(events).toEqual(['blocked:dirty', 'unblocked']);
+    // The document holds what the file holds, so it is not unsaved any more.
+    expect(fixture.model.dirty).toBe(false);
+    expect(reads()).toBe(3);
+  });
+
+  it('keeps holding the change when the reader typed between the reload and the read', async () => {
+    type();
+    fixture.write('alpha beta\n', 'h1');
+    await change();
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>(resolve => {
+      open = resolve;
+    });
+    const read = fixture.contents.get.getMockImplementation();
+    fixture.contents.get.mockImplementationOnce(async path => {
+      await gate;
+      return read!(path);
+    });
+    reload();
+    fixture.model.sharedModel.updateSource(11, 11, 'typed\n');
+    open();
+    await settle();
+    // The document is no longer what the file holds: the reader's text is
+    // unsaved and the change stays reported.
+    expect(events).toEqual(['blocked:dirty']);
+    expect(fixture.model.dirty).toBe(true);
+    expect(fixture.source()).toBe('alpha beta\ntyped\n');
+  });
+
+  it('applies a write that landed while the reload was being read, the held revision being what the document holds', async () => {
+    type();
+    fixture.write('alpha beta\n', 'h1');
+    await change();
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>(resolve => {
+      open = resolve;
+    });
+    const read = fixture.contents.get.getMockImplementation();
+    fixture.contents.get.mockImplementationOnce(async path => {
+      await gate;
+      return read!(path);
+    });
+    reload();
+    // The document holds the held revision with the flag still set, and the
+    // file moves on before the read the reload started resolves.
+    fixture.write('alpha beta gamma\n', 'h2');
+    open();
+    await settle();
+    expect(events).toEqual(['blocked:dirty', 'applied']);
+    expect(fixture.model.dirty).toBe(false);
+    expect(fixture.source()).toBe('alpha beta gamma\n');
+  });
+
+  it('applies the next write after a reload that loaded the file over typed text with nothing held', async () => {
+    type();
+    // Reload from Disk with nothing held: the file did not move, so the
+    // Context records nothing and reports nothing, and the flag stays set
+    // over a document holding what the file holds.
+    fixture.model.sharedModel.updateSource(
+      0,
+      fixture.source().length,
+      'alpha\n'
+    );
+    expect(fixture.model.dirty).toBe(true);
+    fixture.write('alpha beta\n', 'h1');
+    await change();
+    expect(events).toEqual(['applied']);
+    expect(fixture.model.dirty).toBe(false);
+    expect(fixture.source()).toBe('alpha beta\n');
+  });
+
+  it('holds the first write over text typed before the watcher was built (DEF-APPLY-90)', async () => {
+    watcher.dispose();
+    events.length = 0;
+    // The reader typed in the editor, then opened the preview: the document
+    // is dirty before this watcher exists, and the text it holds is not a
+    // revision of the file. The read that closes the registration gap holds
+    // the file's text back instead of applying it over the reader's.
+    type();
+    await create();
+    expect(events).toEqual(['blocked:dirty']);
+    expect(fixture.source()).toBe('typed alpha\n');
+    fixture.write('alpha beta\n', 'h1');
+    await change();
+    expect(events).toEqual(['blocked:dirty', 'blocked:dirty']);
+    expect(fixture.source()).toBe('typed alpha\n');
+  });
+
+  it('reads nothing when the Context records a revision and nothing is held', async () => {
+    fixture.context.fileChanged.emit({
+      ...fixture.context.contentsModel,
+      hash: 'h9'
+    });
+    await settle();
+    expect(reads()).toBe(1);
+    expect(events).toEqual([]);
+  });
+
+  it('starts no second read from its own record or clean flag when it lets a held change go', async () => {
+    // The Context reports every revision it records, and the model reports
+    // its dirty flag going down; both happen inside the check that lets the
+    // change go, and a change still held at that moment would be read again.
+    fixture.context._updateContentsModel.mockImplementation((next: any) => {
+      const moved = next.hash !== fixture.context.contentsModel.hash;
+      fixture.context.contentsModel = next;
+      if (moved) {
+        fixture.context.fileChanged.emit(next);
+      }
+    });
+    let dirty = false;
+    Object.defineProperty(fixture.model, 'dirty', {
+      get: () => dirty,
+      set: (value: boolean) => {
+        if (value !== dirty) {
+          dirty = value;
+          fixture.model.stateChanged.emit({
+            name: 'dirty',
+            oldValue: !value,
+            newValue: value
+          });
+        }
+      }
+    });
+    type();
+    fixture.write('alpha beta\n', 'h1');
+    await change();
+    // The reader types what the file holds, so the document matches the file
+    // while the Context still records the revision it loaded.
+    fixture.model.sharedModel.updateSource(0, 11, 'alpha beta');
     await change();
     expect(events).toEqual(['blocked:dirty', 'unblocked']);
+    expect(fixture.context.contentsModel.hash).toBe('h1');
+    expect(fixture.model.dirty).toBe(false);
+    expect(reads()).toBe(3);
   });
 
   it('moves the registration when the document is renamed', () => {
@@ -365,7 +524,7 @@ describe('FileWatcher', () => {
     // reader then turns live updates off. The document becoming clean must
     // not bring the held change in: with the switch off the highlight and
     // the tab marker are off too, so the replacement would be silent.
-    fixture.model.dirty = true;
+    type();
     fixture.write('rewritten by another process\n', 'h1');
     await change();
     expect(events).toEqual(['blocked:dirty']);
@@ -383,21 +542,21 @@ describe('FileWatcher', () => {
     });
     await settle();
     expect(reads()).toBe(before);
-    expect(fixture.source()).toBe('alpha\n');
+    expect(fixture.source()).toBe('typed alpha\n');
     expect(events).toEqual(['blocked:dirty', 'unblocked']);
   });
 
   it('reports the held change again when watching is turned back on', async () => {
     // The held change is let go when the switch goes off, so the check the
     // switch coming back on runs is what reports it again.
-    fixture.model.dirty = true;
+    type();
     fixture.write('rewritten by another process\n', 'h1');
     await change();
     watcher.enabled = false;
     watcher.enabled = true;
     await settle();
     expect(events).toEqual(['blocked:dirty', 'unblocked', 'blocked:dirty']);
-    expect(fixture.source()).toBe('alpha\n');
+    expect(fixture.source()).toBe('typed alpha\n');
   });
 
   it('applies nothing from a read in flight when watching is turned off', async () => {

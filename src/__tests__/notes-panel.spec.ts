@@ -401,8 +401,9 @@ describe('a row', () => {
     ]);
   });
 
-  it('shows the first line of the first entry while it is closed', () => {
-    expect(texts(rows()[0])).toEqual(['first line']);
+  it('shows no note while it is closed (ACC-NOTES-150)', () => {
+    expect(texts(rows()[0])).toEqual([]);
+    expect(rows()[0].querySelector(`.${ENTRY_CLASS}`)).toBeNull();
     expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).toBeNull();
   });
 
@@ -414,9 +415,9 @@ describe('a row', () => {
   it('opens and closes independently of the other rows', () => {
     expand(rows()[0]);
     expect(texts(rows()[0])).toHaveLength(2);
-    expect(texts(rows()[1])).toEqual(['other']);
+    expect(texts(rows()[1])).toEqual([]);
     rows()[0].querySelector<HTMLButtonElement>(`.${TOGGLE_CLASS}`)!.click();
-    expect(texts(rows()[0])).toEqual(['first line']);
+    expect(texts(rows()[0])).toEqual([]);
   });
 
   it('shows the triangle on an open row alone, and opens a row from a click or Enter on it', () => {
@@ -443,25 +444,47 @@ describe('a row', () => {
     expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
   });
 
-  it('selects and opens a row from a click on one of its notes (DEF-NOTES-76)', () => {
+  it('selects a row from a click on one of its notes (DEF-NOTES-76)', () => {
+    // Only an open row shows its notes (ACC-NOTES-150), so the row is opened
+    // and the selection then moved to another row.
+    expand(rows()[1]);
+    expand(rows()[0]);
+    expect(panel.selected).toBe('a');
     rows()[1].querySelector<HTMLElement>(`.${TEXT_CLASS}`)!.click();
     expect(panel.selected).toBe('b');
     expect(rows()[1].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
   });
 
   it('leaves a row alone when a click ends a selection of its note text', () => {
+    expand(rows()[1]);
+    expand(rows()[0]);
     // This test environment's Range cannot select contents, so the selection
     // a drag over the note leaves is given directly.
     const selection = jest
       .spyOn(window, 'getSelection')
       .mockReturnValue({ isCollapsed: false } as Selection);
     rows()[1].querySelector<HTMLElement>(`.${TEXT_CLASS}`)!.click();
+    // A drag from one note to another ends in a click on the row itself.
+    rows()[1].click();
     selection.mockRestore();
-    expect(panel.selected).toBeNull();
-    expect(rows()[1].querySelector(`.${CONTROLS_CLASS}`)).toBeNull();
+    expect(panel.selected).toBe('a');
+  });
+
+  it('selects and opens a row from a click on its padding or the gap above a note (DEF-NOTES-80)', () => {
+    // The padding, and on an open row the margin above a note line, belong
+    // to no part of the row, so a click there has the row itself as its
+    // target.
+    rows()[1].click();
+    expect(panel.selected).toBe('b');
+    expect(rows()[1].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
+    // On the open row the same click keeps it open and selected.
+    rows()[1].click();
+    expect(panel.selected).toBe('b');
+    expect(rows()[1].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
   });
 
   it('carries the stamp as local time and the file value in its title', () => {
+    expand(rows()[0]);
     const stamp = rows()[0].querySelector(`.${STAMP_CLASS}`)!;
     expect(stamp.getAttribute('title')).toBe('2026-09-06T16:00:00Z');
     expect(stamp.textContent).toBe(
@@ -487,12 +510,43 @@ describe('a row', () => {
       null,
       null
     ]);
+    // A closed row carries no control to say that it opens (ACC-NOTES-148),
+    // so its description says how, read from a hidden element that is not a
+    // line of the page.
+    const description = (row: Element): string | null => {
+      const hint = panel.node.querySelector<HTMLElement>(
+        `[id="${row.getAttribute('aria-describedby')}"]`
+      );
+      return hint?.hidden ? hint.textContent : null;
+    };
+    expect(rows().map(description)).toEqual([
+      'Closed. Press Enter to open.',
+      'Closed. Press Enter to open.'
+    ]);
 
     panel.selectMark('b');
     expect(rows().map(row => row.getAttribute('aria-current'))).toEqual([
       null,
       'true'
     ]);
+    expect(rows().map(description)).toEqual([
+      'Closed. Press Enter to open.',
+      'Open. The Collapse button closes it.'
+    ]);
+    // Two previews of one file list the same marks; each panel's hints carry
+    // ids of their own, since an id is unique in the page.
+    const other = new NotesPanel({
+      root: () => root,
+      handlers,
+      state: 'expanded'
+    });
+    other.setMarks([item('a', 'first passage')]);
+    expect(
+      other.node
+        .querySelector(`.${ROW_CLASS}`)!
+        .getAttribute('aria-describedby')
+    ).not.toBe(rows()[0].getAttribute('aria-describedby'));
+    other.dispose();
 
     // The swatch is the only place a row shows its colour, so a screen
     // reader is told the colour by name.
@@ -593,6 +647,19 @@ describe('selecting a mark', () => {
     toggle.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
     );
+    expect(scrolled).toEqual([]);
+  });
+
+  it('selects nothing from a click on the controls row or the note field of an open row', () => {
+    rows()[1].querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
+    panel.selectMark('a');
+    scrolled.length = 0;
+    // The first click of a double click on Add note takes Add note out of the
+    // row (DEF-NOTES-77), so the second lands on the controls row itself.
+    press(rows()[1], 'Add note');
+    rows()[1].querySelector<HTMLElement>(`.${CONTROLS_CLASS}`)!.click();
+    rows()[1].querySelector('textarea')!.click();
+    expect(panel.selected).toBe('a');
     expect(scrolled).toEqual([]);
   });
 
@@ -759,9 +826,15 @@ describe('writing a note', () => {
     expect(box.rows).toBe(4);
     const buttons = box.nextElementSibling!;
     expect(buttons.className).toBe('jp-AdvancedMd-notesFormButtons');
+    // Cancel first and Save last at the right edge, both in the look of the
+    // other panel buttons; the box names what it is for while it is empty.
     expect(
       Array.from(buttons.querySelectorAll('button')).map(b => b.textContent)
-    ).toEqual(['Save', 'Cancel']);
+    ).toEqual(['Cancel', 'Save']);
+    expect(
+      Array.from(buttons.querySelectorAll('button')).map(b => b.className)
+    ).toEqual(['jp-AdvancedMd-notesButton', 'jp-AdvancedMd-notesButton']);
+    expect(box.placeholder).toBe('Write a note');
     expect(form.querySelectorAll('button')).toHaveLength(2);
   });
 
@@ -1172,6 +1245,72 @@ describe('writing a note', () => {
       panel.node.querySelector(`.${CLOSE_CLASS}`)
     );
     panel.badge.remove();
+  });
+
+  it('lets the second click of a double click press no control of the panel or the badge', async () => {
+    // The badge sits over the plus and the Hide control of the header it
+    // opens (DEF-NOTES-82): the first click opens the panel, and the second
+    // click of the same double click, which the browser reports with a detail
+    // of 2, lands on the control now under the pointer. A double click on
+    // Hide lands its second click on the badge the same way.
+    const second = (control: HTMLElement): void => {
+      control.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, detail: 2 })
+      );
+    };
+    documentId = 'd';
+    second(panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!);
+    second(panel.node.querySelector<HTMLButtonElement>(`.${CLOSE_CLASS}`)!);
+    panel.state = 'hidden';
+    second(panel.badge);
+    await settle();
+    expect(asked).toEqual([]);
+  });
+
+  it('acts on a single click and on a key press, which reports no click count', async () => {
+    const first = (control: HTMLElement): void => {
+      control.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, detail: 1 })
+      );
+    };
+    const plus = panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!;
+    const hide = panel.node.querySelector<HTMLButtonElement>(
+      `.${CLOSE_CLASS}`
+    )!;
+    first(plus);
+    await settle();
+    // A key press on a button reports a detail of 0, as click() does.
+    plus.click();
+    await settle();
+    first(hide);
+    hide.click();
+    panel.state = 'hidden';
+    first(panel.badge);
+    panel.badge.click();
+    expect(asked).toEqual([
+      'document',
+      'document',
+      'state hidden',
+      'state hidden',
+      'state expanded',
+      'state expanded'
+    ]);
+  });
+
+  it('writes a note once when Save is double-clicked (DEF-NOTES-83)', async () => {
+    press(rows()[0], 'Add note');
+    type('once');
+    const save = Array.from(
+      rows()[0].querySelectorAll<HTMLButtonElement>('button')
+    ).find(button => button.textContent === 'Save')!;
+    // The field is rebuilt only after the write returns, so the second click
+    // of the double click reaches the same Save, with a detail of 2.
+    save.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    save.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
+    await settle();
+    expect(asked.filter(entry => entry.startsWith('note '))).toEqual([
+      'note a once'
+    ]);
   });
 
   it('writes nothing for an empty note, leaving a bare mark', () => {
@@ -1993,6 +2132,7 @@ describe('the panel body', () => {
         mark: mark('a', { notes: [note('', '', 'orphan line')] })
       })
     ]);
+    expand(rows()[0]);
     const entry = panel.node.querySelector(`.${ENTRY_CLASS}`)!;
     expect(entry.textContent).toBe('orphan line');
   });

@@ -125,6 +125,17 @@ const UNANCHORED = 'unanchored';
 const DOCUMENT_LABEL = 'Document';
 
 /**
+ * What a row tells a screen reader after its content, as its description: a
+ * closed row carries no control to say that it opens (ACC-NOTES-148), and
+ * aria-expanded is not a state of the listitem role in WAI-ARIA 1.2.
+ */
+const CLOSED_HINT = 'Closed. Press Enter to open.';
+const OPEN_HINT = 'Open. The Collapse button closes it.';
+
+/** How many hint elements were built, so that each has an id of its own. */
+let hintCount = 0;
+
+/**
  * One mark as the panel lists it.
  */
 export interface INotesPanelItem {
@@ -265,7 +276,30 @@ function button(
   // Assistive technology reads the label, which for most of these buttons is
   // a glyph; the title is what the button does.
   element.setAttribute('aria-label', title);
-  element.addEventListener('click', onClick);
+  // The second click of a double click is not a second press: the first
+  // click can put another control under the pointer, as the badge opens the
+  // header whose plus and Hide control lie under it (DEF-NOTES-82). The
+  // browser counts that click in its detail; a key press reports 0 and acts.
+  element.addEventListener('click', event => {
+    if (event.detail > 1) {
+      return;
+    }
+    onClick(event);
+  });
+  return element;
+}
+
+/**
+ * A row description in a hidden element: a screen reader reads it for the row
+ * that names it in aria-describedby, and never as a line of its own.
+ */
+function hint(text: string): HTMLElement {
+  const element = document.createElement('div');
+  // Two previews of one file list the same marks, so the id is numbered
+  // rather than taken from the mark.
+  element.id = `jp-AdvancedMd-notesHint-${++hintCount}`;
+  element.hidden = true;
+  element.textContent = text;
   return element;
 }
 
@@ -325,6 +359,12 @@ export class NotesPanel extends Widget {
     this._body.tabIndex = -1;
     this.node.appendChild(header);
     this.node.appendChild(this._body);
+    // Outside the body, which _render empties and whose children are the list
+    // items alone.
+    this._closedHint = hint(CLOSED_HINT);
+    this._openHint = hint(OPEN_HINT);
+    this.node.appendChild(this._closedHint);
+    this.node.appendChild(this._openHint);
 
     // The badge over the preview; installNotesPanel mounts it, _apply shows
     // it while the panel is hidden and _render names the count on it.
@@ -656,6 +696,10 @@ export class NotesPanel extends Widget {
     row.dataset.mark = mark.id;
     row.tabIndex = 0;
     row.setAttribute('role', 'listitem');
+    row.setAttribute(
+      'aria-describedby',
+      open ? this._openHint.id : this._closedHint.id
+    );
     if (mark.id === this._selected) {
       row.classList.add(SELECTED_CLASS);
       row.setAttribute('aria-current', 'true');
@@ -666,6 +710,19 @@ export class NotesPanel extends Widget {
       // was typed in.
       if (event.key === 'Enter' && event.target === row) {
         event.preventDefault();
+        this.selectMark(mark.id);
+      }
+    });
+    row.addEventListener('click', event => {
+      // The head, the state line and the notes select from listeners of their
+      // own and every control acts for itself, so only a click on the row
+      // itself selects here: its padding and the gaps between its parts. A
+      // drag from one part to another ends in a click on the row too, and one
+      // that selected text is the reader copying it, and is left alone.
+      if (
+        event.target === row &&
+        (window.getSelection()?.isCollapsed ?? true)
+      ) {
         this.selectMark(mark.id);
       }
     });
@@ -721,8 +778,9 @@ export class NotesPanel extends Widget {
       row.appendChild(line);
     }
 
-    for (const note of open ? mark.notes : mark.notes.slice(0, 1)) {
-      const entry = entryRow(note, open);
+    // A closed row shows no note (ACC-NOTES-150).
+    for (const note of open ? mark.notes : []) {
+      const entry = entryRow(note);
       // A note is part of its row, so a click on it selects the row as a
       // click on the head does; a click that ends a selection of the note's
       // text is the reader copying it, and is left alone.
@@ -797,6 +855,7 @@ export class NotesPanel extends Widget {
     form.className = FORM_CLASS;
     const text = document.createElement('textarea');
     text.rows = 4;
+    text.placeholder = 'Write a note';
     text.setAttribute('aria-label', 'Note');
     text.value = draft;
     text.addEventListener('input', () => {
@@ -806,6 +865,14 @@ export class NotesPanel extends Widget {
     const buttons = document.createElement('div');
     buttons.className = FORM_BUTTONS_CLASS;
     form.appendChild(buttons);
+    // Cancel first and Save last, so Save sits at the right edge where a
+    // form's main action is expected.
+    buttons.appendChild(
+      button(BUTTON_CLASS, 'Cancel', 'Cancel this note', () => {
+        this._closeEntry(id);
+        this._render();
+      })
+    );
     buttons.appendChild(
       button(BUTTON_CLASS, 'Save', 'Save this note', () => {
         const written = text.value.trim();
@@ -820,12 +887,6 @@ export class NotesPanel extends Widget {
           }
           this._render();
         });
-      })
-    );
-    buttons.appendChild(
-      button(BUTTON_CLASS, 'Cancel', 'Cancel this note', () => {
-        this._closeEntry(id);
-        this._render();
       })
     );
     return form;
@@ -891,6 +952,8 @@ export class NotesPanel extends Widget {
   private readonly _handlers: INotesPanelHandlers;
   private readonly _count: HTMLElement;
   private readonly _body: HTMLElement;
+  private readonly _closedHint: HTMLElement;
+  private readonly _openHint: HTMLElement;
   private readonly _open = new Set<string>();
   private _items: INotesPanelItem[] = [];
   private _state: PanelState;
@@ -920,12 +983,10 @@ function countLabel(count: number): string {
 }
 
 /**
- * One note entry: who wrote it, when, and what it says.
- *
- * A closed row shows the first line of the entry, which is the short form the
- * reader scans; the open row shows the whole of it.
+ * One note entry: who wrote it, when, and what it says, in full. Only an
+ * open row shows its entries (ACC-NOTES-150).
  */
-function entryRow(note: INoteEntry, full: boolean): HTMLElement {
+function entryRow(note: INoteEntry): HTMLElement {
   const entry = document.createElement('div');
   entry.className = ENTRY_CLASS;
   if (note.author) {
@@ -944,7 +1005,7 @@ function entryRow(note: INoteEntry, full: boolean): HTMLElement {
   }
   const text = document.createElement('div');
   text.className = TEXT_CLASS;
-  text.textContent = full ? note.text : note.text.split('\n')[0];
+  text.textContent = note.text;
   entry.appendChild(text);
   return entry;
 }

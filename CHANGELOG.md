@@ -2,6 +2,41 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.7] - 2026-09-11
+
+Everything since 1.0.5: the eight items filed after using 1.0.5, the four limitations recorded when that work shipped, and two adversarial review campaigns of six rounds each. 1.0.6 was built and installed locally throughout and never published.
+
+### Added
+
+- A highlight visibility setting with Low, Medium and High, written as a data attribute on the viewer widget so a change recolours the highlights already on screen
+- An empty author setting signs a note @author; the identity lookup is gone
+- A mark that an external rewrite broke is removed and its leftover markers deleted from the file, once the break has survived a settling step of 750 ms and only while the document holds no unsaved edits
+- The plus that adds a document note shows only in the expanded panel, and is reachable there by the keyboard
+- A closed notes row opens from a click anywhere on it, on its padding, its passage or its state line, and from Enter; only an open row carries the collapse triangle; a click on a note in an open row selects its row unless it ends a text selection
+- Every notes row tells a screen reader whether it is open and how to change that, through a description rather than aria-expanded, which a list item may not carry
+- Reload Markdown File from Disk takes a held change into the document, drops the red square and the dirty flag, and the next write is shown live; the held-change tooltip names it as the way to take the change and a save as the way to keep the reader's version
+
+### Changed
+
+- Animation speed default 50 characters per second, from 10; highlight duration default 5 s, from 3; the four change-highlight colours five percentage points more opaque
+- The note field is a rounded box in the panel's font at the size of a row's note text, its border alone taking the theme's brand colour while focused, with the placeholder Write a note, and Cancel then Save at its right edge in the look of Add note; Add note is left out of a row while its note is being written
+- A closed notes row shows no note; the notes are listed in full once the row is open
+- Headings in the preview take the font's own line height, so a wrapped heading's second line no longer covers the letters of the first when selected or marked
+- Only this extension's own settings stop its motion: the reduced-motion preference, which Windows reports whenever its animation switch is off, no longer silences the tab marker and the typing animation
+- Galata cases that need a sibling extension skip on the continuous-integration runner, which installs none
+
+### Fixed
+
+- A preview opened over a document with unsaved edits had them overwritten by the file's text at open; the file's text is now held back from the moment the preview opens and no write lands over typed text
+- A line pushed into a long document, past the diff's token bound, highlighted the whole document green; a middle past the bound is aligned line by line first, so two edits far apart in a document of up to 1500 lines stay two edits
+- A write landing while a reload was read, or the next write after a reload with nothing held, was held behind the reload's stale dirty flag; a document whose text is the file's holds nothing back
+- A passage ending at a hard line break, or at a br element written in the source, could not be marked, and a passage starting mid-line lost its first token in the panel
+- The second click of a double click on the notes badge pressed the header control under it, and Save wrote a note twice
+- A panel-state write no longer loses to an older state still in the file; Cancel on a new document note removes its empty marker
+- A reader's Backspace no longer destroys a mark and its notes; the broken-mark deletion no longer retries for the life of the tab against a server that cannot answer
+- One identifier could name two rows, so a note saved on a duplicated paragraph landed in the wrong row
+- The panel discarded a note being written when its mark left the listing for a frame
+
 ## [1.0.5] - 2026-09-08
 
 The first stable release of the notes feature. The 0.6 line was built and installed locally more than thirty times while the feature was reviewed and reworked; the builds between 0.6.41 and 1.0.2 were never published, and 1.0.3 and 1.0.4 shipped an intermediate state of this work on the same day.

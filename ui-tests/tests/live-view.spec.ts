@@ -448,6 +448,153 @@ test.describe('a document open in the editor as well', () => {
     await expect(blockedTab).toHaveCount(0, { timeout: 10000 });
     expect(await readDisk(page, path)).not.toContain('UNSAVED WORK');
   });
+
+  test('takes the change on Reload from Disk, drops the blocked marker and follows the next write', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await typeInEditor(page, path, 'UNSAVED WORK');
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+
+    const blockedTab = page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked');
+    await expect(blockedTab).toHaveCount(1, { timeout: 20000 });
+
+    // The reader brings the preview to the front and chooses File, Reload
+    // Markdown File from Disk. With unsaved edits JupyterLab asks first.
+    await blockedTab.click();
+    await page.locator('.lm-MenuBar-itemLabel', { hasText: /^File$/ }).click();
+    await page
+      .locator('.lm-Menu-content')
+      .first()
+      .locator('.lm-Menu-item', { hasText: 'Reload Markdown File from Disk' })
+      .click();
+    const dialog = page.locator('.jp-Dialog');
+    await expect(dialog).toContainText(
+      'Are you sure you want to reload the Markdown File from the disk?'
+    );
+    await dialog.locator('button', { hasText: 'Reload' }).click();
+    await expect(dialog).toHaveCount(0);
+
+    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
+      'A third paragraph appeared.',
+      { timeout: 10000 }
+    );
+    // The document holds what the file holds: no marker and nothing unsaved.
+    await expect(blockedTab).toHaveCount(0, { timeout: 10000 });
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).jupyterapp.shell.currentWidget?.context?.model
+              ?.dirty
+        )
+      )
+      .toBe(false);
+    await expect(page.locator('.lm-TabBar-tab.jp-mod-dirty')).toHaveCount(0);
+
+    // The next write is applied live, as on a document that was never held.
+    await page.contents.uploadContent(
+      `${REWRITTEN}\nA fourth paragraph appeared.\n`,
+      'text',
+      path
+    );
+    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
+      'A fourth paragraph appeared.',
+      { timeout: 20000 }
+    );
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
+    ).toHaveCount(1);
+    await expect(blockedTab).toHaveCount(0);
+    expect(await readDisk(page, path)).not.toContain('UNSAVED WORK');
+  });
+
+  test('takes the next write after Reload from Disk over typed text with nothing held (DEF-CUE-85)', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await typeInEditor(page, path, 'UNSAVED WORK');
+    // The preview shares the document, so its text is what brings it to the
+    // front. Nothing is held: the file has not changed since it was opened.
+    await openPreview(page, path, 'UNSAVED WORK');
+    await page.locator('.lm-MenuBar-itemLabel', { hasText: /^File$/ }).click();
+    await page
+      .locator('.lm-Menu-content')
+      .first()
+      .locator('.lm-Menu-item', { hasText: 'Reload Markdown File from Disk' })
+      .click();
+    const dialog = page.locator('.jp-Dialog');
+    await expect(dialog).toContainText(
+      'Are you sure you want to reload the Markdown File from the disk?'
+    );
+    await dialog.locator('button', { hasText: 'Reload' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(
+      page.locator('.jp-RenderedMarkdown:visible')
+    ).not.toContainText('UNSAVED WORK');
+
+    // JupyterLab leaves the document flagged after the reload; the document
+    // holds what the file holds, so the next write is shown live and not
+    // held behind that flag.
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'A third paragraph appeared.',
+      { timeout: 20000 }
+    );
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked')
+    ).toHaveCount(0);
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
+    ).toHaveCount(1);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).jupyterapp.shell.currentWidget?.context?.model
+              ?.dirty
+        )
+      )
+      .toBe(false);
+    expect(await readDisk(page, path)).not.toContain('UNSAVED WORK');
+  });
+});
+
+test.describe('a preview opened over unsaved edits', () => {
+  test.use({ mockSettings: settings() });
+
+  test('DEF-APPLY-90 holds the first write over text typed before the preview was opened', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    // The reader types in the editor before any preview exists, then opens
+    // one: its watcher is built over a document that differs from the file,
+    // and the file's text is held back from the moment the preview opens.
+    await typeInEditor(page, path, 'UNSAVED WORK');
+    await openPreview(page, path, 'UNSAVED WORK');
+    const blockedTab = page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked');
+    await expect(blockedTab).toHaveCount(1, { timeout: 20000 });
+
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await expect
+      .poll(() => readDisk(page, path), { timeout: 10000 })
+      .toContain('A third paragraph appeared.');
+    await page.waitForTimeout(2500);
+    // The reader's text is still in the document, the write is not shown,
+    // and nothing was saved on their behalf.
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'UNSAVED WORK'
+    );
+    await expect(
+      page.locator('.jp-RenderedMarkdown:visible')
+    ).not.toContainText('A third paragraph appeared.');
+    await expect(blockedTab).toHaveCount(1);
+    expect(await readDisk(page, path)).not.toContain('UNSAVED WORK');
+  });
 });
 
 test.describe('the reader position', () => {
@@ -1044,7 +1191,7 @@ test.describe('a fresh install with no setting touched', () => {
   // in force is the one the schema declares.
   test.use({ mockSettings: shippedSettings() });
 
-  test('ACC-ANIM-143 types a change in at 25 characters per second', async ({
+  test('ACC-ANIM-143 types a change in at 50 characters per second', async ({
     page,
     tmpPath
   }) => {
@@ -1062,16 +1209,17 @@ test.describe('a fresh install with no setting touched', () => {
     const whole = Math.max(...samples.map(sample => sample.length));
     expect(whole).toBeGreaterThanOrEqual(FORTY.length);
 
-    // Half a second in, a forty character sentence at 25 characters a second
-    // is a fraction of the way through.
-    const early = samples.filter(sample => sample.at <= 500);
-    expect(early.length).toBeGreaterThan(5);
+    // Four hundred milliseconds in, a forty character sentence at 50
+    // characters a second is half way through.
+    const early = samples.filter(sample => sample.at <= 400);
+    expect(early.length).toBeGreaterThan(4);
     expect(early[early.length - 1].length).toBeLessThan(whole);
 
-    // And it is complete inside two seconds. At the 10 characters a second of
-    // 1.0.5 the same sentence would still be typing at four.
+    // And it is complete inside 1.2 seconds. At the 25 characters a second of
+    // the earlier 1.0.6 builds the same sentence would still be typing at
+    // 1.6, and at the 10 of 1.0.5 at four.
     const done = samples.find(sample => sample.length === whole);
-    expect((done as { at: number }).at).toBeLessThanOrEqual(2000);
+    expect((done as { at: number }).at).toBeLessThanOrEqual(1200);
   });
 });
 
@@ -1136,6 +1284,104 @@ test.describe('the change animation under reduced motion', () => {
     expect(samples[0].length).toBeLessThan(whole);
     expect(new Set(samples.map(sample => sample.length)).size).toBeGreaterThan(
       3
+    );
+  });
+});
+
+test.describe('two edits far apart in a long document', () => {
+  test.use({ mockSettings: settings() });
+
+  test('DEF-HILITE-88 tints the two edits alone, a line pushed in at the top and a word changed at the end', async ({
+    page,
+    tmpPath
+  }) => {
+    // A hundred and twenty paragraphs, well past the diff's token bound once
+    // the first edit ends the common prefix and the last ends the suffix.
+    const paragraphs = Array.from(
+      { length: 120 },
+      (_, i) =>
+        `Paragraph ${i + 1} of the report carries a few ordinary words in it.`
+    );
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(
+      `# Report\n\n${paragraphs.join('\n\n')}\n`,
+      'text',
+      path
+    );
+    await openPreview(page, path, 'Paragraph 1 of');
+
+    const pushed =
+      `# Report\n\nA new first line.\n\n${paragraphs.join('\n\n')}\n`.replace(
+        /words in it\.\n$/,
+        'words in it now.\n'
+      );
+    await page.contents.uploadContent(pushed, 'text', path);
+
+    const added = page.locator(
+      '.jp-RenderedMarkdown:visible .jp-AdvancedMd-added'
+    );
+    await expect(added).toHaveCount(2, { timeout: 20000 });
+    await expect(added.nth(0)).toHaveText('A new first line.');
+    await expect(added.nth(1)).toHaveText('it now.');
+    // A paragraph between the two edits is neither tinted nor rebuilt.
+    await expect(
+      page
+        .locator('.jp-RenderedMarkdown:visible p', {
+          hasText: 'Paragraph 60 of'
+        })
+        .locator('.jp-AdvancedMd-added')
+    ).toHaveCount(0);
+  });
+});
+
+test.describe('a heading that wraps', () => {
+  test.use({ mockSettings: settings() });
+
+  test('DEF-NOTES-89 keeps the box of its second line clear of the first, so a selection over it covers no letters', async ({
+    page,
+    tmpPath
+  }) => {
+    // Long enough to wrap in the preview at the test viewport.
+    const title =
+      'OSTATECZNE PRZEDSĄDOWE WEZWANIE DO WYDANIA KOPII DOKUMENTU (BRAK ODPOWIEDZI PLACÓWKI) W TERMINIE SIEDMIU DNI OD DORĘCZENIA';
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(
+      `### ${title}\n\nA paragraph below the title.\n`,
+      'text',
+      path
+    );
+    await openPreview(page, path, 'A paragraph below');
+
+    const heading = page.locator('.jp-RenderedMarkdown:visible h3', {
+      hasText: 'OSTATECZNE'
+    });
+    // The box of each line of the heading's own text, as the browser lays
+    // them out and as a selection over the heading is painted; the anchor
+    // link JupyterLab appends to a heading is left out.
+    const lines = await heading.evaluate((node: Element) => {
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      const rects: Array<{ top: number; bottom: number }> = [];
+      let text = walker.nextNode();
+      while (text) {
+        if (!(text.parentElement as HTMLElement).closest('a')) {
+          const range = document.createRange();
+          range.selectNodeContents(text);
+          for (const rect of Array.from(range.getClientRects())) {
+            if (rect.width > 0) {
+              rects.push({ top: rect.top, bottom: rect.bottom });
+            }
+          }
+        }
+        text = walker.nextNode();
+      }
+      return { rects, html: node.innerHTML };
+    });
+    expect(lines.rects.length, lines.html).toBeGreaterThanOrEqual(2);
+    // The second line's box starts no higher than the first line's box ends,
+    // so a selection painted over the second line covers nothing of the
+    // first; at JupyterLab's own heading line height of 1 the boxes overlap.
+    expect(lines.rects[1].top).toBeGreaterThanOrEqual(
+      lines.rects[0].bottom - 0.5
     );
   });
 });

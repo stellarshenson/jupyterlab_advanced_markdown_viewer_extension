@@ -28,7 +28,7 @@
       "description": "How long the highlight stays on changed text before it is gone. It rises over half a second, holds its colour, and fades away over the last three quarters of a second.",
       "type": "number",
       "minimum": 0,
-      "default": 3000
+      "default": 5000
     },
     "animation": {
       "title": "Animate changes",
@@ -41,7 +41,7 @@
       "description": "How fast added text is typed in and removed text is deleted from its end in the rendered view. 0 shows a change at once.",
       "type": "integer",
       "minimum": 0,
-      "default": 25
+      "default": 50
     },
     "highlight": {
       "title": "Highlight changes",

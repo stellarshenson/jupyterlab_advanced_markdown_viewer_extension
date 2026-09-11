@@ -1156,6 +1156,36 @@ describe('NotesController', () => {
       expect(mark.position).toBeLessThan(1);
     });
 
+    it('lists a passage by its words, without the list number or the emphasis marks around it (DEF-NOTES-84)', async () => {
+      // The opening marker of a passage that starts a list item goes on its
+      // own line before the item, so the source between the markers holds
+      // the item's number and the strong delimiters.
+      const h = open(
+        `<!-- mark:${ONE} note colour=yellow -->\n` +
+          `3. **Ostateczny rygor:**<!-- /mark:${ONE} -->  \n   W przypadku\n`
+      );
+      await ready();
+
+      expect(h.controller.marks.map(mark => mark.text)).toEqual([
+        'Ostateczny rygor:'
+      ]);
+    });
+
+    it('lists a passage that starts mid-line with a marker character by its whole text (DEF-NOTES-87)', async () => {
+      // Read out of its line, a dash or a hash at the start of the slice
+      // would pass for a bullet or a heading marker and be stripped.
+      const h = open(
+        `the plan <!-- mark:${ONE} note colour=yellow -->- and its cost<!-- /mark:${ONE} --> tomorrow\n\n` +
+          `ticket <!-- mark:${TWO} note colour=blue -->#12 open<!-- /mark:${TWO} --> still\n`
+      );
+      await ready();
+
+      expect(h.controller.marks.map(mark => mark.text)).toEqual([
+        '- and its cost',
+        '#12 open'
+      ]);
+    });
+
     it('says so whenever the marks of the document change', async () => {
       const h = open(BARE);
       await ready();

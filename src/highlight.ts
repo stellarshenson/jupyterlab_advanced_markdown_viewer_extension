@@ -104,44 +104,61 @@ export interface ITextSnapshot {
  * @param root - the rendered Markdown host
  */
 export function captureText(root: HTMLElement): ITextSnapshot {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node: Node) => {
-      const parent = node.parentElement;
-      if (!parent) {
-        return NodeFilter.FILTER_REJECT;
+  const walker = document.createTreeWalker(
+    root,
+    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
+    {
+      acceptNode: (node: Node) => {
+        // A hard line break is the one element read: the renderer writes it
+        // with no text on either side, so the words around it would run
+        // together (DEF-NOTES-84). Every other element is entered.
+        if (node.nodeType !== Node.TEXT_NODE) {
+          return node.nodeName === 'BR'
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_SKIP;
+        }
+        const parent = node.parentElement;
+        if (!parent) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        const tag = parent.tagName;
+        if (tag === 'SCRIPT' || tag === 'STYLE') {
+          return NodeFilter.FILTER_REJECT;
+        }
+        // An HTML span inside SVG text is not painted, so a diagram label is
+        // read past rather than decorated. HTML inside a foreignObject is
+        // fine.
+        if (parent.namespaceURI === SVG_NS) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (parent.closest(`.${DECORATION_CLASS}`)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
       }
-      const tag = parent.tagName;
-      if (tag === 'SCRIPT' || tag === 'STYLE') {
-        return NodeFilter.FILTER_REJECT;
-      }
-      // An HTML span inside SVG text is not painted, so a diagram label is
-      // read past rather than decorated. HTML inside a foreignObject is fine.
-      if (parent.namespaceURI === SVG_NS) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      if (parent.closest(`.${DECORATION_CLASS}`)) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      return NodeFilter.FILTER_ACCEPT;
     }
-  });
+  );
 
   const spans: ITextSpan[] = [];
   let text = '';
   let block: Element | Text | null = null;
+  let broke = false;
   let current = walker.nextNode();
   while (current) {
+    if (current.nodeType !== Node.TEXT_NODE) {
+      broke = true;
+      current = walker.nextNode();
+      continue;
+    }
     const value = current.nodeValue ?? '';
     if (value.length) {
       const owner = blockOf(current as Text, root);
-      if (
-        block !== null &&
-        owner !== block &&
-        !/\s$/.test(text) &&
-        !/^\s/.test(value)
-      ) {
+      const seam =
+        (block !== null && owner !== block) || (broke && text !== '');
+      if (seam && !/\s$/.test(text) && !/^\s/.test(value)) {
         text += BLOCK_BREAK;
       }
+      broke = false;
       block = owner;
       spans.push({
         node: current as Text,
@@ -472,13 +489,11 @@ export function decorate(
   // Ghosts are placed after the added ranges are known, so a removal that sits
   // inside a rebuilt node is rebuilt with it rather than against a stale offset.
   //
-  // Past the diff's own token bound, on either side, the whole changed middle
-  // arrives as one removal and one addition at the same offset. A long removal
-  // of that kind is not a phrase the reader can take in but the old document
-  // lumped together, so it is not shown; the added text is still marked and
-  // the tab cue fires. A short one is exactly the text that went, and its
-  // ghost is the warning the reader expects, whatever the size of the addition
-  // beside it.
+  // A removal past the diff's token bound is not a phrase the reader can take
+  // in but a stretch of the old document lumped together, so it is not shown;
+  // the added text is still marked and the tab cue fires. A short one is
+  // exactly the text that went, and its ghost is the warning the reader
+  // expects, whatever the size of the addition beside it.
   const pastBound = (text: string) => tokenize(text).length > MAX_LCS_TOKENS;
   const readable = (text: string) => tokenize(text).length <= MAX_GHOST_TOKENS;
   const deferredGhosts: Array<{

@@ -16,7 +16,7 @@ See the changes an AI agent, or any other program, makes to a Markdown file as i
 - **Watch each change happen** - added text is typed in on green; removed text is struck through on red, then deleted
 - **Your place is kept** - the preview keeps the same text in view when the file changes outside it
 - **See which tab changed** - a half-filled circle for a new change, a red square for a change held back, a cross for a deleted file
-- **Unsaved edits are kept** - a change from disk waits while you have unsaved edits; save, then choose Revert in the File Changed dialog to take it, or Overwrite to keep your version
+- **Unsaved edits are kept** - a change from disk waits while you have unsaved edits; choose File, Reload Markdown File from Disk to take it, or save to keep your version
 - **Mark and note while the agent writes** - six colours, notes on a passage or on the whole document, all listed beside the preview
 - **Notes are stored in the file** - as HTML comments that other Markdown renderers do not show; a note line an agent adds appears in the thread
 

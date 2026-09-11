@@ -70,6 +70,60 @@ describe('diffWords', () => {
     expect(after(ops)).toBe(b);
   });
 
+  it('keeps two small edits apart in a long document, a line pushed in at the top and a word changed at the end (DEF-HILITE-88)', () => {
+    // A hundred and twenty paragraphs, well past the token bound once the
+    // common prefix and suffix are gone: the first edit ends the prefix and
+    // the last ends the suffix, so the whole document is the middle.
+    const paragraphs = Array.from(
+      { length: 120 },
+      (_, i) =>
+        `Paragraph ${i + 1} of the report carries a few ordinary words in it.`
+    );
+    const before = paragraphs.join('\n');
+    const after = `A new first line.\n${before}`.replace(
+      /words in it\.$/,
+      'words in it now.'
+    );
+    const ranges = changeRanges(diffWords(before, after));
+    // 'it.' and 'it' are different tokens, so the last word is replaced.
+    expect(
+      ranges.added.map(range => after.slice(range.start, range.end))
+    ).toEqual(['A new first line.\n', 'it now.']);
+    expect(ranges.removed.map(removal => removal.text)).toEqual(['it.']);
+  });
+
+  it('keeps two small edits apart past a thousand lines as well, the line pass having a bound of its own (DEF-HILITE-88)', () => {
+    // Thirteen hundred short lines: past the token bound many times over,
+    // and past it in lines too if the line pass shared the token bound.
+    const lines = Array.from({ length: 1300 }, (_, i) => `Line ${i + 1}.`);
+    const before = lines.join('\n');
+    const after = `A new first line.\n${before}`.replace(
+      /Line 1300\.$/,
+      'Line 1300 changed.'
+    );
+    const ranges = changeRanges(diffWords(before, after));
+    expect(
+      ranges.added.map(range => after.slice(range.start, range.end))
+    ).toEqual(['A new first line.\n', '1300 changed.']);
+    expect(ranges.removed.map(removal => removal.text)).toEqual(['1300.']);
+  });
+
+  it('keeps two small edits apart in a document of exactly 1500 lines that gains a line (DEF-HILITE-88)', () => {
+    // The promised size: the write pushes the later side to 1501 lines, which
+    // the bound leaves room for.
+    const lines = Array.from({ length: 1500 }, (_, i) => `Line ${i + 1}.`);
+    const before = lines.join('\n');
+    const after = `A new first line.\n${before}`.replace(
+      /Line 1500\.$/,
+      'Line 1500 changed.'
+    );
+    const ranges = changeRanges(diffWords(before, after));
+    expect(
+      ranges.added.map(range => after.slice(range.start, range.end))
+    ).toEqual(['A new first line.\n', '1500 changed.']);
+    expect(ranges.removed.map(removal => removal.text)).toEqual(['1500.']);
+  });
+
   it('falls back to one replacement past the alignment bound', () => {
     const a = Array.from({ length: 3000 }, (_, i) => `a${i}`).join(' ');
     const b = Array.from({ length: 3000 }, (_, i) => `b${i}`).join(' ');

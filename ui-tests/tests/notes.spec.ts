@@ -353,6 +353,79 @@ test.describe('marking a passage', () => {
     await openPreview(page, `${tmpPath}/${FILE}`, FIRST);
   });
 
+  test('DEF-NOTES-84 marks the words before a hard line break', async ({
+    page,
+    tmpPath
+  }) => {
+    // Two spaces end the first line of the item: the renderer writes the
+    // break as a br element with no newline after it.
+    const path = `${tmpPath}/${FILE}`;
+    await writeExternally(
+      page,
+      path,
+      [
+        '# Wezwanie',
+        '',
+        '3. **Ostateczny rygor:**  ',
+        '   W przypadku niewydania dokumentu w terminie:',
+        '   * pierwszy punkt;',
+        ''
+      ].join('\n')
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'Ostateczny rygor:'
+    );
+
+    await openMenu(page, await select(page, 'Ostateczny', 'rygor:'));
+    await choose(page, 'Add note');
+    await writeNote(page, 'Nie motywuje.');
+
+    const text = await fileWhen(path, holds => holds.includes('Nie motywuje.'));
+    expect(text).toMatch(
+      /-->\n3\. \*\*Ostateczny rygor:\*\*<!-- \/mark:[0-9a-f-]{36} -->  \n   W przypadku/
+    );
+    await expect(rows(page)).toHaveCount(1);
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesPassage')
+    ).toHaveText('Ostateczny rygor:');
+    await expect(painted(page)).toHaveCount(1);
+    await expect(painted(page).first()).toHaveText('Ostateczny rygor:');
+  });
+
+  test('DEF-NOTES-86 marks the word before a br element written in the source', async ({
+    page,
+    tmpPath
+  }) => {
+    // The br is in the source itself; the render shows it as a line break,
+    // so Alpha and Beta are two words there and must be two in the source.
+    const path = `${tmpPath}/${FILE}`;
+    await writeExternally(
+      page,
+      path,
+      ['# Lines', '', 'One Alpha<br>Beta and more words here.', ''].join('\n')
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'Beta and more'
+    );
+
+    await openMenu(page, await select(page, 'Alpha'));
+    await choose(page, 'Add note');
+    await writeNote(page, 'Before the break.');
+
+    const text = await fileWhen(path, holds =>
+      holds.includes('Before the break.')
+    );
+    expect(text).toMatch(
+      /One <!-- mark:[0-9a-f-]{36} note colour=\w+\n@[^\n]*: Before the break\.\n-->Alpha<!-- \/mark:[0-9a-f-]{36} --><br>Beta and more words here\./
+    );
+    await expect(rows(page)).toHaveCount(1);
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesPassage')
+    ).toHaveText('Alpha');
+    await expect(painted(page)).toHaveCount(1);
+    await expect(painted(page).first()).toHaveText('Alpha');
+  });
+
   test('ACC-NOTES-44 adds a note from a selection through the context menu', async ({
     page,
     tmpPath
@@ -702,6 +775,71 @@ test.describe('marking a passage', () => {
     ).toBeFocused();
   });
 
+  test('DEF-NOTES-82 presses no header control with the second click of a double click on the notes badge', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    const badge = page.locator('.jp-AdvancedMd-notesBadge:visible');
+    await expect(badge).toHaveCount(1);
+    const box = (await badge.boundingBox())!;
+
+    // The badge centre lies over the plus of the header the first click
+    // opens; the second click of the double click lands there.
+    await badge.dblclick();
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-expanded/);
+    await fileWhen(path, holds => holds.includes('panel=expanded'));
+    // A marker the second click wrote lands with the state or just after it.
+    await page.waitForTimeout(1500);
+    expect(openingIds(fileText(path))).toHaveLength(0);
+    await expect(rows(page)).toHaveCount(0);
+
+    // The right edge of the badge lies over the Hide control: the panel stays.
+    await panel(page).locator('.jp-AdvancedMd-notesClose').click();
+    await expect(badge).toHaveCount(1);
+    await fileWhen(path, holds => holds.includes('panel=hidden'));
+    await page.mouse.dblclick(box.x + box.width - 3, box.y + box.height / 2);
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-expanded/);
+    await expect(badge).toHaveCount(0);
+
+    // A key press on the plus reports no click count and still acts.
+    await panel(page).locator('.jp-AdvancedMd-notesAdd').focus();
+    await page.keyboard.press('Enter');
+    await expect(
+      page.locator('.jp-AdvancedMd-notesForm textarea')
+    ).toBeFocused();
+    await fileWhen(path, holds => openingIds(holds).length === 1);
+  });
+
+  test('DEF-NOTES-83 writes a note once when Save is double-clicked', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await page.locator('.jp-AdvancedMd-notesBadge:visible').click();
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-expanded/);
+    await panel(page).locator('.jp-AdvancedMd-notesAdd').click();
+    const field = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(field).toBeFocused();
+    await fileWhen(path, holds => openingIds(holds).length === 1);
+    await field.fill('Once.');
+
+    // The field is rebuilt only after the write returns, so the second click
+    // of the double click lands on the same Save.
+    await page
+      .locator('.jp-AdvancedMd-notesForm button', { hasText: 'Save' })
+      .dblclick();
+    await fileWhen(path, holds => holds.includes('Once.'));
+    // A second note the second click wrote lands just after the first.
+    await page.waitForTimeout(1500);
+    expect(fileText(path).match(/Once\./g)).toHaveLength(1);
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesText', {
+        hasText: 'Once.'
+      })
+    ).toHaveCount(1);
+  });
+
   test('DEF-NOTES-50 draws no focus ring around the preview when its tab comes back to the front', async ({
     page,
     tmpPath
@@ -1000,35 +1138,121 @@ test.describe('marking a passage', () => {
     expect(cancelAt.y).toBeGreaterThanOrEqual(boxAt.y + boxAt.height);
   });
 
-  test('ACC-NOTES-146 writes the note field in the panel font at three quarters of the panel text size', async ({
+  test('ACC-NOTES-146 writes the note field in the font and at the size of the notes in the rows', async ({
+    page
+  }) => {
+    await mark(page, P1);
+    await openRow(page);
+    await panelButton(page, 'Add note').click();
+    await writeNote(page, 'The note the field is measured against.');
+    const shown = rows(page).first().locator('.jp-AdvancedMd-notesText');
+    await expect(shown).toHaveText('The note the field is measured against.');
+    await panelButton(page, 'Add note').click();
+    const field = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(field).toBeVisible();
+    const fonts = await field.evaluate((node: Element) => {
+      const own = getComputedStyle(node);
+      const note = getComputedStyle(
+        node
+          .closest('.jp-AdvancedMd-notesRow')!
+          .querySelector('.jp-AdvancedMd-notesText')!
+      );
+      return {
+        family: own.fontFamily,
+        noteFamily: note.fontFamily,
+        size: parseFloat(own.fontSize),
+        noteSize: parseFloat(note.fontSize)
+      };
+    });
+    expect(fonts.family).toBe(fonts.noteFamily);
+    expect(fonts.family).not.toMatch(/monospace/);
+    expect(fonts.size).toBeCloseTo(fonts.noteSize, 2);
+  });
+
+  test('ACC-NOTES-151 draws the note field as a rounded box with a brand-coloured border while focused, no ring, and Cancel then Save at the right edge in the look of Add note', async ({
     page
   }) => {
     await mark(page, P1);
     await openRow(page);
     await panelButton(page, 'Add note').click();
     const field = page.locator('.jp-AdvancedMd-notesForm textarea');
-    await expect(field).toBeVisible();
-    const fonts = await field.evaluate((node: Element) => {
-      const own = getComputedStyle(node);
-      const around = getComputedStyle(node.closest('.jp-AdvancedMd-notes')!);
-      // The theme's ordinary interface size, resolved where the field sits.
-      const probe = document.createElement('span');
-      probe.style.fontSize = 'var(--jp-ui-font-size1)';
-      node.parentElement!.appendChild(probe);
-      const ordinary = parseFloat(getComputedStyle(probe).fontSize);
-      probe.remove();
+    await expect(field).toBeFocused();
+    await expect(field).toHaveAttribute('placeholder', 'Write a note');
+
+    // A theme colour as the browser resolves it, read from a probe element
+    // so the case holds in any theme.
+    const resolve = (variable: string) =>
+      page.evaluate((name: string) => {
+        const probe = document.createElement('div');
+        probe.style.color = `var(${name})`;
+        document.body.appendChild(probe);
+        const colour = getComputedStyle(probe).color;
+        probe.remove();
+        return colour;
+      }, variable);
+    const brand = await resolve('--jp-brand-color1');
+    // The placeholder is in the colour JupyterLab's own inputs give theirs.
+    expect(
+      await field.evaluate(
+        (node: Element) => getComputedStyle(node, '::placeholder').color
+      )
+    ).toBe(await resolve('--jp-ui-font-color2'));
+    const border = () =>
+      field.evaluate((node: Element) => getComputedStyle(node).borderTopColor);
+    // The border colour is in transition for 120 ms after the focus arrives.
+    await expect.poll(border).toBe(brand);
+    const focused = await field.evaluate((node: Element) => {
+      const style = getComputedStyle(node);
       return {
-        family: own.fontFamily,
-        panelFamily: around.fontFamily,
-        size: parseFloat(own.fontSize),
-        panelSize: parseFloat(around.fontSize),
-        ordinary
+        radius: style.borderTopLeftRadius,
+        resize: style.resize,
+        ring: style.boxShadow,
+        outline: style.outlineStyle
       };
     });
-    expect(fonts.family).toBe(fonts.panelFamily);
-    expect(fonts.family).not.toMatch(/monospace/);
-    expect(fonts.size).toBeLessThan(fonts.panelSize);
-    expect(fonts.size).toBeCloseTo(fonts.ordinary * 0.75, 1);
+    expect(focused.radius).toBe('8px');
+    expect(focused.resize).toBe('none');
+    // The focus shows in the border alone: no ring, no browser outline.
+    expect(focused.ring).toBe('none');
+    expect(focused.outline).toBe('none');
+
+    // The two buttons are drawn as Add note is: the same class and nothing
+    // more, so the same computed background, colour, border and radius.
+    const buttons = page.locator('.jp-AdvancedMd-notesFormButtons button');
+    await expect(buttons).toHaveText(['Cancel', 'Save']);
+    const look = (node: Element) => {
+      const style = getComputedStyle(node);
+      return [
+        style.backgroundColor,
+        style.color,
+        style.borderTopColor,
+        style.borderTopLeftRadius,
+        style.paddingLeft,
+        node.className
+      ].join(' ');
+    };
+    // Add note is offered only while no field is open (ACC-NOTES-147), so
+    // its look is read between a Cancel and a second Add note.
+    await panelButton(page, 'Cancel').click();
+    const addNote = await panelButton(page, 'Add note').evaluate(look);
+    await panelButton(page, 'Add note').click();
+    await expect(field).toBeFocused();
+    const save = buttons.last();
+    expect(await save.evaluate(look)).toBe(addNote);
+    expect(await buttons.first().evaluate(look)).toBe(addNote);
+
+    // Save sits at the right edge of the row, Cancel to its left.
+    const row = (await page
+      .locator('.jp-AdvancedMd-notesFormButtons')
+      .boundingBox())!;
+    const saveBox = (await save.boundingBox())!;
+    const cancelBox = (await buttons.first().boundingBox())!;
+    expect(saveBox.x + saveBox.width).toBeCloseTo(row.x + row.width, 0);
+    expect(cancelBox.x + cancelBox.width).toBeLessThanOrEqual(saveBox.x);
+
+    // A blurred field keeps the rounded box and gives up the brand border.
+    await panelButton(page, 'Cancel').focus();
+    await expect.poll(border).not.toBe(brand);
   });
 
   test('ACC-NOTES-147 leaves Add note out of the row whose note is being written, and keeps its colours', async ({
@@ -1090,27 +1314,31 @@ test.describe('marking a passage', () => {
     await expect(controls).toBeVisible();
   });
 
-  test('DEF-NOTES-76 selects and opens a row from a click on its note', async ({
+  test('DEF-NOTES-76 selects a row from a click on its note', async ({
     page
   }) => {
     await mark(page, P1);
     await openRow(page, 0);
     await panelButton(page, 'Add note').click();
-    await writeNote(page, 'Opens the row from here.');
-    await expect(rows(page).first()).toContainText('Opens the row from here.');
+    await writeNote(page, 'Selects the row from here.');
+    await expect(rows(page).first()).toContainText(
+      'Selects the row from here.'
+    );
     await mark(page, P2);
     await expect(rows(page)).toHaveCount(2);
-    // The second row is selected and the first is closed, so only the click on
-    // the first row's note can select and open it.
+    // Only an open row shows its notes (ACC-NOTES-150), so the first row
+    // stays open while the second is selected; the click on the first row's
+    // note is what moves the selection back.
     await openRow(page, 1);
     const first = rows(page).first();
-    await first.locator('.jp-AdvancedMd-notesToggle').click();
-    await expect(first.locator('.jp-AdvancedMd-notesControls')).toHaveCount(0);
+    await expect(first.locator('.jp-AdvancedMd-notesControls')).toBeVisible();
     await expect(first).not.toHaveClass(/jp-AdvancedMd-notesRow-selected/);
 
     await first.locator('.jp-AdvancedMd-notesText').click();
-    await expect(first.locator('.jp-AdvancedMd-notesControls')).toBeVisible();
     await expect(first).toHaveClass(/jp-AdvancedMd-notesRow-selected/);
+    await expect(rows(page).nth(1)).not.toHaveClass(
+      /jp-AdvancedMd-notesRow-selected/
+    );
   });
 
   test('DEF-NOTES-77 keeps the colour of a mark when Add note is double-clicked', async ({
@@ -2015,7 +2243,7 @@ test.describe('a document that already carries marks', () => {
     );
   });
 
-  test('ACC-NOTES-54 shows a note collapsed and expands it whole', async ({
+  test('ACC-NOTES-54 and ACC-NOTES-150 show no note on a closed row and the whole note once it is open', async ({
     page,
     tmpPath
   }) => {
@@ -2029,14 +2257,19 @@ test.describe('a document that already carries marks', () => {
           'and the second line the row hides until it is opened.\n-->'
       )
     );
+    await expect(rows(page)).toHaveCount(3);
     const row = rows(page).first();
-    await expect(row.locator('.jp-AdvancedMd-notesText')).toHaveText(
-      'The first line of the note,'
-    );
+    const entries = row.locator('.jp-AdvancedMd-notesEntry');
+    await expect(row.locator('.jp-AdvancedMd-notesPassage')).toHaveText(P1);
+    await expect(entries).toHaveCount(0);
 
     // A click on a closed row opens it (ACC-NOTES-148).
     await row.locator('.jp-AdvancedMd-notesHead').click();
 
+    await expect(entries).toHaveCount(1);
+    await expect(row.locator('.jp-AdvancedMd-notesText')).toContainText(
+      'The first line of the note,'
+    );
     await expect(row.locator('.jp-AdvancedMd-notesText')).toContainText(
       'and the second line the row hides until it is opened.'
     );
@@ -2044,6 +2277,87 @@ test.describe('a document that already carries marks', () => {
     await expect(
       rows(page).nth(1).locator('.jp-AdvancedMd-notesControls')
     ).toHaveCount(0);
+
+    // Collapse takes the note off the row again.
+    await row.locator('.jp-AdvancedMd-notesToggle').click();
+    await expect(entries).toHaveCount(0);
+  });
+
+  test('DEF-NOTES-80 opens a row from a click on its padding or the gap above its note', async ({
+    page,
+    tmpPath
+  }) => {
+    await writeExternally(
+      page,
+      `${tmpPath}/${FILE}`,
+      MARKED.replace(
+        opening(ONE),
+        `<!-- mark:${ONE} note colour=yellow\n${AGENT_NOTE}\n-->`
+      )
+    );
+    const first = rows(page).first();
+    const controls = first.locator('.jp-AdvancedMd-notesControls');
+    const note = first.locator('.jp-AdvancedMd-notesText');
+    // The row is opened once so the wait for the note is a wait for the
+    // written file, then closed: a closed row shows no note (ACC-NOTES-150)
+    // and no controls.
+    await openRow(page);
+    await expect(note).toContainText('The intro contradicts this.');
+    await first.locator('.jp-AdvancedMd-notesToggle').click();
+    await expect(note).toHaveCount(0);
+    await expect(controls).toHaveCount(0);
+
+    // A point inside the row's box and outside the box of every part of the
+    // row: halfway down the padding above the head, or, on an open row,
+    // halfway down the gap above the note line.
+    const blank = (where: 'gap' | 'padding') =>
+      first.evaluate((row: HTMLElement, band: string) => {
+        const box = row.getBoundingClientRect();
+        const head = row
+          .querySelector('.jp-AdvancedMd-notesHead')!
+          .getBoundingClientRect();
+        const entry = row
+          .querySelector('.jp-AdvancedMd-notesEntry')
+          ?.getBoundingClientRect();
+        const [top, bottom] =
+          band === 'gap' && entry
+            ? [head.bottom, entry.top]
+            : [box.top, head.top];
+        const x = (box.left + box.right) / 2;
+        const y = (top + bottom) / 2;
+        return {
+          x,
+          y,
+          room: bottom - top,
+          outside: Array.from(row.children).every(child => {
+            const part = child.getBoundingClientRect();
+            return y < part.top || y > part.bottom;
+          }),
+          hit: document.elementFromPoint(x, y) === row
+        };
+      }, where);
+
+    // With another row selected, the closed row opens from its padding.
+    await openRow(page, 1);
+    await expect(first).not.toHaveClass(/jp-AdvancedMd-notesRow-selected/);
+    const padding = await blank('padding');
+    expect(padding.room).toBeGreaterThanOrEqual(2);
+    expect(padding.outside).toBe(true);
+    expect(padding.hit).toBe(true);
+    await page.mouse.click(padding.x, padding.y);
+    await expect(controls).toBeVisible();
+    await expect(first).toHaveClass(/jp-AdvancedMd-notesRow-selected/);
+    await expect(note).toContainText('The intro contradicts this.');
+
+    // On the open row a click on the gap above its note keeps it open and
+    // selected.
+    const gap = await blank('gap');
+    expect(gap.room).toBeGreaterThanOrEqual(2);
+    expect(gap.outside).toBe(true);
+    expect(gap.hit).toBe(true);
+    await page.mouse.click(gap.x, gap.y);
+    await expect(controls).toBeVisible();
+    await expect(first).toHaveClass(/jp-AdvancedMd-notesRow-selected/);
   });
 });
 
@@ -3124,6 +3438,37 @@ test.describe('the list a screen reader moves through', () => {
 
     await rows(page).first().locator('.jp-AdvancedMd-notesHead').click();
     await expect(rows(page).first()).toHaveAttribute('aria-current', 'true');
+  });
+
+  test('ACC-CUE-149 describes whether a row is open and how to change it', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`, FIRST);
+    await mark(page, P1);
+    const row = rows(page).first();
+
+    // A closed row carries no control to say that it opens (ACC-NOTES-148),
+    // so its description says how; the text is not shown on the page.
+    await expect(row).toHaveAccessibleDescription(
+      'Closed. Press Enter to open.'
+    );
+    await expect(
+      panel(page).getByText('Closed. Press Enter to open.')
+    ).toBeHidden();
+
+    // The keys the description names, as a screen reader user presses them.
+    await row.focus();
+    await page.keyboard.press('Enter');
+    await expect(row).toHaveAccessibleDescription(
+      'Open. The Collapse button closes it.'
+    );
+
+    await row.locator('.jp-AdvancedMd-notesToggle').press('Enter');
+    await expect(row).toHaveAccessibleDescription(
+      'Closed. Press Enter to open.'
+    );
   });
 
   test('ACC-CUE-115 names the colour of each swatch', async ({

@@ -67,7 +67,7 @@ const TAB_CAPTIONS: { [className: string]: string | undefined } = {
   [TAB_UPDATED_CLASS]:
     'The file changed on disk and the preview shows the new content; added and removed text is highlighted.',
   [TAB_BLOCKED_CLASS]:
-    'A change on disk is held back by unsaved edits in this document. To take the change, save and choose Revert in the File Changed dialog; Overwrite keeps your version and drops the change.',
+    'A change on disk is held back by unsaved edits in this document. To take the change, choose Reload Markdown File from Disk in the File menu; a save keeps your version and drops the change.',
   [TAB_MISSING_CLASS]:
     'The file is gone from disk. This view keeps the last content that was read.'
 };
@@ -164,9 +164,9 @@ export interface ILiveViewSettings {
 export const DEFAULT_SETTINGS: ILiveViewSettings = {
   enabled: true,
   pollInterval: 10,
-  fadeDuration: 3000,
+  fadeDuration: 5000,
   animation: true,
-  animationSpeed: 25,
+  animationSpeed: 50,
   highlight: true,
   highlightVisibility: 'medium',
   tabCue: true,
@@ -386,10 +386,10 @@ export class LiveViewController implements IDisposable {
    *
    * The period is measured from the end of the quiet period rather than from
    * the change, so the settled turn always has a window to be seen in. Both
-   * timers are armed on the same change, and at the shipped defaults the fade
-   * duration and the quiet period are the same 3000 ms, so a period measured
-   * from the change would take the marker away in the tick the tab settled
-   * and the slower turn ACC-CUE-71 asks for would never appear.
+   * timers are armed on the same change, and a fade duration set to the quiet
+   * period (3000 ms; the two were equal at the defaults of 1.0.5) would, with
+   * a period measured from the change, take the marker away in the tick the
+   * tab settled, and the slower turn ACC-CUE-71 asks for would never appear.
    */
   private _resetCueTimer(): void {
     if (this._cueTimer !== null) {
@@ -491,13 +491,15 @@ export class LiveViewController implements IDisposable {
             : null;
         const fresh = freshOps ? changeRanges(freshOps) : undefined;
         const offsets = freshOps ? mapOffsets(freshOps) : undefined;
-        // Past the diff's token bound on either side, the changed middle
-        // arrives as one removal and one addition with the unchanged text
-        // inside the addition. Typing that would take text the reader had
-        // away and bring it back, so such a change lands at once, tinted as
-        // without animation. The diff this render made decides: what an
-        // earlier coarse write of the same fade showed stays complete anyway,
-        // and a small write after it is typed.
+        // A changed middle past the diff's token bound is aligned line by
+        // line, and arrives as one removal and one addition, with the
+        // unchanged text inside the addition, only where no line survives or
+        // the lines themselves pass the line bound (DEF-HILITE-88). Typing
+        // that would take text the reader had away and bring it back, so
+        // such a change lands at once, tinted as without animation. The diff
+        // this render made decides: what an earlier coarse write of the same
+        // fade showed stays complete anyway, and a small write after it is
+        // typed.
         const scope = fresh ?? ranges;
         const past = (text: string) => tokenize(text).length > MAX_LCS_TOKENS;
         const coarse =

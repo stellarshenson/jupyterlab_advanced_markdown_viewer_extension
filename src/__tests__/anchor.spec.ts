@@ -156,6 +156,31 @@ describe('tokeniseSource', () => {
     }
   });
 
+  it('ends a word at a br element written in the source, as the render does (DEF-NOTES-86)', () => {
+    // The render shows a br as a line break, so the words either side of it
+    // are two words there; the source reads them the same way.
+    // The end-tag spelling is a br to the HTML parser as well.
+    for (const br of ['<br>', '<br/>', '<br />', '<BR>', '</br>']) {
+      const { tokens } = tokeniseSource(`Alpha${br}Beta and more.`);
+      expect(tokens.map(token => token.text)).toEqual([
+        'Alpha',
+        'Beta',
+        'and',
+        'more.'
+      ]);
+    }
+    // Any other inline tag still joins what it sits inside.
+    expect(
+      tokeniseSource('al<span>pha</span> beta').tokens.map(token => token.text)
+    ).toEqual(['alpha', 'beta']);
+    // A br inside a table cell likewise.
+    expect(
+      tokeniseSource('| head | tail |\n|---|---|\n| one<br>two | three |')
+        .tokens.map(token => token.text)
+        .slice(2)
+    ).toEqual(['one', 'two', 'three']);
+  });
+
   it('numbers the blocks blank lines separate', () => {
     const { tokens } = tokeniseSource('One two.\n\nThree four.\n\nFive.');
     expect(tokens.map(token => token.block)).toEqual([0, 0, 1, 1, 2]);
@@ -436,6 +461,30 @@ describe('selectionToSource', () => {
     );
   });
 
+  it('finds the words before a hard line break, which the render shows with no newline (DEF-NOTES-84)', () => {
+    const source =
+      '3. **Ostateczny rygor:**  \n   W przypadku niewydania dokumentu:';
+    const root = render(
+      '<ol start="3"><li><p><strong>Ostateczny rygor:</strong><br>' +
+        'W przypadku niewydania dokumentu:</p></li></ol>'
+    );
+    const range = sourceRange(root, source, 'Ostateczny', 'rygor:');
+    expect(applyMarkers(source, range)).toBe(
+      '<!-- mark:m note -->\n3. **Ostateczny rygor:**<!-- /mark:m -->  \n' +
+        '   W przypadku niewydania dokumentu:'
+    );
+  });
+
+  it('finds the word before a br element written in the source (DEF-NOTES-86)', () => {
+    const source = 'One Alpha<br>Beta and more words here.';
+    const root = render('<p>One Alpha<br>Beta and more words here.</p>');
+    // The one word, selected from its first four letters to its last.
+    const range = sourceRange(root, source, 'Alph', 'a');
+    expect(applyMarkers(source, range)).toBe(
+      'One <!-- mark:m note -->Alpha<!-- /mark:m --><br>Beta and more words here.'
+    );
+  });
+
   it('widens a boundary inside a link to the whole link', () => {
     const source = 'See [the docs](http://example.com/x) now.';
     const root = render(
@@ -658,6 +707,22 @@ describe('passageToRendered', () => {
     expect(found).toEqual({
       start: text.indexOf('beta'),
       end: text.indexOf('gamma') + 'gamma'.length
+    });
+  });
+
+  it('finds the passage of a mark over a br element written in the source (DEF-NOTES-86)', () => {
+    const source =
+      'One <!-- mark:a note -->Alpha<br>Beta<!-- /mark:a --> and more.';
+    const root = render('<p>One Alpha<br>Beta and more.</p>');
+    const passage = {
+      start: source.indexOf('-->') + 3,
+      end: source.indexOf('<!-- /mark:a -->')
+    };
+    // The captured text breaks at the br, so the offsets are read from it.
+    const text = captureText(root).text;
+    expect(inRender(passage, source, root)).toEqual({
+      start: text.indexOf('Alpha'),
+      end: text.indexOf('Beta') + 'Beta'.length
     });
   });
 

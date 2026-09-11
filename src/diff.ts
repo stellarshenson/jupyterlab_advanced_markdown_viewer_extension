@@ -5,8 +5,14 @@
  * text so it can highlight it. A common prefix and suffix are trimmed first,
  * which covers the usual case of an agent rewriting a few paragraphs cheaply,
  * and only the remaining middle goes through a longest-common-subsequence pass.
- * The pass is bounded: past the bound the whole middle is reported as one
- * replacement rather than allowing a quadratic blow-up on a full rewrite.
+ * The pass is bounded. A middle past the bound is aligned line by line first,
+ * so two small edits far apart in a long document, a line pushed in at the top
+ * and a word changed at the end, are still two small edits and not one
+ * replacement of everything between them (DEF-HILITE-88); only lines that
+ * differ are compared word by word, each pair under the same bound. Past the
+ * bound in lines as well, or where no line survives, the whole middle is
+ * reported as one replacement rather than allowing a quadratic blow-up on a
+ * full rewrite.
  */
 
 export type DiffOpKind = 'equal' | 'insert' | 'delete';
@@ -23,6 +29,16 @@ export interface IDiffOp {
  * Largest number of tokens per side that the quadratic pass will consider.
  */
 export const MAX_LCS_TOKENS = 1000;
+
+/**
+ * Largest number of lines per side that the line pass will align. A line is
+ * far larger than a token, so the line pass has a bound of its own: this
+ * repository's own criteria register runs past 1200 lines, and a write to it
+ * with two small edits is two small edits (DEF-HILITE-88). The bound sits a
+ * hundred lines above the 1500 the extension promises, so a write that adds
+ * lines to a document of that size stays inside it.
+ */
+export const MAX_LCS_LINES = 1600;
 
 /**
  * Split text into word and whitespace tokens.
@@ -139,13 +155,8 @@ export function diffWords(before: string, after: string): IDiffOp[] {
     beforeMiddle.length > MAX_LCS_TOKENS ||
     afterMiddle.length > MAX_LCS_TOKENS
   ) {
-    // Too large to align token by token. Report the middle as one replacement,
-    // which is what the highlight needs anyway at this size.
-    if (beforeMiddle.length) {
-      push(ops, 'delete', beforeMiddle.join(''));
-    }
-    if (afterMiddle.length) {
-      push(ops, 'insert', afterMiddle.join(''));
+    for (const op of lineOps(beforeMiddle, afterMiddle)) {
+      push(ops, op.kind, op.text);
     }
   } else {
     for (const op of lcsOps(beforeMiddle, afterMiddle)) {
@@ -155,6 +166,77 @@ export function diffWords(before: string, after: string): IDiffOp[] {
 
   if (tail > 0) {
     push(ops, 'equal', beforeTokens.slice(beforeTokens.length - tail).join(''));
+  }
+  return ops;
+}
+
+/**
+ * Group tokens into lines: each line ends with the whitespace token that
+ * holds its newline, so the lines concatenate back to the tokens exactly.
+ */
+function lines(tokens: string[]): string[] {
+  const out: string[] = [];
+  let line = '';
+  for (const token of tokens) {
+    line += token;
+    if (token.includes('\n')) {
+      out.push(line);
+      line = '';
+    }
+  }
+  if (line) {
+    out.push(line);
+  }
+  return out;
+}
+
+/**
+ * Align a middle too long for the token pass line by line.
+ *
+ * Lines are aligned by the same pass; the lines that differ are compared word
+ * by word, each run of removed lines against the run of added lines beside
+ * it, through {@link diffWords} and so under the same bound. Where no line is
+ * shared, or the lines themselves are past the bound, the middle is one
+ * replacement, which is what the highlight needs at that size.
+ */
+function lineOps(before: string[], after: string[]): IDiffOp[] {
+  const beforeLines = lines(before);
+  const afterLines = lines(after);
+  const coarse = (): IDiffOp[] => {
+    const ops: IDiffOp[] = [];
+    if (before.length) {
+      push(ops, 'delete', before.join(''));
+    }
+    if (after.length) {
+      push(ops, 'insert', after.join(''));
+    }
+    return ops;
+  };
+  if (beforeLines.length > MAX_LCS_LINES || afterLines.length > MAX_LCS_LINES) {
+    return coarse();
+  }
+  const aligned = lcsOps(beforeLines, afterLines);
+  if (!aligned.some(op => op.kind === 'equal')) {
+    return coarse();
+  }
+  const ops: IDiffOp[] = [];
+  for (let i = 0; i < aligned.length; i++) {
+    const op = aligned[i];
+    const next = aligned[i + 1];
+    if (op.kind === 'equal') {
+      push(ops, 'equal', op.text);
+    } else if (next && next.kind !== 'equal' && next.kind !== op.kind) {
+      // A run of removed lines beside a run of added ones: the words inside
+      // them are compared, so a changed word is a changed word.
+      const removed = op.kind === 'delete' ? op.text : next.text;
+      const added = op.kind === 'insert' ? op.text : next.text;
+      for (const inner of diffWords(removed, added)) {
+        push(ops, inner.kind, inner.text);
+      }
+      i++;
+    } else {
+      push(ops, op.kind, op.text);
+    }
   }
   return ops;
 }

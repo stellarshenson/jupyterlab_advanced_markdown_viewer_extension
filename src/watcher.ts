@@ -114,7 +114,14 @@ export class FileWatcher implements IDisposable {
       if (this._disposed) {
         return;
       }
-      this._shadow = this._context.model.toString();
+      // The model holds the text just loaded from disk, unless the reader
+      // typed before this watcher was built: a preview opened over a document
+      // with unsaved edits. That text is no revision of the file, so the
+      // shadow stays empty and the first read holds a change back instead of
+      // applying it over their work (DEF-APPLY-90).
+      if (!this._context.model.dirty) {
+        this._shadow = this._context.model.toString();
+      }
       this._record(this._context.contentsModel);
       this._path = this._context.path;
       this._ready = true;
@@ -123,6 +130,10 @@ export class FileWatcher implements IDisposable {
       // A held change lands as soon as the document is clean again; without a
       // timer, the dirty flag going down is what says so.
       this._context.model.stateChanged.connect(this._onModelState, this);
+      // Reload from Disk loads the file into the document and leaves it dirty,
+      // and the file does not move, so neither the dirty flag nor the channel
+      // says so. The Context reports the revision it loaded here.
+      this._context.fileChanged.connect(this._onFileChanged, this);
       if (this._enabled) {
         this._channel.register(this._path);
         // A write between the load and this registration is reported by
@@ -273,6 +284,16 @@ export class FileWatcher implements IDisposable {
   }
 
   /**
+   * The Context recorded a new revision of the file while a change was held
+   * back: a reload may have loaded it into the document, so check again.
+   */
+  private _onFileChanged(): void {
+    if (this._pending !== null) {
+      void this._check();
+    }
+  }
+
+  /**
    * Forget a change held back earlier, or a file reported as gone that is
    * back with the content the document already holds, and say so.
    */
@@ -364,12 +385,23 @@ export class FileWatcher implements IDisposable {
     const model = this._context.model;
     if (disk === model.toString()) {
       // The document already holds this revision: a reload brought it in.
+      // The release comes first, because the record emits the Context's
+      // fileChanged and the clean flag the model's stateChanged, and either
+      // one with a change still held would start another read.
       this._shadow = disk;
-      this._syncContentsModel();
       this._release();
+      this._syncContentsModel();
+      // Reload from Disk leaves the document dirty though it matches the file.
+      model.dirty = false;
       return;
     }
-    if (model.dirty) {
+    // Context._revert loads the file into the document and clears no dirty
+    // flag, so after Reload from Disk the flag says nothing about unsaved
+    // work: the document holds the revision that was held back, or the text
+    // this watcher last loaded, applied or saw saved. Either holds nothing
+    // unsaved, and a write held behind it would wait for ever (DEF-CUE-85).
+    const text = model.toString();
+    if (model.dirty && text !== this._pending && text !== this._shadow) {
       // Unsaved edits are never overwritten. The change is kept and lands once
       // the document is clean; the same change is reported once.
       if (this._pending !== disk) {

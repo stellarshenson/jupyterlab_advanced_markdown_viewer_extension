@@ -870,7 +870,7 @@ describe('LiveViewController', () => {
       expect(ghosts()).toEqual([partial, 'delta ']);
     });
 
-    it('lands a change past the diff token bound at once', () => {
+    it('types two small changes 600 words apart and tints nothing between them (DEF-HILITE-88)', () => {
       const middle = Array.from(
         { length: 20 },
         (_, i) =>
@@ -880,12 +880,17 @@ describe('LiveViewController', () => {
       const paragraph = root.querySelectorAll('p')[5].textContent;
       applied();
       render(`<p>first plus</p>\n${middle}\n<p>last also</p>`);
-      // Two small changes 600 words apart go through the coarse diff branch,
-      // which reports the unchanged text between them as added; that text is
-      // tinted, not taken away and typed back.
+      // Two small changes 600 words apart are past the token bound, and the
+      // line pass keeps them apart: each word is typed, and the unchanged
+      // paragraphs between them are neither tinted nor taken away and typed
+      // back.
       expect(root.querySelectorAll('p')[5].textContent).toBe(paragraph);
-      expect(addedText(root).length).toBeGreaterThan(2);
-      expect(typingCount(root)).toBe(0);
+      expect(typingCount(root)).toBe(2);
+      jest.advanceTimersByTime(1000);
+      expect(addedText(root)).toEqual([' plus', ' also']);
+      expect(
+        root.querySelectorAll('p')[5].querySelector(`.${ADDED_CLASS}`)
+      ).toBeNull();
     });
 
     it('keeps typing when the operating system turns reduced motion on', () => {
@@ -943,7 +948,7 @@ describe('LiveViewController', () => {
       expect(h2.textContent).toBe('Summary¶');
     });
 
-    it('lands a rewrite past the diff token bound on the removed side at once', () => {
+    it('shows a dropped first paragraph as a ghost and types the changed last word of a long document (DEF-HILITE-88)', () => {
       const paragraph = (i: number, words: number) =>
         `<p>${Array.from({ length: words }, (_, j) => `w${i}x${j}`).join(' ')}</p>`;
       const body = Array.from({ length: 13 }, (_, i) => paragraph(i, 40));
@@ -951,21 +956,28 @@ describe('LiveViewController', () => {
       render(body.join('\n'));
       const second = root.querySelectorAll('p')[1].textContent;
       applied();
-      // Dropping the first paragraph and editing the last word puts only the
-      // removed side past the bound; the unchanged body is tinted, not taken
-      // away and typed back.
+      // Dropping the first paragraph and editing the last word puts the whole
+      // body between them past the token bound; the line pass finds the
+      // eleven unchanged paragraphs, so the dropped one goes as a ghost, the
+      // changed word is typed, and the body is neither tinted nor taken away
+      // and typed back.
       const after = body.slice(1);
       after[after.length - 1] = after[after.length - 1].replace(
         'w12x39</p>',
         'changed</p>'
       );
       render(after.join('\n'));
-      expect(root.querySelectorAll('p')[0].textContent).toBe(second);
-      expect(typingCount(root)).toBe(0);
-      expect(addedText(root).length).toBeGreaterThan(0);
+      expect(root.querySelectorAll('p')[0].textContent).toContain(second);
+      // Two ghosts, the dropped paragraph and the replaced word, both being
+      // deleted, and the one word being typed.
+      expect(ghosts().some(text => text?.includes('w0x0'))).toBe(true);
+      expect(ghosts()).toHaveLength(2);
+      expect(typingCount(root)).toBe(3);
+      jest.advanceTimersByTime(1000);
+      expect(addedText(root)).toEqual(['changed']);
     });
 
-    it('lands two distant removals whose removed middle passes the bound at once', () => {
+    it('shows two dropped paragraphs far apart as ghosts and tints nothing between them (DEF-HILITE-88)', () => {
       const paragraph = (i: number, words: number) =>
         `<p>${Array.from({ length: words }, (_, j) => `w${i}x${j}`).join(' ')}</p>`;
       const middle = Array.from({ length: 15 }, (_, i) => paragraph(i, 30));
@@ -974,7 +986,10 @@ describe('LiveViewController', () => {
       applied();
       render(middle.join('\n'));
       expect(root.querySelectorAll('p')[4].textContent).toBe(fifth);
-      expect(typingCount(root)).toBe(0);
+      // The two ghosts are being deleted; nothing is added or tinted.
+      expect(ghosts()).toHaveLength(2);
+      expect(addedText(root)).toEqual([]);
+      expect(typingCount(root)).toBe(2);
     });
 
     it('types a small write made while an earlier coarse write still stands', () => {
@@ -983,9 +998,9 @@ describe('LiveViewController', () => {
       const body = Array.from({ length: 25 }, (_, i) => paragraph(i));
       render(body.join('\n'));
       applied();
-      const edited = [...body];
-      edited[0] = edited[0].replace('w0x0 ', 'w0x0 plus ');
-      edited[24] = edited[24].replace('w24x49</p>', 'w24x49 also</p>');
+      // Every word of every paragraph rewritten: no line survives, so the
+      // diff is coarse and the rewrite lands at once.
+      const edited = body.map(block => block.replace(/w(\d+)x/g, 'v$1x'));
       render(edited.join('\n'));
       expect(typingCount(root)).toBe(0);
       jest.advanceTimersByTime(1000);

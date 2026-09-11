@@ -44,6 +44,19 @@ describe('captureText', () => {
     expect(captureText(root).text).toBe('alphabeta');
   });
 
+  it('breaks the text at a hard line break, which the renderer writes without a newline (DEF-NOTES-84)', () => {
+    const root = render(
+      '<p><strong>Ostateczny rygor:</strong><br>W przypadku<br>\nline three</p>'
+    );
+    const snapshot = captureText(root);
+    expect(snapshot.text).toBe('Ostateczny rygor:\nW przypadku\nline three');
+    for (const span of snapshot.spans) {
+      expect(span.node.nodeValue).toBe(
+        snapshot.text.slice(span.start, span.end)
+      );
+    }
+  });
+
   it('maps every span back to a node holding that text', () => {
     const root = render('<p>alpha</p><p>beta</p>');
     const snapshot = captureText(root);
