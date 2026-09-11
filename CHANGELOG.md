@@ -2,6 +2,10 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.8] - 2026-09-11
+
+The 1.0.7 content published again with no change to the extension; the 1.0.7 section below is the release content.
+
 ## [1.0.7] - 2026-09-11
 
 Everything since 1.0.5: the eight items filed after using 1.0.5, the four limitations recorded when that work shipped, and two adversarial review campaigns of six rounds each. 1.0.6 was built and installed locally throughout and never published.
