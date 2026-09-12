@@ -31,12 +31,13 @@ export interface IDiffOp {
 export const MAX_LCS_TOKENS = 1000;
 
 /**
- * Largest number of lines per side that the line pass will align. A line is
- * far larger than a token, so the line pass has a bound of its own: this
- * repository's own criteria register runs past 1200 lines, and a write to it
- * with two small edits is two small edits (DEF-HILITE-88). The bound sits a
- * hundred lines above the 1500 the extension promises, so a write that adds
- * lines to a document of that size stays inside it.
+ * Largest number of lines per side that one leaf of the line alignment will
+ * put through the quadratic pass. A line is far larger than a token, so the
+ * line pass has a bound of its own: this repository's own criteria register
+ * runs past 1200 lines, and a write to it with two small edits is two small
+ * edits (DEF-HILITE-88). A run past the bound is split at a line unique to
+ * both sides and each half aligned on its own, so the bound sizes a leaf
+ * and not the document.
  */
 export const MAX_LCS_LINES = 1600;
 
@@ -212,10 +213,7 @@ function lineOps(before: string[], after: string[]): IDiffOp[] {
     }
     return ops;
   };
-  if (beforeLines.length > MAX_LCS_LINES || afterLines.length > MAX_LCS_LINES) {
-    return coarse();
-  }
-  const aligned = lcsOps(beforeLines, afterLines);
+  const aligned = alignLines(beforeLines, afterLines);
   if (!aligned.some(op => op.kind === 'equal')) {
     return coarse();
   }
@@ -237,6 +235,55 @@ function lineOps(before: string[], after: string[]): IDiffOp[] {
     } else {
       push(ops, op.kind, op.text);
     }
+  }
+  return ops;
+}
+
+/**
+ * Align two runs of lines: by the quadratic pass while both sides fit its
+ * bound, and past it split at a line that occurs exactly once on each side,
+ * the one nearest the middle of the earlier run, each half aligned on its
+ * own. A run past the bound with no such line is one replacement.
+ */
+function alignLines(before: string[], after: string[]): IDiffOp[] {
+  if (before.length <= MAX_LCS_LINES && after.length <= MAX_LCS_LINES) {
+    return lcsOps(before, after);
+  }
+  const count = (side: string[]): Map<string, number> => {
+    const counts = new Map<string, number>();
+    for (const line of side) {
+      counts.set(line, (counts.get(line) ?? 0) + 1);
+    }
+    return counts;
+  };
+  const inBefore = count(before);
+  const inAfter = count(after);
+  const middle = before.length / 2;
+  let anchor = -1;
+  for (let i = 0; i < before.length; i++) {
+    if (
+      inBefore.get(before[i]) === 1 &&
+      inAfter.get(before[i]) === 1 &&
+      (anchor < 0 || Math.abs(i - middle) < Math.abs(anchor - middle))
+    ) {
+      anchor = i;
+    }
+  }
+  if (anchor < 0) {
+    const ops: IDiffOp[] = [];
+    if (before.length) {
+      push(ops, 'delete', before.join(''));
+    }
+    if (after.length) {
+      push(ops, 'insert', after.join(''));
+    }
+    return ops;
+  }
+  const at = after.indexOf(before[anchor]);
+  const ops = alignLines(before.slice(0, anchor), after.slice(0, at));
+  push(ops, 'equal', before[anchor]);
+  for (const op of alignLines(before.slice(anchor + 1), after.slice(at + 1))) {
+    push(ops, op.kind, op.text);
   }
   return ops;
 }

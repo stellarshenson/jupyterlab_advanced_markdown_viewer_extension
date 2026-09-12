@@ -33,9 +33,17 @@ import {
 export const TYPING_CLASS = 'jp-AdvancedMd-typing';
 
 /**
- * How long a removal ghost stands complete before its deletion starts.
+ * How long a decoration takes to rise to its colour. Matches the stylesheet.
  */
-export const GHOST_HOLD_MS = 750;
+export const FADE_IN_MS = 500;
+
+/**
+ * How long a removal ghost stands complete before its deletion starts: its
+ * own rise, the time the added text beside it takes to reach its colour, so
+ * the ghost is seen whole before it goes. The deletion then runs beside the
+ * typing, the one the inverse of the other (ACC-HILITE-156).
+ */
+export const GHOST_HOLD_MS = FADE_IN_MS;
 
 /**
  * One decoration being typed or deleted.
@@ -75,6 +83,20 @@ export class ChangeAnimator {
    * ghost still whole is left to the fade.
    */
   speed = 0;
+
+  /**
+   * How far the time of a character may stray from the even time at the
+   * speed, as a share of it, drawn evenly either way: 0 types like a clock,
+   * 0.25 lets a character take between three quarters and one and a quarter
+   * of its time, and the mean stays the speed (ACC-ANIM-158).
+   */
+  jitter = 0;
+
+  /**
+   * The draw behind the jitter, replaceable by a test that needs a run to
+   * take a known time.
+   */
+  random: () => number = Math.random;
 
   /**
    * Begin animating the decorations of a render.
@@ -373,7 +395,7 @@ export class ChangeAnimator {
     const now = Date.now();
     const dt = now - this._lastTick;
     this._lastTick = now;
-    const budget = this.speed > 0 ? (dt * this.speed) / 1000 : Infinity;
+    const budget = this._budget(dt);
     let pending = false;
     for (const run of this._runs) {
       if (run.done) {
@@ -428,6 +450,39 @@ export class ChangeAnimator {
     }
   }
 
+  /**
+   * How many characters a frame's time buys at the speed, walked one
+   * character at a time: each character has a time of its own, the even time
+   * scaled by a factor drawn once for it, and the one draw serves every run,
+   * so runs that follow one another keep in step.
+   */
+  private _budget(dt: number): number {
+    if (this.speed <= 0) {
+      return Infinity;
+    }
+    const even = 1000 / this.speed;
+    let budget = 0;
+    let left = dt;
+    while (left > 0) {
+      if (this._charLeft <= 0) {
+        this._charLeft = 1;
+        this._factor = 1 + this.jitter * (2 * this.random() - 1);
+      }
+      const time = even * this._factor;
+      const need = this._charLeft * time;
+      if (left < need) {
+        const part = left / time;
+        budget += part;
+        this._charLeft -= part;
+        break;
+      }
+      budget += this._charLeft;
+      left -= need;
+      this._charLeft = 0;
+    }
+    return budget;
+  }
+
   private _cancelFrame(): void {
     if (this._frame !== null) {
       cancelAnimationFrame(this._frame);
@@ -438,4 +493,6 @@ export class ChangeAnimator {
   private _runs: IRun[] = [];
   private _frame: number | null = null;
   private _lastTick = 0;
+  private _factor = 1;
+  private _charLeft = 0;
 }

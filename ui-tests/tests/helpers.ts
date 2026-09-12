@@ -70,6 +70,7 @@ export function settings(overrides: Record<string, unknown> = {}) {
       fadeDuration: 30000,
       animation: true,
       animationSpeed: 0,
+      animationJitter: 0,
       highlight: true,
       tabCue: true,
       ...overrides
@@ -176,6 +177,42 @@ export async function typeInEditor(
   await expect(editor).toBeVisible();
   await editor.click();
   await page.keyboard.press('Control+End');
+  await page.keyboard.type(text);
+}
+
+/**
+ * Type into the editor right after `anchor`, so the text lands inside a
+ * passage rather than at the end of the document.
+ */
+export async function typeInEditorAfter(
+  page: any,
+  path: string,
+  anchor: string,
+  text: string
+): Promise<void> {
+  await page.evaluate(async (target: string) => {
+    await (window as any).jupyterapp.commands.execute('docmanager:open', {
+      path: target,
+      factory: 'Editor'
+    });
+  }, path);
+  const editor = page.locator('.jp-FileEditor .cm-content');
+  await expect(editor).toBeVisible();
+  await page.evaluate(
+    ([target, needle]: [string, string]) => {
+      const app = (window as any).jupyterapp;
+      for (const widget of app.shell.widgets('main')) {
+        if (widget.context?.path === target && widget.content?.editor) {
+          const view = widget.content.editor;
+          const source: string = view.model.sharedModel.getSource();
+          const offset = source.indexOf(needle) + needle.length;
+          view.setCursorPosition(view.getPositionAt(offset));
+          view.focus();
+        }
+      }
+    },
+    [path, anchor]
+  );
   await page.keyboard.type(text);
 }
 

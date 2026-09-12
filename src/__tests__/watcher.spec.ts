@@ -2,7 +2,7 @@ import { Signal } from '@lumino/signaling';
 
 import { changeRanges, diffWords } from '../diff';
 import { captureText, decorate } from '../highlight';
-import { FileWatcher, sourceEdits } from '../watcher';
+import { FileWatcher, mergeEdits, sourceEdits } from '../watcher';
 
 // The Context class is loaded for one guard test. Its dialog and rendering
 // imports are not needed for that and are cut off here, because they drag a
@@ -80,6 +80,173 @@ describe('sourceEdits', () => {
   });
 });
 
+describe('mergeEdits', () => {
+  it('lands a hunk touching none of ours past our earlier edit', () => {
+    const base = 'one two three four five\n';
+    const ours = 'one TWO two three four five\n';
+    const theirs = 'one two three FOUR five\n';
+    const merge = mergeEdits(base, ours, theirs);
+    expect(merge.dropped).toHaveLength(0);
+    expect(apply(ours, merge.applied)).toBe('one TWO two three FOUR five\n');
+  });
+
+  it('drops a hunk overlapping ours and leaves our text standing', () => {
+    const base = 'alpha beta gamma\n';
+    const ours = 'alpha BETA gamma\n';
+    const theirs = 'alpha beta! gamma\n';
+    const merge = mergeEdits(base, ours, theirs);
+    expect(merge.applied).toHaveLength(0);
+    expect(merge.dropped).toHaveLength(1);
+    expect(apply(ours, merge.applied)).toBe(ours);
+  });
+
+  it('reads two insertions at one offset as touching', () => {
+    const base = 'alpha\n';
+    const merge = mergeEdits(base, 'alpha\ntyped', 'alpha\nbeta\n');
+    expect(merge.applied).toHaveLength(0);
+    expect(merge.dropped).toHaveLength(1);
+  });
+
+  it('reads a hunk ending where ours begins as touching', () => {
+    const base = 'alpha beta gamma\n';
+    // Ours takes 'beta ' out at [6, 11); theirs writes ahead of 'gamma'.
+    const merge = mergeEdits(base, 'alpha gamma\n', 'alpha beta GAMMA\n');
+    expect(merge.applied).toHaveLength(0);
+    expect(merge.dropped).toHaveLength(1);
+  });
+
+  it('applies two hunks more than MAX_LCS_LINES apart around an edit between them', () => {
+    const base = Array.from(
+      { length: 1700 },
+      (_, i) => `Line ${i + 1} of the long report, some words here.`
+    ).join('\n');
+    const theirs = base
+      .replace('Line 2 of', 'Line 2 (revised) of')
+      .replace('Line 1690 of', 'Line 1690 (revised) of');
+    const ours = base.replace('Line 800 of', 'Line 800 X of');
+    const merge = mergeEdits(base, ours, theirs);
+    expect(merge.dropped).toHaveLength(0);
+    expect(merge.applied).toHaveLength(2);
+    expect(apply(ours, merge.applied)).toBe(
+      theirs.replace('Line 800 of', 'Line 800 X of')
+    );
+  });
+
+  it('lands several hunks each at its own place, as cursors put where the writer edited', () => {
+    const base = [
+      'one',
+      'two',
+      'three',
+      'four',
+      'five',
+      'six',
+      'seven',
+      ''
+    ].join('\n');
+    const ours = base.replace('two', 'two TYPED').replace('six', 'six MORE');
+    const theirs = base
+      .replace('one', 'ONE')
+      .replace('four', 'FOUR')
+      .replace('seven\n', 'seven\neight\n');
+    const merge = mergeEdits(base, ours, theirs);
+    expect(merge.dropped).toHaveLength(0);
+    expect(merge.applied).toHaveLength(3);
+    expect(apply(ours, merge.applied)).toBe(
+      [
+        'ONE',
+        'two TYPED',
+        'three',
+        'FOUR',
+        'five',
+        'six MORE',
+        'seven',
+        'eight',
+        ''
+      ].join('\n')
+    );
+  });
+
+  it("keeps a rewritten line whole rather than weaving it into the reader's words", () => {
+    const base =
+      'The pipeline reads the raw files, cleans them, and writes a parquet table to the store.\n';
+    const ours = base.replace('cleans', 'validates');
+    const theirs =
+      'The loader ingests the source archives, normalises them, and emits a Delta table into the lake.\n';
+    const merge = mergeEdits(base, ours, theirs);
+    expect(merge.applied).toHaveLength(0);
+    expect(merge.dropped.length).toBeGreaterThan(0);
+    expect(apply(ours, merge.applied)).toBe(ours);
+  });
+
+  it('refuses a write that would leave a fence unterminated (DEF-APPLY-95)', () => {
+    const base =
+      'Run the job:\n\nnpm run build\nnpm test\n\nThen check the output.\n';
+    const ours = base.replace('npm test', 'npm test --watch');
+    const theirs = base.replace(
+      'npm run build\nnpm test',
+      '```bash\nnpm run build\nnpm test\n```'
+    );
+    const merge = mergeEdits(base, ours, theirs);
+    expect(merge.applied).toHaveLength(0);
+    expect(merge.dropped.length).toBeGreaterThan(0);
+    expect(apply(ours, merge.applied)).toBe(ours);
+  });
+
+  it('refuses a write whose dropped rewrite takes half of a comment pair with it', () => {
+    const base =
+      'Intro line.\n\nnpm run build\nnpm test\n\nThen check the output.\n';
+    const ours = base.replace('npm test\n', 'npm test --watch\n');
+    const theirs = base.replace(
+      'npm run build\nnpm test',
+      '<!-- note\nnpm run build\nnpm test\n-->'
+    );
+    const merge = mergeEdits(base, ours, theirs);
+    expect(merge.applied).toHaveLength(0);
+    expect(apply(ours, merge.applied)).toBe(ours);
+  });
+
+  it('refuses a write that drops halves of two different fence pairs', () => {
+    const base =
+      'Build it:\n\nnpm run build\nnpm run lint\n\nThen test it:\n\nnpm test\nnpm run e2e\n\nDone.\n';
+    const theirs = base
+      .replace(
+        'npm run build\nnpm run lint',
+        '```bash\nnpm run build\nnpm run lint\n```'
+      )
+      .replace('npm test\nnpm run e2e', '```bash\nnpm test\nnpm run e2e\n```');
+    const ours = base
+      .replace('npm run lint', 'npm run lint --fix')
+      .replace('npm test\n', 'time npm test\n');
+    const merge = mergeEdits(base, ours, theirs);
+    expect(merge.applied).toHaveLength(0);
+    expect(apply(ours, merge.applied)).toBe(ours);
+  });
+
+  it('wraps a block in a fence when the write touches nothing of ours', () => {
+    const base =
+      'Run the job:\n\nnpm run build\nnpm test\n\nThen check the output.\n';
+    const ours = base.replace('Then check', 'Then CHECK');
+    const theirs = base.replace(
+      'npm run build\nnpm test',
+      '```bash\nnpm run build\nnpm test\n```'
+    );
+    const merge = mergeEdits(base, ours, theirs);
+    expect(merge.dropped).toHaveLength(0);
+    expect(apply(ours, merge.applied)).toBe(
+      theirs.replace('Then check', 'Then CHECK')
+    );
+  });
+
+  it("does not apply a fence's opening without its closing", () => {
+    const base = 'Run the job:\n\nnpm run build\n\nThen check the output.\n';
+    const ours = base.replace('npm run build', 'npm run build --watch');
+    const theirs = base.replace('npm run build', '```bash\nnpm run build\n```');
+    const merge = mergeEdits(base, ours, theirs);
+    expect(merge.applied).toHaveLength(0);
+    expect(apply(ours, merge.applied)).toBe(ours);
+  });
+});
+
 /**
  * The change channel, reduced to what the watcher uses: registrations and a
  * signal the test fires.
@@ -127,13 +294,22 @@ function makeFixture(text: string) {
       },
       updateSource: (start: number, end: number, value: string) => {
         source = source.slice(0, start) + value + source.slice(end);
-        // A real shared model reports the edit to its document model, which
-        // marks itself dirty; the watcher clears that after applying.
+        // As YFile.updateSource does: the content is reported from inside
+        // the transaction, and the flag raised after it. The watcher clears
+        // the flag after applying.
+        model.contentChanged.emit(undefined);
         model.dirty = true;
+      },
+      // As YFile.setSource does, which a reload goes through: the content is
+      // reported and the flag left as it was.
+      setSource: (value: string) => {
+        source = value;
+        model.contentChanged.emit(undefined);
       }
     }
   };
   model.stateChanged = new Signal(model);
+  model.contentChanged = new Signal(model);
   const context: any = {
     path: 'live.md',
     isDisposed: false,
@@ -200,6 +376,25 @@ describe('FileWatcher', () => {
     await fixture.context.ready;
     await Promise.resolve();
     await settle();
+  };
+
+  // Start over on a document holding other text.
+  const rebuild = async (text: string) => {
+    watcher.dispose();
+    events.length = 0;
+    fixture = makeFixture(text);
+    channel = makeChannel();
+    await create();
+  };
+  // A change held back with no shadow to merge over: the reader typed before
+  // the watcher was built and the file moved on since the load
+  // (DEF-APPLY-90).
+  const hold = async (text = 'alpha beta\n') => {
+    watcher.dispose();
+    events.length = 0;
+    type();
+    fixture.write(text, 'h1');
+    await create();
   };
 
   beforeEach(async () => {
@@ -292,10 +487,112 @@ describe('FileWatcher', () => {
     expect(events).toEqual(['blocked:missing', 'unblocked']);
   });
 
-  it('reports a change once while the document is dirty, then applies it once clean', async () => {
+  it('merges a write around unsaved edits and keeps the document unsaved (ACC-APPLY-10)', async () => {
     type();
     fixture.write('alpha beta\n', 'h1');
     await change();
+    expect(events).toEqual(['applied']);
+    expect(fixture.source()).toBe('typed alpha beta\n');
+    expect(fixture.model.dirty).toBe(true);
+    // The revision record moves with the merge, so the reader's next save
+    // is not refused as a write over a changed file.
+    expect(fixture.context._updateContentsModel).toHaveBeenLastCalledWith(
+      expect.objectContaining({ hash: 'h1' })
+    );
+    // The file event the merge itself never raises: a second report of the
+    // same file finds it holding the shadow.
+    await change();
+    expect(events).toEqual(['applied']);
+  });
+
+  it('lands several hunks each at its place around unsaved edits (ACC-APPLY-10)', async () => {
+    await rebuild('one\ntwo\nthree\nfour\nfive\n');
+    fixture.model.sharedModel.updateSource(7, 7, ' TYPED');
+    fixture.write('one\ntwo\nTHREE\nfour\nfive\nsix\n', 'h1');
+    await change();
+    expect(events).toEqual(['applied']);
+    expect(fixture.source()).toBe('one\ntwo TYPED\nTHREE\nfour\nfive\nsix\n');
+    expect(fixture.transactions()).toBe(1);
+  });
+
+  it('keeps the unsaved text where a write touches it and reports the conflict once (ACC-APPLY-11)', async () => {
+    fixture.model.sharedModel.updateSource(5, 5, ' typed');
+    fixture.write('alpha beta\n', 'h1');
+    await change();
+    expect(events).toEqual(['blocked:conflict']);
+    expect(fixture.source()).toBe('alpha typed\n');
+    expect(fixture.model.dirty).toBe(true);
+    expect(fixture.context._updateContentsModel).toHaveBeenLastCalledWith(
+      expect.objectContaining({ hash: 'h1' })
+    );
+    await change();
+    expect(events).toEqual(['blocked:conflict']);
+  });
+
+  it('applies the rest of a write beside a conflict, and merges the next write over the file (ACC-APPLY-11)', async () => {
+    await rebuild('alpha\ngamma\n');
+    type();
+    fixture.write('alpha!\ngamma delta\n', 'h1');
+    await change();
+    expect(events).toEqual(['applied', 'blocked:conflict']);
+    expect(fixture.source()).toBe('typed alpha\ngamma delta\n');
+    // The shadow is the file, never the merge's own output: the next write
+    // is diffed against the file and the reader's text is still theirs.
+    fixture.write('alpha!\ngamma delta\nepsilon\n', 'h2');
+    await change();
+    expect(events).toEqual([
+      'applied',
+      'blocked:conflict',
+      'applied',
+      'blocked:conflict'
+    ]);
+    expect(fixture.source()).toBe('typed alpha\ngamma delta\nepsilon\n');
+    expect(fixture.model.dirty).toBe(true);
+  });
+
+  it('drops the conflict once a save from this session kept the unsaved text', async () => {
+    fixture.model.sharedModel.updateSource(5, 5, ' typed');
+    fixture.write('alpha beta\n', 'h1');
+    await change();
+    fixture.model.dirty = false;
+    fixture.context.contentsModel = {
+      ...fixture.context.contentsModel,
+      hash: 'h2'
+    };
+    fixture.write(fixture.source(), 'h2');
+    fixture.context.saveState.emit('completed');
+    expect(events).toEqual(['blocked:conflict', 'unblocked']);
+    await change();
+    expect(events).toEqual(['blocked:conflict', 'unblocked']);
+  });
+
+  it('drops the conflict when a reload took the file into the document, the Context reporting no new revision', async () => {
+    fixture.model.sharedModel.updateSource(5, 5, ' typed');
+    fixture.write('alpha beta\n', 'h1');
+    await change();
+    // The merge moved the Context's record to the file's revision, so the
+    // reload records nothing new and reports nothing: the text says it.
+    const before = reads();
+    fixture.model.sharedModel.setSource('alpha beta\n');
+    expect(events).toEqual(['blocked:conflict', 'unblocked']);
+    expect(fixture.model.dirty).toBe(false);
+    expect(fixture.source()).toBe('alpha beta\n');
+    expect(reads()).toBe(before);
+  });
+
+  it("drops the conflict when the reader types the document to the file's text, the flag staying up as JupyterLab leaves it", async () => {
+    fixture.model.sharedModel.updateSource(5, 5, ' typed');
+    fixture.write('alpha beta\n', 'h1');
+    await change();
+    fixture.model.sharedModel.updateSource(6, 11, 'bet');
+    expect(events).toEqual(['blocked:conflict']);
+    fixture.model.sharedModel.updateSource(9, 9, 'a');
+    expect(events).toEqual(['blocked:conflict', 'unblocked']);
+    expect(fixture.model.dirty).toBe(true);
+  });
+
+  it('holds a change with no shadow to merge over, once, and applies it once the document is clean', async () => {
+    await hold();
     await change();
     expect(events).toEqual(['blocked:dirty']);
     expect(fixture.source()).toBe('typed alpha\n');
@@ -312,9 +609,7 @@ describe('FileWatcher', () => {
   });
 
   it('lets a held change go when a save from this session overwrote it', async () => {
-    type();
-    fixture.write('alpha beta\n', 'h1');
-    await change();
+    await hold();
     fixture.model.dirty = false;
     fixture.context.contentsModel = {
       ...fixture.context.contentsModel,
@@ -334,11 +629,7 @@ describe('FileWatcher', () => {
    * reports nothing.
    */
   const reload = () => {
-    fixture.model.sharedModel.updateSource(
-      0,
-      fixture.source().length,
-      'alpha beta\n'
-    );
+    fixture.model.sharedModel.setSource('alpha beta\n');
     fixture.context.contentsModel = {
       ...fixture.context.contentsModel,
       hash: 'h1',
@@ -348,9 +639,7 @@ describe('FileWatcher', () => {
   };
 
   it('lets a held change go when a reload brought it into the document', async () => {
-    type();
-    fixture.write('alpha beta\n', 'h1');
-    await change();
+    await hold();
     reload();
     await settle();
     expect(events).toEqual(['blocked:dirty', 'unblocked']);
@@ -359,10 +648,8 @@ describe('FileWatcher', () => {
     expect(reads()).toBe(3);
   });
 
-  it('keeps holding the change when the reader typed between the reload and the read', async () => {
-    type();
-    fixture.write('alpha beta\n', 'h1');
-    await change();
+  it('takes the reloaded revision as the shadow when the reader typed between the reload and the read, and merges the next write over it', async () => {
+    await hold();
     let open: () => void = () => undefined;
     const gate = new Promise<void>(resolve => {
       open = resolve;
@@ -376,17 +663,19 @@ describe('FileWatcher', () => {
     fixture.model.sharedModel.updateSource(11, 11, 'typed\n');
     open();
     await settle();
-    // The document is no longer what the file holds: the reader's text is
-    // unsaved and the change stays reported.
-    expect(events).toEqual(['blocked:dirty']);
+    // The file is the revision the Context recorded, so it is the shadow the
+    // reader's text was typed over; nothing waits, and the text is unsaved.
+    expect(events).toEqual(['blocked:dirty', 'unblocked']);
     expect(fixture.model.dirty).toBe(true);
     expect(fixture.source()).toBe('alpha beta\ntyped\n');
+    fixture.write('alpha beta gamma\n', 'h2');
+    await change();
+    expect(events).toEqual(['blocked:dirty', 'unblocked', 'applied']);
+    expect(fixture.source()).toBe('alpha beta gamma\ntyped\n');
   });
 
   it('applies a write that landed while the reload was being read, the held revision being what the document holds', async () => {
-    type();
-    fixture.write('alpha beta\n', 'h1');
-    await change();
+    await hold();
     let open: () => void = () => undefined;
     const gate = new Promise<void>(resolve => {
       open = resolve;
@@ -425,18 +714,31 @@ describe('FileWatcher', () => {
     expect(fixture.source()).toBe('alpha beta\n');
   });
 
-  it('holds the first write over text typed before the watcher was built (DEF-APPLY-90)', async () => {
+  it('takes the file as the shadow when the watcher is built over typed text and the file is the revision loaded (DEF-APPLY-90)', async () => {
     watcher.dispose();
     events.length = 0;
     // The reader typed in the editor, then opened the preview: the document
-    // is dirty before this watcher exists, and the text it holds is not a
-    // revision of the file. The read that closes the registration gap holds
-    // the file's text back instead of applying it over the reader's.
+    // is dirty before this watcher exists. The file still being the revision
+    // the Context loaded, by its hash, it is the text they typed over.
     type();
     await create();
-    expect(events).toEqual(['blocked:dirty']);
+    expect(events).toEqual([]);
     expect(fixture.source()).toBe('typed alpha\n');
     fixture.write('alpha beta\n', 'h1');
+    await change();
+    expect(events).toEqual(['applied']);
+    expect(fixture.source()).toBe('typed alpha beta\n');
+    expect(fixture.model.dirty).toBe(true);
+  });
+
+  it('holds the first write over typed text when the file moved on before the watcher was built (DEF-APPLY-90)', async () => {
+    // The file changed between the load and the preview being opened: the
+    // text the reader typed over is not known, so nothing can be merged and
+    // the file's text is held back instead of applied over their work.
+    await hold();
+    expect(events).toEqual(['blocked:dirty']);
+    expect(fixture.source()).toBe('typed alpha\n');
+    fixture.write('alpha beta gamma\n', 'h2');
     await change();
     expect(events).toEqual(['blocked:dirty', 'blocked:dirty']);
     expect(fixture.source()).toBe('typed alpha\n');
@@ -477,9 +779,7 @@ describe('FileWatcher', () => {
         }
       }
     });
-    type();
-    fixture.write('alpha beta\n', 'h1');
-    await change();
+    await hold();
     // The reader types what the file holds, so the document matches the file
     // while the Context still records the revision it loaded.
     fixture.model.sharedModel.updateSource(0, 11, 'alpha beta');
@@ -524,9 +824,7 @@ describe('FileWatcher', () => {
     // reader then turns live updates off. The document becoming clean must
     // not bring the held change in: with the switch off the highlight and
     // the tab marker are off too, so the replacement would be silent.
-    type();
-    fixture.write('rewritten by another process\n', 'h1');
-    await change();
+    await hold('rewritten by another process\n');
     expect(events).toEqual(['blocked:dirty']);
 
     watcher.enabled = false;
@@ -549,9 +847,7 @@ describe('FileWatcher', () => {
   it('reports the held change again when watching is turned back on', async () => {
     // The held change is let go when the switch goes off, so the check the
     // switch coming back on runs is what reports it again.
-    type();
-    fixture.write('rewritten by another process\n', 'h1');
-    await change();
+    await hold('rewritten by another process\n');
     watcher.enabled = false;
     watcher.enabled = true;
     await settle();

@@ -131,6 +131,8 @@ export interface IMarkContent {
 export interface IMark extends IMarkContent {
   /** Colour to render with: the `colour` attribute, or the default. */
   colour: MarkColour;
+  /** Whether the mark is closed: the `status` attribute reads `closed`. */
+  closed: boolean;
   open: ISpan | null;
   close: ISpan | null;
   /** The marked text, between the two markers. */
@@ -175,13 +177,14 @@ const SETTINGS = /^\s*marks:settings[ \t]*(.*)$/;
 /** One attribute and the whitespace after it, matched where parsing stands. */
 const ATTRIBUTE = /([a-z][a-z0-9-]*)=(?:"([^"]*)"|([^\s"]+))[ \t]*/y;
 
+/** The head of a note entry: the author's handle, the stamp, a colon. */
+const HEAD = '@([A-Za-z0-9_.-]+) (\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z):';
+
 /** A line that opens a note entry. */
-const ENTRY =
-  /^@([A-Za-z0-9_.-]+) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z):[ ]?(.*)$/;
+const ENTRY = new RegExp(`^${HEAD}[ ]?(.*)$`);
 
 /** Where the escaped notes of a single-line marker begin: the first entry head. */
-const INLINE_NOTES =
-  /(?:^|[ \t])@[A-Za-z0-9_.-]+ \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z:/;
+const INLINE_NOTES = new RegExp(`(?:^|[ \\t])${HEAD}`);
 
 /**
  * The note lines of a marker written on one line, as a table row needs it
@@ -265,6 +268,15 @@ function colourOf(attributes: IMarkAttribute[]): MarkColour {
   const named = attributes.find(attribute => attribute.key === 'colour');
   const colour = named?.value as MarkColour | undefined;
   return colour && MARK_COLOURS.includes(colour) ? colour : DEFAULT_COLOUR;
+}
+
+/**
+ * Whether an attribute list closes the mark.
+ */
+function closedOf(attributes: IMarkAttribute[]): boolean {
+  return attributes.some(
+    attribute => attribute.key === 'status' && attribute.value === 'closed'
+  );
 }
 
 /**
@@ -353,7 +365,7 @@ function readMarkers(source: string): IMarker[] {
     if (split < 0) {
       const at = tail.search(INLINE_NOTES);
       if (at >= 0) {
-        escaped = tail.slice(at).replace(/^[ \t]+|[ \t]+$/g, '');
+        escaped = tail.slice(at).trim();
         tail = tail.slice(0, at);
       }
     }
@@ -446,6 +458,7 @@ export function parseMarks(source: string): IMark[] {
         attributes: [],
         notes: [],
         colour: DEFAULT_COLOUR,
+        closed: false,
         open: null,
         close: marker.span,
         passage: null
@@ -464,6 +477,7 @@ export function parseMarks(source: string): IMark[] {
     const opened: IMark = {
       ...marker.content,
       colour: colourOf(marker.content.attributes),
+      closed: closedOf(marker.content.attributes),
       open: marker.span,
       close: null,
       passage: null
@@ -534,7 +548,6 @@ export function serialiseOpening(mark: IMarkContent, inline = false): string {
   if (!lines.length) {
     return `<!-- ${head} -->`;
   }
-  // Inside a table row the marker must stay on its line (ACC-NOTES-154).
   return inline
     ? `<!-- ${head} ${escapeInline(lines.join('\n'))} -->`
     : `<!-- ${head}\n${lines.join('\n')}\n-->`;

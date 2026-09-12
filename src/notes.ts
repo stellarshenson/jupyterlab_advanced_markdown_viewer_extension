@@ -46,6 +46,7 @@ import {
   colourClass,
   MARK_ATTRIBUTE,
   MARK_CLASS,
+  MARK_CLOSED_CLASS,
   openingState
 } from './notes-panel';
 import { fetchAPI } from './request';
@@ -263,6 +264,18 @@ function withColour(
 }
 
 /**
+ * The attributes of a mark with its status set: `status=closed` when closed,
+ * no status attribute when open, the rest in their original order.
+ */
+function withStatus(
+  attributes: IMarkAttribute[],
+  closed: boolean
+): IMarkAttribute[] {
+  const rest = attributes.filter(attribute => attribute.key !== 'status');
+  return closed ? [...rest, { key: 'status', value: 'closed' }] : rest;
+}
+
+/**
  * The edits that leave the document holding exactly one settings marker, at
  * its end, after one blank line.
  *
@@ -317,6 +330,9 @@ function tooltip(mark: IMark): string {
 function markSpan(mark: IMark): HTMLElement {
   const span = document.createElement('span');
   span.className = `${MARK_CLASS} ${colourClass(mark.colour)}`;
+  if (mark.closed) {
+    span.classList.add(MARK_CLOSED_CLASS);
+  }
   span.dataset.mark = mark.id;
   const title = tooltip(mark);
   if (title) {
@@ -622,7 +638,9 @@ export class NotesController implements IDisposable {
         {
           start: range.start,
           end: range.start,
-          text: range.startOwnLine ? `${opening}\n` : opening
+          text: range.startOwnLine
+            ? `${opening}\n`
+            : `${range.startPrefix}${opening}`
         },
         {
           start: range.end,
@@ -723,6 +741,34 @@ export class NotesController implements IDisposable {
       ...mark,
       attributes: withColour(mark.attributes, colour)
     }));
+  }
+
+  /**
+   * Close a mark or reopen it, keeping every other attribute as it stands.
+   */
+  async setClosed(id: string, closed: boolean): Promise<void> {
+    await this._rewrite(id, mark => ({
+      ...mark,
+      attributes: withStatus(mark.attributes, closed)
+    }));
+  }
+
+  /** Whether the closed marks are painted and listed (ACC-NOTES-155). */
+  get showClosed(): boolean {
+    return this._showClosed;
+  }
+
+  /**
+   * Show the closed marks, in the preview and the panel alike, or hide them.
+   * A panel switch, not a document setting: it holds for this preview alone.
+   */
+  setShowClosed(on: boolean): void {
+    if (on === this._showClosed) {
+      return;
+    }
+    this._showClosed = on;
+    this._paint();
+    this._changed.emit();
   }
 
   /**
@@ -1237,9 +1283,9 @@ export class NotesController implements IDisposable {
    * once it has stood for that long.
    *
    * A document holding the reader's unsaved edits is left alone altogether.
-   * The watcher refuses to apply a change from disk into a dirty document, so
-   * a break that came from outside is always met on a clean document; a break
-   * the reader made themselves, by emptying a marked passage as they retype
+   * A break that came from outside merges in while the reader types and is
+   * deleted only once the document is clean; a break the reader made
+   * themselves, by emptying a marked passage as they retype
    * it, is theirs to undo, and their undo must find the markers and the notes
    * still there. So is a pass that meets a write of this controller already in
    * flight.
@@ -1388,6 +1434,10 @@ export class NotesController implements IDisposable {
       if (!mark.passage || mark.type === DOCUMENT_TYPE) {
         continue;
       }
+      // A closed mark is painted only while the closed marks are shown.
+      if (mark.closed && !this._showClosed) {
+        continue;
+      }
       const range = passageToRendered(mark.passage, scan, words);
       if (!range || range.end <= range.start) {
         lost.add(mark.id);
@@ -1399,7 +1449,7 @@ export class NotesController implements IDisposable {
     const signature = anchored
       .map(
         item =>
-          `${item.mark.id} ${item.mark.colour} ${item.range.start}-${item.range.end} ${JSON.stringify(tooltip(item.mark))}`
+          `${item.mark.id} ${item.mark.colour} ${item.mark.closed} ${item.range.start}-${item.range.end} ${JSON.stringify(tooltip(item.mark))}`
       )
       .join('\n');
     if (signature !== this._painted) {
@@ -1489,10 +1539,8 @@ export class NotesController implements IDisposable {
    * already holds unsaved edits is written and not put on disk at all. The
    * preview and the editor share one document, so those edits are the
    * reader's own writing, and saving would put them on disk without being
-   * asked; a change from disk is held back while the document is dirty as
-   * well, so the file would be the newer one and the save would raise the
-   * File Changed dialog. The marker stays in the document and reaches disk
-   * with the reader's own next save.
+   * asked. The marker stays in the document and reaches disk with the
+   * reader's own next save.
    *
    * The edits go through one transaction, kept off the undo stack and tagged
    * as a mark, so every extension observing the model can tell it from typing
@@ -1606,8 +1654,9 @@ export class NotesController implements IDisposable {
       if (landed && this._source !== source) {
         // The document moved while the route wrote: the watcher has already
         // brought the written file in, or the reader typed and the watcher
-        // holds it back behind those edits. The edits computed against
-        // `source` no longer fit, and the dirty state is the watcher's to keep.
+        // merged the written file in around the keystroke, or held it back
+        // with no shadow to merge over. The edits computed against `source`
+        // no longer fit, and the dirty state is the watcher's to keep.
         await this._refresh();
         // Read the marks now, for the same reason the write path below does:
         // the caller is handed an id and a command acts on it straight away;
@@ -1615,13 +1664,13 @@ export class NotesController implements IDisposable {
         // the written file.
         this._flush();
         this._paint();
-        // Two states reach this guard, and only one of them wrote into the
-        // document: the watcher brought the written file in, or the document
-        // moved to something else - the reader typed, or a second external
-        // write landed after the server wrote and before the answer came
-        // back. The caller is told which, because on the second the mark is
-        // on disk and not in the document, and a caller told otherwise
-        // discards the reader's draft over a note the document never took.
+        // Only one of the states reaching this guard is known to have written
+        // into the document: the watcher brought the written file in. When
+        // the document moved to something else - a second external write
+        // landed after the server wrote and before the answer came back, or
+        // the reader typed with no shadow to merge over - the mark is on disk
+        // and not in the document, and a caller told otherwise discards the
+        // reader's draft over a note the document never took.
         return this._source === written;
       }
       const shared = this._context.model.sharedModel;
@@ -1678,6 +1727,7 @@ export class NotesController implements IDisposable {
   private _lost = new Set<string>();
   private _state: PanelState = 'hidden';
   private _painted: string | null = null;
+  private _showClosed = false;
   private _renderedSource: string | null = null;
   private _requestedSource: string | null = null;
   private _markedSource: string | null = null;

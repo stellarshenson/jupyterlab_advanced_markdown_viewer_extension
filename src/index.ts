@@ -16,10 +16,8 @@
  * the context menu and the palette call, and reads the settings all three
  * share.
  *
- * The scope is the rendered preview. A Markdown file open in the editor is not
- * touched, and a document holding unsaved edits is left alone until it is
- * clean, because overwriting unsaved text needs a merge this extension does
- * not yet perform.
+ * The scope is the rendered preview. A Markdown file open only in the editor
+ * is not touched.
  */
 
 import {
@@ -30,7 +28,7 @@ import {
   IMarkdownViewerTracker,
   MarkdownDocument
 } from '@jupyterlab/markdownviewer';
-import { ICommandPalette } from '@jupyterlab/apputils';
+import { Clipboard, ICommandPalette } from '@jupyterlab/apputils';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { Menu } from '@lumino/widgets';
 
@@ -52,7 +50,12 @@ import {
   PanelState
 } from './marks';
 import { NotesController, SELECTING_CLASS } from './notes';
-import { installNotesPanel, NotesPanel } from './notes-panel';
+import {
+  installNotesPanel,
+  NotesPanel,
+  PANEL_CLASS,
+  ROW_CLASS
+} from './notes-panel';
 
 /**
  * The plugin identifier, which is also the settings identifier.
@@ -73,7 +76,9 @@ export const COMMANDS = {
   /** Mark the selected passage and open the note entry on it. */
   addNote: 'advanced-markdown-viewer:add-note',
   /** Put the notes panel into the state named by the `state` argument. */
-  panel: 'advanced-markdown-viewer:notes-panel'
+  panel: 'advanced-markdown-viewer:notes-panel',
+  /** Copy the identifier of the mark whose panel row the menu was opened on. */
+  copyMarkId: 'advanced-markdown-viewer:copy-mark-id'
 };
 
 /**
@@ -95,6 +100,9 @@ const CONTEXT_SELECTOR = `.jp-MarkdownViewer .${RENDERED_CLASS}`;
  */
 const MARKING_SELECTOR = `.${SELECTING_CLASS} ${CONTEXT_SELECTOR}`;
 
+/** A row of the notes panel, where the identifier of its mark is offered. */
+const ROW_SELECTOR = `.${PANEL_CLASS} .${ROW_CLASS}`;
+
 /**
  * The order the context menu offers the three states in.
  */
@@ -108,12 +116,13 @@ const PANEL_ORDER: PanelState[] = ['expanded', 'minimap', 'hidden'];
  * here once and nowhere else.
  */
 export const MINIMUMS: Record<
-  'pollInterval' | 'fadeDuration' | 'animationSpeed',
+  'pollInterval' | 'fadeDuration' | 'animationSpeed' | 'animationJitter',
   number
 > = {
   pollInterval: 1,
   fadeDuration: 0,
-  animationSpeed: 0
+  animationSpeed: 0,
+  animationJitter: 0
 };
 
 /**
@@ -158,6 +167,9 @@ function readSettings(settings: ISettingRegistry.ISettings): ILiveViewSettings {
     fadeDuration: num('fadeDuration'),
     animation: bool('animation'),
     animationSpeed: num('animationSpeed'),
+    // A share above the whole is read as the whole, as the schema's maximum
+    // has the editor refuse it.
+    animationJitter: Math.min(1, num('animationJitter')),
     highlight: bool('highlight'),
     highlightVisibility: visibility(),
     tabCue: bool('tabCue'),
@@ -239,6 +251,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
         handlers: {
           addNote: (id, text) => notes.addNote(id, text),
           setColour: (id, colour) => void notes.setColour(id, colour),
+          setClosed: (id, closed) => void notes.setClosed(id, closed),
+          setShowClosed: on => notes.setShowClosed(on),
           removeMark: id => void notes.remove(id),
           removeEmptyDocument: id => void notes.removeEmptyDocument(id),
           markDocument: () => notes.markDocument(),
@@ -261,6 +275,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
         // The badge is the feature's one control outside the panel: off with
         // the setting, else shown with the hidden state as _apply has it.
         panel.badge.hidden = !current.notes || panel.state !== 'hidden';
+        panel.showClosed = notes.showClosed;
         panel.setMarks(
           notes.marks.map(mark => ({
             mark,
@@ -271,8 +286,6 @@ const plugin: JupyterFrontEndPlugin<void> = {
         );
       };
       notes.changed.connect(sync);
-      // A click on a marked passage opens its row, and the note entry with
-      // it on a mark that holds no note yet (ACC-NOTES-153).
       notes.activated.connect((_, id) => panel.openFromPassage(id));
       sync();
 
@@ -359,6 +372,22 @@ const plugin: JupyterFrontEndPlugin<void> = {
       }
     });
 
+    // The mark's identifier is what an agent or a script is told to find the
+    // mark by, so a row hands it over as text (ACC-NOTES-157).
+    const rowUnderMenu = (): string | null =>
+      app.contextMenuHitTest(node => node.classList.contains(ROW_CLASS))
+        ?.dataset.mark ?? null;
+    app.commands.addCommand(COMMANDS.copyMarkId, {
+      label: 'Copy mark ID',
+      isVisible: () => rowUnderMenu() !== null,
+      execute: () => {
+        const id = rowUnderMenu();
+        if (id) {
+          Clipboard.copyToSystem(id);
+        }
+      }
+    });
+
     app.commands.addCommand(COMMANDS.panel, {
       label: args => {
         const state = args.state as PanelState;
@@ -419,6 +448,11 @@ const plugin: JupyterFrontEndPlugin<void> = {
         selector: CONTEXT_SELECTOR,
         rank: 30 + index
       });
+    });
+    app.contextMenu.addItem({
+      command: COMMANDS.copyMarkId,
+      selector: ROW_SELECTOR,
+      rank: 40
     });
 
     if (settingRegistry) {

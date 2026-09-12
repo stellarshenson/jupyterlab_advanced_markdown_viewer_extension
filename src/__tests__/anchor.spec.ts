@@ -112,7 +112,7 @@ function selection(
  * Write the two markers of a mark into the source at the range found.
  */
 function applyMarkers(source: string, range: ISourceRange, id = 'm'): string {
-  const opening = `<!-- mark:${id} note -->${range.startOwnLine ? '\n' : ''}`;
+  const opening = `${range.startPrefix}<!-- mark:${id} note -->${range.startOwnLine ? '\n' : ''}`;
   const closing = `${range.endOwnLine ? '\n' : ''}<!-- /mark:${id} -->`;
   return (
     source.slice(0, range.start) +
@@ -630,6 +630,63 @@ describe('selectionToSource', () => {
     expect(inTableRow(source, source.indexOf('apples'))).toBe(true);
     expect(inTableRow(source, source.indexOf('After'))).toBe(false);
     expect(inTableRow(source, source.indexOf('separator'))).toBe(false);
+  });
+
+  it('sees a table inside a blockquote and one that follows a text line (ACC-NOTES-154)', () => {
+    const quoted =
+      '> [!NOTE]\n> | Fruit | Count |\n> | --- | --- |\n> | apples | 3 |';
+    expect(inTableRow(quoted, quoted.indexOf('NOTE'))).toBe(false);
+    expect(inTableRow(quoted, quoted.indexOf('apples'))).toBe(true);
+    const after =
+      'Fruit stock:\n| Fruit | Count |\n| --- | --- |\n| apples | 3 |';
+    expect(inTableRow(after, after.indexOf('stock'))).toBe(false);
+    expect(inTableRow(after, after.indexOf('Fruit |'))).toBe(true);
+    expect(inTableRow(after, after.indexOf('apples'))).toBe(true);
+  });
+
+  it('ends the table run where the blockquote depth changes (ACC-NOTES-154)', () => {
+    const table = '| a | b |\n| --- | --- |\n| c | d |\n';
+    const quoted = '> | a | b |\n> | --- | --- |\n> | c | d |\n';
+    const after = table + '> quoted line';
+    expect(inTableRow(after, after.indexOf('quoted'))).toBe(false);
+    const plain = quoted + 'plain text';
+    expect(inTableRow(plain, plain.indexOf('plain'))).toBe(false);
+    const deeper = quoted + '> > deeper';
+    expect(inTableRow(deeper, deeper.indexOf('deeper'))).toBe(false);
+    // '>' and '> ' are one depth.
+    const uneven = '> | a | b |\n>| --- | --- |\n> | c | d |';
+    expect(inTableRow(uneven, uneven.indexOf('c |'))).toBe(true);
+  });
+
+  it('writes a leading pipe ahead of a marker at the first word of a row without one (ACC-NOTES-154)', () => {
+    const source = 'Fruit | Count\n--- | ---\napples and pears | 3\nplums | 4';
+    const root = render(
+      '<table>\n<thead>\n<tr>\n<th>Fruit</th>\n<th>Count</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>apples and pears</td>\n<td>3</td>\n</tr>\n<tr>\n<td>plums</td>\n<td>4</td>\n</tr>\n</tbody>\n</table>'
+    );
+    const range = sourceRange(root, source, 'apples', 'pears');
+    expect(range.startOwnLine).toBe(false);
+    expect(range.startPrefix).toBe('| ');
+    expect(applyMarkers(source, range)).toBe(
+      'Fruit | Count\n--- | ---\n| <!-- mark:m note -->apples and pears<!-- /mark:m --> | 3\nplums | 4'
+    );
+    const later = sourceRange(root, source, 'and', 'pears');
+    expect(later.startPrefix).toBe('');
+  });
+
+  it('writes the leading pipe on a row of a table inside a list item (ACC-NOTES-154)', () => {
+    const source = '- Fruit | Count\n  --- | ---\n  apples | 3\n  plums | 4\n';
+    const root = render(
+      '<ul>\n<li>\n<table>\n<thead>\n<tr>\n<th>Fruit</th>\n<th>Count</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>apples</td>\n<td>3</td>\n</tr>\n<tr>\n<td>plums</td>\n<td>4</td>\n</tr>\n</tbody>\n</table>\n</li>\n</ul>'
+    );
+    const range = sourceRange(root, source, 'app', 'les');
+    expect(range.startPrefix).toBe('| ');
+    expect(applyMarkers(source, range)).toBe(
+      '- Fruit | Count\n  --- | ---\n  | <!-- mark:m note -->apples<!-- /mark:m --> | 3\n  plums | 4\n'
+    );
+    const head = sourceRange(root, source, 'Fru', 'it');
+    expect(applyMarkers(source, head)).toBe(
+      '- | <!-- mark:m note -->Fruit<!-- /mark:m --> | Count\n  --- | ---\n  apples | 3\n  plums | 4\n'
+    );
   });
 
   it('places the marker before a blockquote it starts, not after its marker', () => {

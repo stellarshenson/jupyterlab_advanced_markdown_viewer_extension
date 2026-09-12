@@ -8,6 +8,7 @@
  * colour of a change is a defect no DOM assertion would catch.
  */
 
+import { MessageLoop } from '@lumino/messaging';
 import { BoxLayout, BoxPanel, Widget } from '@lumino/widgets';
 
 import {
@@ -35,6 +36,8 @@ import {
   PASSAGE_CLASS,
   PASSAGE_LIMIT,
   ROW_CLASS,
+  ROW_CLOSED_CLASS,
+  SHOW_CLOSED_CLASS,
   SELECTED_CLASS,
   STAMP_CLASS,
   STATE_CLASS,
@@ -66,6 +69,7 @@ function mark(id: string, over: Partial<IMark> = {}): IMark {
     attributes: [],
     notes: [],
     colour: 'yellow',
+    closed: false,
     open: { start: 0, end: 10 },
     close: { start: 20, end: 30 },
     passage: { start: 10, end: 20 },
@@ -152,6 +156,8 @@ const handlers: INotesPanelHandlers = {
     return noteWritten;
   },
   setColour: (id, colour) => asked.push(`colour ${id} ${colour}`),
+  setClosed: (id, closed) => asked.push(`closed ${id} ${closed}`),
+  setShowClosed: on => asked.push(`show closed ${on}`),
   removeMark: id => asked.push(`remove ${id}`),
   removeEmptyDocument: id => asked.push(`empty document ${id}`),
   markDocument: async () => {
@@ -303,6 +309,111 @@ describe('the host the panel is installed into', () => {
     // document widget, which is what the controller will hand over.
     const fits = (document: MarkdownDocument): INotesHost => document;
     expect(typeof fits).toBe('function');
+  });
+});
+
+describe('closed marks (ACC-NOTES-155)', () => {
+  const control = (): HTMLButtonElement =>
+    panel.node.querySelector<HTMLButtonElement>(`.${SHOW_CLOSED_CLASS}`)!;
+
+  beforeEach(() => {
+    panel.setMarks([
+      item('a', 'first passage'),
+      item('b', 'second passage', { mark: mark('b', { closed: true }) })
+    ]);
+  });
+
+  it('lists no closed mark and ticks none, and offers to show the closed ones with their count', () => {
+    expect(passages()).toEqual(['first passage']);
+    expect(panel.node.querySelector(`.${COUNT_CLASS}`)!.textContent).toBe(
+      '1 mark'
+    );
+    expect(control().hidden).toBe(false);
+    expect(control().textContent).toBe('Show closed (1)');
+    panel.state = 'minimap';
+    expect(ticks()).toHaveLength(1);
+  });
+
+  it('hides the control while no mark is closed', () => {
+    panel.setMarks([item('a', 'first passage')]);
+    expect(control().hidden).toBe(true);
+  });
+
+  it('asks the controller to show the closed marks, then lists them dimmed with Reopen', () => {
+    control().click();
+    expect(asked).toEqual(['show closed true']);
+    panel.showClosed = true;
+    expect(passages()).toEqual(['first passage', 'second passage']);
+    expect(rows()[1].classList.contains(ROW_CLOSED_CLASS)).toBe(true);
+    expect(rows()[1].querySelector(`.${STATE_CLASS}`)!.textContent).toBe(
+      'closed'
+    );
+    expect(control().textContent).toBe('Hide closed (1)');
+    panel.state = 'minimap';
+    expect(ticks()).toHaveLength(2);
+    panel.state = 'expanded';
+    panel.selectMark('b');
+    press(rows()[1], 'Reopen');
+    expect(asked).toEqual(['show closed true', 'closed b false']);
+  });
+
+  it('names the Close control without promising to hide a mark the panel keeps listed', () => {
+    panel.showClosed = true;
+    panel.selectMark('a');
+    const close = Array.from(
+      rows()[0].querySelectorAll<HTMLButtonElement>(`.${BUTTON_CLASS}`)
+    ).find(button => button.textContent === 'Close')!;
+    expect(close.title).toBe('Close this mark');
+  });
+
+  it('offers Close on an open row, which asks the controller to close the mark', () => {
+    panel.selectMark('a');
+    press(rows()[0], 'Close');
+    expect(asked).toEqual(['closed a true']);
+  });
+
+  it('releases a draft held on a row that was closed and hidden', () => {
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+    panel.selectMark('a');
+    press(rows()[0], 'Add note');
+    const draft = panel.node.querySelector('textarea')!;
+    draft.value = 'a draft on a';
+    draft.dispatchEvent(new Event('input'));
+    // The controller closed a: its row is gone, the draft with it.
+    panel.setMarks([
+      item('a', 'first passage', { mark: mark('a', { closed: true }) }),
+      item('b', 'second passage')
+    ]);
+    panel.selectMark('b');
+    press(rows()[0], 'Add note');
+    const fields = panel.node.querySelectorAll('textarea');
+    expect(fields).toHaveLength(1);
+    expect(rows()[0].contains(fields[0])).toBe(true);
+    expect(fields[0].value).toBe('');
+  });
+
+  it('asks to show the closed marks when the row asked for belongs to a closed mark', async () => {
+    panel.setMarks([
+      item('a', 'first passage'),
+      item('d', '', {
+        mark: mark('d', {
+          type: 'document',
+          close: null,
+          passage: null,
+          closed: true
+        })
+      })
+    ]);
+    documentId = 'd';
+    panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!.click();
+    await settle();
+    expect(asked).toEqual(['document', 'show closed true']);
+    // The sync that follows the controller's switch lists the row, with the
+    // entry already opened on it.
+    panel.showClosed = true;
+    const field = panel.node.querySelector('textarea')!;
+    expect(field).not.toBeNull();
+    expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('d');
   });
 });
 
@@ -720,14 +831,12 @@ describe('selecting a mark', () => {
       })
     ]);
     panel.openFromPassage('a');
-    // The row is open with its note and its controls, no field is on screen
-    // and Add note is offered; the passage, where the reader is, is not
-    // scrolled to.
+    // The row is open with its note and takes the focus, which is what
+    // brings it into the list's view; no field is on screen and Add note is
+    // offered; the passage, where the reader was, is not scrolled to.
     expect(panel.selected).toBe('a');
     expect(rows()[0].textContent).toContain('already said');
-    expect(
-      rows()[0].querySelector('.jp-AdvancedMd-notesControls')
-    ).not.toBeNull();
+    expect(document.activeElement).toBe(rows()[0]);
     expect(panel.node.querySelector('textarea')).toBeNull();
     expect(
       Array.from(rows()[0].querySelectorAll('button')).map(b => b.textContent)
@@ -856,6 +965,12 @@ describe('writing a note', () => {
     ).toBe('Note');
   });
 
+  it('keeps the browser menu inside the note field (ACC-NOTES-157)', () => {
+    press(rows()[0], 'Add note');
+    const field = panel.node.querySelector('textarea')!;
+    expect(field.closest('[data-jp-suppress-context-menu]')).not.toBeNull();
+  });
+
   it('lays the entry out as a wide box with its two buttons in a row below', () => {
     press(rows()[0], 'Add note');
     const form = panel.node.querySelector('.jp-AdvancedMd-notesForm')!;
@@ -925,6 +1040,21 @@ describe('writing a note', () => {
     expect(box.value).toBe('a draft\nof\nfive\nlines\nhere');
     measure(box, 120);
     await Promise.resolve();
+    expect(box.style.height).toBe('122px');
+  });
+
+  it('leaves a box that is not laid out alone and measures it when the panel is shown (ACC-NOTES-152)', async () => {
+    press(rows()[0], 'Add note');
+    type('a draft\nof\nfive\nlines\nhere');
+    panel.state = 'minimap';
+    panel.state = 'expanded';
+    const box = panel.node.querySelector('textarea')!;
+    // Every metric reads 0 in a hidden tab, as it does here; a height of 0
+    // written from that would collapse the box over the draft.
+    await Promise.resolve();
+    expect(box.style.height).toBe('');
+    measure(box, 120);
+    MessageLoop.sendMessage(panel, Widget.Msg.AfterShow);
     expect(box.style.height).toBe('122px');
   });
 
@@ -1109,13 +1239,17 @@ describe('writing a note', () => {
     expect(control.title).toBe('Add document note');
     expect(control.getAttribute('aria-label')).toBe(control.title);
     expect(control.querySelector('svg')).not.toBeNull();
-    // After the count, before the expand and the hide controls.
+    // After the count and the Show closed control, before the expand and
+    // the hide controls.
     const header = control.parentElement!;
     expect(header.children[1]).toBe(
       panel.node.querySelector(`.${COUNT_CLASS}`)
     );
-    expect(header.children[2]).toBe(control);
-    expect(header.children[3]).toBe(
+    expect(header.children[2]).toBe(
+      panel.node.querySelector(`.${SHOW_CLOSED_CLASS}`)
+    );
+    expect(header.children[3]).toBe(control);
+    expect(header.children[4]).toBe(
       panel.node.querySelector(`.${EXPAND_CLASS}`)
     );
 
@@ -1798,9 +1932,9 @@ describe('the controls of a row', () => {
       addNote,
       ...Array.from(panel.node.querySelectorAll('button'))
     ];
-    // The expand, collapse, add and close controls, the toggle, Add note,
-    // the six dots, Remove, Save and Cancel.
-    expect(buttons).toHaveLength(15);
+    // The expand, collapse, Show closed, add and close controls, the toggle,
+    // Add note, the six dots, Close, Remove, Save and Cancel.
+    expect(buttons).toHaveLength(17);
     for (const button of buttons) {
       expect(button.getAttribute('aria-label')).toBe(button.title);
       // A button with a worded label is spoken and voice-driven by that

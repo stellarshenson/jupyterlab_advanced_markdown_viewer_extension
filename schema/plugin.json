@@ -38,10 +38,18 @@
     },
     "animationSpeed": {
       "title": "Animation speed (characters per second)",
-      "description": "How fast added text is typed in and removed text is deleted from its end in the rendered view. 0 shows a change at once.",
+      "description": "How fast added text is typed in and removed text is deleted from its end in the rendered view, on average. 0 shows a change at once.",
       "type": "integer",
       "minimum": 0,
-      "default": 50
+      "default": 75
+    },
+    "animationJitter": {
+      "title": "Animation jitter (0 to 1)",
+      "description": "How far the time of each typed or deleted character may stray from the even time at the animation speed, as a share of it: 0.25 lets a character take between three quarters and one and a quarter of its time, so the typing keeps the speed on average and does not tick like a clock. 0 types evenly; 1 lets a character take anything from no time to twice its time.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.25
     },
     "highlight": {
       "title": "Highlight changes",
@@ -62,7 +70,7 @@
     },
     "tabCue": {
       "title": "Mark the document tab",
-      "description": "Mark the tab of a document with what happened to its file: a half-filled circle that turns for a change that was applied, faster while changes keep arriving; a square for a change held back by unsaved edits; a cross for a file that is gone from disk. Off, no tab is marked.",
+      "description": "Mark the tab of a document with what happened to its file: a half-filled circle that turns for a change that was applied, faster while changes keep arriving; a square for a change held back by unsaved edits or dropped where it overlapped or sat right beside them; a cross for a file that is gone from disk. Off, no tab is marked.",
       "type": "boolean",
       "default": true
     },

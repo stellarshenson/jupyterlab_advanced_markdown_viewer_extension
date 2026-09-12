@@ -15,8 +15,8 @@ See the changes an AI agent, or any other program, makes to a Markdown file as i
 - **Changes show as they are written** - the Markdown Preview shows a change to the file within half a second, with no reload
 - **Watch each change happen** - added text is typed in on green; removed text is struck through on red, then deleted
 - **Your place is kept** - the preview keeps the same text in view when the file changes outside it
-- **See which tab changed** - a half-filled circle for a new change, a red square for a change held back, a cross for a deleted file
-- **Unsaved edits are kept** - a change from disk waits while you have unsaved edits; choose File, Reload Markdown File from Disk to take it, or save to keep your version
+- **See which tab changed** - a half-filled circle for a new change, a red square for a change held back or dropped where it met your unsaved edits, a cross for a deleted file
+- **Unsaved edits are kept** - a change from disk lands around your unsaved edits; where it overlaps or sits right beside them your text stands and the tab shows a red square; when the part that is dropped adds or removes a code fence or an HTML comment marker, such as a mark, none of the change is shown; save to keep your version, or choose File, Reload Markdown File from Disk to take the file's
 - **Mark and note while the agent writes** - six colours, notes on a passage or on the whole document, all listed beside the preview
 - **Notes are stored in the file** - as HTML comments that other Markdown renderers do not show; a note line an agent adds appears in the thread
 
@@ -41,7 +41,7 @@ Notes beside the preview: a note on the whole document, then three marked passag
 
 ## Limitations
 
-- A file open only in an editor is not followed; open it in the Markdown Preview. An editor open beside the preview keeps JupyterLab's own File Changed dialog for a save over unsaved edits
+- A file open only in an editor is not followed; open it in the Markdown Preview. A preview opened over unsaved edits after the file had already changed holds that change back, and a save then meets JupyterLab's own File Changed dialog
 - On network drives, Windows drives under WSL2 and other mounts that raise no file events, the first change can take up to 10 seconds to show; after it, the file is checked every second
 - A line an agent appends during the few milliseconds a mark is being written can be lost
 - With unsaved edits, a new mark stays in the document and reaches the file with your next save
@@ -58,7 +58,8 @@ All settings live under Settings, Advanced Settings Editor, Advanced Markdown Vi
 - `highlightVisibility` - how strong those two backgrounds are: Low, Medium or High, Medium by default
 - `fadeDuration` - how long the highlight stays on changed text, in milliseconds; it rises over 0.5 s and fades away over the last 0.75 s
 - `animation` - on by default; changes play out as typing
-- `animationSpeed` - typing and deletion speed in characters per second; 0 shows a change at once
+- `animationSpeed` - typing and deletion speed in characters per second on average, 75 by default; 0 shows a change at once
+- `animationJitter` - how far each character's time may stray from the even time at that speed, as a share of that time, from 0 to 1, 0.25 by default; 0 types evenly
 - `tabCue` - the markers on the document tab
 - `notes` - on by default; off, the panel, the marks and the marking entries are hidden and the markers in the file are left alone
 - `author` - the handle a note line opens with, without the leading @; empty writes `@author`

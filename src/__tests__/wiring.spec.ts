@@ -10,13 +10,17 @@
  * composite the test writes.
  */
 
+import { Clipboard } from '@jupyterlab/apputils';
 import { Signal } from '@lumino/signaling';
 import { BoxLayout, Widget } from '@lumino/widgets';
 
-// The plugin declares its types from these four packages and calls nothing in
-// them, and two of the four ship JavaScript jest cannot parse.
+// The plugin takes its types from these four packages and calls only
+// Clipboard.copyToSystem, which the apputils mock supplies; two of the four
+// ship JavaScript jest cannot parse.
 jest.mock('@jupyterlab/application', () => ({}));
-jest.mock('@jupyterlab/apputils', () => ({}));
+jest.mock('@jupyterlab/apputils', () => ({
+  Clipboard: { copyToSystem: jest.fn() }
+}));
 jest.mock('@jupyterlab/markdownviewer', () => ({}));
 jest.mock('@jupyterlab/settingregistry', () => ({}));
 
@@ -820,7 +824,8 @@ describe('the plugin', () => {
         ['command', COMMANDS.addNote, undefined],
         ['command', COMMANDS.panel, 'expanded'],
         ['command', COMMANDS.panel, 'minimap'],
-        ['command', COMMANDS.panel, 'hidden']
+        ['command', COMMANDS.panel, 'hidden'],
+        ['command', COMMANDS.copyMarkId, undefined]
       ]);
       const submenu = lab.menu[0].submenu;
       expect(submenu.title.label).toBe('Mark');
@@ -845,13 +850,35 @@ describe('the plugin', () => {
       expect(lab.menu[0].selector).toBe(
         '.jp-AdvancedMd-selecting .jp-MarkdownViewer .jp-RenderedMarkdown'
       );
-      for (const item of lab.menu.slice(1)) {
+      for (const item of lab.menu.slice(1, -1)) {
         expect(item.selector).toBe('.jp-MarkdownViewer .jp-RenderedMarkdown');
       }
+      // The identifier is offered on a row of the panel alone.
+      expect(lab.menu[lab.menu.length - 1].selector).toBe(
+        '.jp-AdvancedMd-notes .jp-AdvancedMd-notesRow'
+      );
       // The marking entry leads, so a reader with a selection meets it
       // before the panel entries.
       const ranks = lab.menu.map(item => item.rank);
       expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
+    });
+
+    it('copies the identifier of the mark whose row the menu was opened on (ACC-NOTES-157)', async () => {
+      const lab = await start(MARKED);
+      lab.widget.render(MARKED_HTML);
+      const copied = Clipboard.copyToSystem as jest.Mock;
+      copied.mockClear();
+      const row = lab.panel().node.querySelector('.jp-AdvancedMd-notesRow');
+      expect(row.dataset.mark).toBe(ID);
+      lab.openedOver(row.querySelector('.jp-AdvancedMd-notesPassage'));
+      expect(lab.commands.isVisible(COMMANDS.copyMarkId)).toBe(true);
+      await lab.commands.execute(COMMANDS.copyMarkId);
+      expect(copied).toHaveBeenCalledWith(ID);
+      // Over the preview the entry is not offered and copies nothing.
+      lab.openedOver(lab.widget.rendered);
+      expect(lab.commands.isVisible(COMMANDS.copyMarkId)).toBe(false);
+      await lab.commands.execute(COMMANDS.copyMarkId);
+      expect(copied).toHaveBeenCalledTimes(1);
     });
 
     it('puts the selecting class on the document while a selection is held', async () => {

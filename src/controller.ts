@@ -14,7 +14,7 @@ import { IDisposable } from '@lumino/disposable';
 import { ISignal, Signal } from '@lumino/signaling';
 import { Title, Widget } from '@lumino/widgets';
 
-import { ChangeAnimator } from './animate';
+import { ChangeAnimator, FADE_IN_MS } from './animate';
 import { ChangeChannel } from './channel';
 import {
   changeRanges,
@@ -73,6 +73,13 @@ const TAB_CAPTIONS: { [className: string]: string | undefined } = {
 };
 
 /**
+ * Tooltip of the blocked marker when it reports a conflict: the change was
+ * merged around the unsaved edits and dropped where it touched them.
+ */
+const CONFLICT_CAPTION =
+  'The file changed where, or right beside where, this document holds unsaved edits. Your text is kept there and that part of the change is not shown. A save keeps your version and drops that part from the file; to take the whole file, choose Reload Markdown File from Disk in the File menu, which drops all your unsaved edits.';
+
+/**
  * Quiet period before an active tab settles to its static marker.
  *
  * Changes arrive as file events, within a fraction of a second of the write,
@@ -83,11 +90,6 @@ const TAB_CAPTIONS: { [className: string]: string | undefined } = {
  * them, which would hide a change to this value instead of reporting it.
  */
 export const QUIET_MS = 3000;
-
-/**
- * How long a decoration takes to appear. Matches the stylesheet.
- */
-const FADE_IN_MS = 500;
 
 /**
  * Attribute the switch-tab scrolling fix puts on the document widget while it
@@ -151,6 +153,7 @@ export interface ILiveViewSettings {
   fadeDuration: number;
   animation: boolean;
   animationSpeed: number;
+  animationJitter: number;
   highlight: boolean;
   highlightVisibility: HighlightVisibility;
   tabCue: boolean;
@@ -166,7 +169,8 @@ export const DEFAULT_SETTINGS: ILiveViewSettings = {
   pollInterval: 10,
   fadeDuration: 5000,
   animation: true,
-  animationSpeed: 50,
+  animationSpeed: 75,
+  animationJitter: 0.25,
   highlight: true,
   highlightVisibility: 'medium',
   tabCue: true,
@@ -191,6 +195,7 @@ export class LiveViewController implements IDisposable {
   constructor(options: ILiveViewControllerOptions) {
     this._widget = options.widget;
     this._settings = options.settings;
+    this._animator.jitter = options.settings.animationJitter;
 
     this._watcher = new FileWatcher({
       // A Markdown preview is built by the text model factory, so its model is
@@ -262,6 +267,7 @@ export class LiveViewController implements IDisposable {
   updateSettings(settings: ILiveViewSettings): void {
     const speedChanged =
       settings.animationSpeed !== this._settings.animationSpeed ||
+      settings.animationJitter !== this._settings.animationJitter ||
       settings.animation !== this._settings.animation;
     this._settings = settings;
     this._watcher.enabled = settings.enabled;
@@ -418,17 +424,24 @@ export class LiveViewController implements IDisposable {
   }
 
   /**
-   * A change was found and not applied: held behind unsaved edits, or the
-   * file is gone from disk. Either way the marker says the preview is behind,
-   * and which marker says what the reader has to do about it.
+   * A change was found and not applied, or not all of it: held behind
+   * unsaved edits with no shadow to merge over, dropped where it touched
+   * them, or the file is gone from disk. Either way the marker says the
+   * preview is behind the file, and which marker with which words says what
+   * the reader has to do about it.
    */
   private _onBlocked(_: unknown, reason: BlockedReason): void {
     if (!this._settings.enabled || !this._settings.tabCue) {
       return;
     }
-    this._setTabState(
-      reason === 'missing' ? TAB_MISSING_CLASS : TAB_BLOCKED_CLASS
-    );
+    if (reason === 'missing') {
+      this._setTabState(TAB_MISSING_CLASS);
+      return;
+    }
+    this._setTabState(TAB_BLOCKED_CLASS);
+    if (reason === 'conflict') {
+      this._setCaption(CONFLICT_CAPTION);
+    }
   }
 
   /**
@@ -656,6 +669,7 @@ export class LiveViewController implements IDisposable {
    */
   private _applySpeed = (): void => {
     this._animator.speed = this._speed();
+    this._animator.jitter = this._settings.animationJitter;
     if (this._fadeTimer !== null) {
       this._scheduleFade(this._animator.remainingMs());
     }

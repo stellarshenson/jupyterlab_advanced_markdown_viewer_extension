@@ -38,6 +38,7 @@ interface IDeclaration {
   type?: string;
   default?: unknown;
   minimum?: number;
+  maximum?: number;
   oneOf?: { const: string; title: string }[];
 }
 
@@ -91,11 +92,14 @@ describe('the settings schema', () => {
    * asserted on both sides rather than only compared, so raising one of them
    * alone is reported here instead of passing quietly.
    */
-  it('animates a change out of the box, at 50 characters per second', () => {
+  it('animates a change out of the box, at 75 characters per second with a quarter of jitter', () => {
     expect(schema.properties.animation.default).toBe(true);
     expect(DEFAULT_SETTINGS.animation).toBe(true);
-    expect(schema.properties.animationSpeed.default).toBe(50);
-    expect(DEFAULT_SETTINGS.animationSpeed).toBe(50);
+    expect(schema.properties.animationSpeed.default).toBe(75);
+    expect(DEFAULT_SETTINGS.animationSpeed).toBe(75);
+    expect(schema.properties.animationJitter.default).toBe(0.25);
+    expect(DEFAULT_SETTINGS.animationJitter).toBe(0.25);
+    expect(schema.properties.animationJitter.maximum).toBe(1);
   });
 
   /**

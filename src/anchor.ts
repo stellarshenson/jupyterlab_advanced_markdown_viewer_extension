@@ -100,6 +100,11 @@ export interface ISourceRange {
   end: number;
   /** Whether the opening marker goes on its own line before the block. */
   startOwnLine: boolean;
+  /**
+   * Text written ahead of the opening marker: a leading pipe when the marker
+   * would start a table row that has none.
+   */
+  startPrefix: string;
   /** Whether the closing marker goes on its own line after the block. */
   endOwnLine: boolean;
 }
@@ -669,25 +674,37 @@ const LINE_PREFIX = /^[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)?$/;
 
 /**
  * Whether an offset sits on a row of a table: a run of lines without a blank
- * one whose second line is the separator row and whose first holds a pipe.
- * A marker on such a row must stay on the row (ACC-NOTES-154).
+ * one, holding a separator row with a line of pipes before it, from that
+ * header line on. The table can sit in a blockquote, and can follow a text
+ * line with no blank between; the run ends where the quote depth changes.
  */
 export function inTableRow(source: string, offset: number): boolean {
-  const lines = lineRanges(source);
+  const lines = lineRanges(source).map(range => {
+    const raw = source.slice(range.start, range.end);
+    return {
+      ...range,
+      quote: (raw.match(QUOTE)?.[0] ?? '').replace(/[ \t]/g, ''),
+      text: raw.replace(QUOTE, '')
+    };
+  });
   let first = 0;
   for (let i = 0; i < lines.length; i++) {
-    const raw = source.slice(lines[i].start, lines[i].end);
-    if (BLANK.test(raw)) {
+    // A change of quote depth ends the block, and the table with it.
+    if (i > 0 && lines[i].quote !== lines[i - 1].quote) {
+      first = i;
+    }
+    if (BLANK.test(lines[i].text)) {
       first = i + 1;
       continue;
     }
     if (lines[i].start <= offset && offset <= lines[i].end) {
-      if (first + 1 >= lines.length) {
-        return false;
+      const last = Math.min(i + 1, lines.length - 1);
+      for (let j = first + 1; j <= last; j++) {
+        if (isSeparator(lines[j].text) && lines[j - 1].text.includes('|')) {
+          return true;
+        }
       }
-      const head = source.slice(lines[first].start, lines[first].end);
-      const second = source.slice(lines[first + 1].start, lines[first + 1].end);
-      return head.includes('|') && isSeparator(second);
+      return false;
     }
   }
   return false;
@@ -710,27 +727,32 @@ function placeOpening(
   source: string,
   offset: number,
   ownLine: boolean
-): { at: number; ownLine: boolean } {
+): { at: number; ownLine: boolean; prefix: string } {
   if (ownLine) {
-    return { at: offset, ownLine };
+    return { at: offset, ownLine, prefix: '' };
   }
   const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
-  // A line of its own inside a table would end the table (ACC-NOTES-154).
-  if (
-    !LINE_PREFIX.test(source.slice(lineStart, offset)) ||
-    inTableRow(source, offset)
-  ) {
-    return { at: offset, ownLine: false };
+  const before = source.slice(lineStart, offset);
+  if (!LINE_PREFIX.test(before)) {
+    return { at: offset, ownLine: false, prefix: '' };
+  }
+  // A line of its own inside a table would end the table, and so would a
+  // marker at the start of a row without a leading pipe, which opens an HTML
+  // block: that row gets the pipe, which changes no cell (ACC-NOTES-154).
+  // LINE_PREFIX has already excluded a pipe from what precedes the marker, so
+  // the row never has one.
+  if (inTableRow(source, offset)) {
+    return { at: offset, ownLine: false, prefix: '| ' };
   }
   if (lineStart === 0) {
-    return { at: lineStart, ownLine: true };
+    return { at: lineStart, ownLine: true, prefix: '' };
   }
   const previousStart = source.lastIndexOf('\n', lineStart - 2) + 1;
   const previous = source.slice(previousStart, lineStart - 1);
   if (BLANK.test(previous)) {
-    return { at: lineStart, ownLine: true };
+    return { at: lineStart, ownLine: true, prefix: '' };
   }
-  return { at: lineStart - 1, ownLine: false };
+  return { at: lineStart - 1, ownLine: false, prefix: '' };
 }
 
 /**
@@ -911,6 +933,7 @@ export function renderedToSource(
     start: placed.at,
     end: closing.at,
     startOwnLine: placed.ownLine,
+    startPrefix: placed.prefix,
     endOwnLine: closing.ownLine
   };
 }

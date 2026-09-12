@@ -393,7 +393,14 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   white-space: nowrap;
 }
 
-.jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesCount {
+/* The Show closed control, a text button beside the count (ACC-NOTES-155). */
+.jp-AdvancedMd-notesShowClosed {
+  margin-left: 4px;
+  font-size: var(--jp-ui-font-size0);
+}
+
+.jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesCount,
+.jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesShowClosed {
   display: none;
 }
 
@@ -404,7 +411,8 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
  | the collapse control is its mirror, shown in the expanded state alone, at
  | the left edge of the header where it reads as collapse and not as a second
  | close. The plus is shown in the expanded state alone as well, so the strip
- | offers no control that adds a note.
+ | offers no control that adds a note, and the Show closed control goes with
+ | the count.
  */
 .jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesHeader {
   flex-direction: column;
@@ -696,4 +704,24 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
      finds on the strip. */
   border: 1px solid var(--jp-border-color1);
   border-radius: 2px;
+}
+
+/*
+ * A closed mark shown on request: its colour gives way to a grey wash with
+ * no hue, as faint as the open marks in either theme, and its row's passage
+ * takes the secondary text colour, which keeps the state line and the stamps
+ * readable. `body` on the mark rules puts them level with the dark-theme
+ * colour rules above, and the later source order wins (ACC-NOTES-155).
+ */
+body .jp-AdvancedMd-mark.jp-AdvancedMd-mark-closed {
+  background-color: rgb(128 128 128 / 12%);
+}
+
+body[data-jp-theme-light='false']
+  .jp-AdvancedMd-mark.jp-AdvancedMd-mark-closed {
+  background-color: rgb(200 200 200 / 12%);
+}
+
+.jp-AdvancedMd-notesRow-closed .jp-AdvancedMd-notesPassage {
+  color: var(--jp-ui-font-color2);
 }

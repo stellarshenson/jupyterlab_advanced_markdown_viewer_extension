@@ -164,6 +164,18 @@ describe('parseMarks', () => {
     expect(serialiseOpening(marks[0])).toBe(source);
   });
 
+  it('reads status=closed as a closed mark and writes the attribute back (ACC-NOTES-155)', () => {
+    const open = `<!-- mark:${ID} note colour=blue status=closed -->`;
+    const marks = parseMarks(`${open}text<!-- /mark:${ID} -->`);
+    expect(marks[0].closed).toBe(true);
+    expect(serialiseOpening(marks[0])).toBe(open);
+    expect(
+      parseMarks(
+        `<!-- mark:${ID} note colour=blue -->text<!-- /mark:${ID} -->`
+      )[0].closed
+    ).toBe(false);
+  });
+
   it('takes the line below an entry with no text as that entry', () => {
     const source = [
       `<!-- mark:${ID} note`,
@@ -592,8 +604,6 @@ describe('parseMarks', () => {
       true
     );
 
-    // One line, and neither a newline nor a bare pipe inside it.
-    expect(written).not.toContain('\n');
     expect(written).toBe(
       `<!-- mark:${ID} note colour=yellow @kj 2026-09-11T18:40:00Z: first line\\nsecond line with a \\| pipe and a \\\\ backslash\\n@kj 2026-09-11T18:41:00Z: another note -->`
     );

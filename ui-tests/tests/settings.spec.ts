@@ -9,6 +9,7 @@ import {
   labFixtures,
   openPreview,
   settings,
+  shippedSettings,
   typeInEditor
 } from './helpers';
 
@@ -130,9 +131,12 @@ test.describe('the live-updates switch while a change is held back', () => {
   }) => {
     const target = `${tmpPath}/${FILE}`;
     await page.contents.uploadContent(INITIAL, 'text', target);
-    await openPreview(page, target);
+    // The reader types in the editor, the file moves on, and the preview is
+    // opened over both: the text they typed over is not on disk any more, so
+    // the change is held back with nothing to merge over (DEF-APPLY-90).
     await typeInEditor(page, target, 'UNSAVED WORK');
     await page.contents.uploadContent(REWRITTEN, 'text', target);
+    await openPreview(page, target, 'UNSAVED WORK');
 
     const blocked = page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked');
     await expect(blocked).toHaveCount(1, { timeout: 20000 });
@@ -226,5 +230,47 @@ test.describe('the highlight visibility setting', () => {
         2
       );
     }
+  });
+});
+
+const SPEED_FIELD = `#jp-SettingsEditor-${PLUGIN_ID.replace(
+  ':',
+  '\\:'
+)}_animationSpeed`;
+const JITTER_FIELD = `#jp-SettingsEditor-${PLUGIN_ID.replace(
+  ':',
+  '\\:'
+)}_animationJitter`;
+
+test.describe('the animation jitter setting', () => {
+  test.use({ mockSettings: shippedSettings() });
+
+  test('ACC-ANIM-158 sits after the speed, a quarter by default beside 75 characters a second', async ({
+    page
+  }) => {
+    await openSettingsEditor(page);
+    const speed = page.locator(SPEED_FIELD);
+    const jitter = page.locator(JITTER_FIELD);
+    await expect(speed).toBeVisible();
+    await expect(jitter).toBeVisible();
+    await expect(speed).toHaveValue('75');
+    await expect(jitter).toHaveValue('0.25');
+    // The editor draws the declarations in their order, so the jitter field
+    // follows the speed it varies.
+    expect(
+      await page.evaluate(
+        ([a, b]: [string, string]) => {
+          const first = document.querySelector(a);
+          const second = document.querySelector(b);
+          return first && second
+            ? Boolean(
+                first.compareDocumentPosition(second) &
+                Node.DOCUMENT_POSITION_FOLLOWING
+              )
+            : null;
+        },
+        [SPEED_FIELD, JITTER_FIELD]
+      )
+    ).toBe(true);
   });
 });

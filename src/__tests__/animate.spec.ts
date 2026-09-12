@@ -72,6 +72,63 @@ describe('ChangeAnimator', () => {
     expect(root.innerHTML).toBe(original);
   });
 
+  describe('jitter (ACC-ANIM-158)', () => {
+    // Forty characters at 100 a second: 400 ms even, in 16 ms frames.
+    const SENTENCE = 'the quick brown fox jumped over a dog!!!';
+    const typed = (jitter: number, random: () => number, ms: number) => {
+      const root = render(`<p>${SENTENCE}</p>`);
+      const created = decorateFrom(root, '');
+      animator.jitter = jitter;
+      animator.random = random;
+      animator.start(created, 100);
+      jest.advanceTimersByTime(ms);
+      return root.textContent!.length;
+    };
+
+    it('types evenly at jitter 0', () => {
+      expect(typed(0, () => 0.9, 208)).toBe(20);
+      expect(typed(0, () => 0.9, 400)).toBe(40);
+    });
+
+    it('takes one and a quarter times the even time with every draw at its top', () => {
+      expect(typed(0.25, () => 1, 400)).toBe(32);
+      expect(typed(0.25, () => 1, 512)).toBe(40);
+    });
+
+    it('takes three quarters of the even time with every draw at its bottom', () => {
+      expect(typed(0.25, () => 0, 288)).toBe(38);
+      expect(typed(0.25, () => 0, 304)).toBe(40);
+    });
+
+    it('keeps the speed on average over many characters', () => {
+      // A thousand characters at 100 a second: ten seconds even. Draws that
+      // alternate far around the middle keep the mean where the setting says.
+      const root = render(`<p>${'x'.repeat(1000)}</p>`);
+      const created = decorateFrom(root, '');
+      animator.jitter = 1;
+      let i = 0;
+      animator.random = () => (i++ % 2 ? 0.95 : 0.05);
+      animator.start(created, 100);
+      jest.advanceTimersByTime(9792);
+      expect(root.textContent!.length).toBeLessThan(1000);
+      jest.advanceTimersByTime(224);
+      expect(root.textContent!.length).toBe(1000);
+    });
+
+    it('drives every run of a render from the one draw, so runs stay in step', () => {
+      const root = render('<p>first para</p><p>other para</p>');
+      const created = decorateFrom(root, '');
+      animator.jitter = 0.5;
+      animator.random = () => 1;
+      animator.start(created, 100);
+      // Ten characters each at 15 ms a character.
+      jest.advanceTimersByTime(144);
+      expect(texts(created).map(text => text!.length)).toEqual([9, 9]);
+      jest.advanceTimersByTime(32);
+      expect(texts(created)).toEqual(['first para', 'other para']);
+    });
+  });
+
   it('records nothing at speed 0', () => {
     const root = render('<p>the quick brown fox</p>');
     const created = decorateFrom(root, 'the quick fox');

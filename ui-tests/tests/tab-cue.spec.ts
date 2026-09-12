@@ -10,7 +10,7 @@ import {
   markerStyle,
   openPreview,
   settings,
-  typeInEditor
+  typeInEditorAfter
 } from './helpers';
 
 /**
@@ -65,7 +65,9 @@ async function twoStates(page: any, tmpPath: string): Promise<void> {
   await openPreview(page, held);
   await openPreview(page, arriving);
 
-  await typeInEditor(page, held, 'UNSAVED WORK');
+  // The edit sits in the passage the file rewrites, so the change is
+  // dropped there: a conflict, which the marker of a change held back reports.
+  await typeInEditorAfter(page, held, 'apples', ' UNSAVED WORK');
   await page.contents.uploadContent(REWRITTEN, 'text', held);
   await page.contents.uploadContent(REWRITTEN, 'text', arriving);
 

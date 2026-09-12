@@ -9,7 +9,8 @@ import {
   openPreview,
   settings,
   shippedSettings,
-  typeInEditor
+  typeInEditor,
+  typeInEditorAfter
 } from './helpers';
 
 /**
@@ -36,6 +37,33 @@ const LONG = [
 ].join('\n');
 
 const LONG_REWRITTEN = `${LONG}\nA final paragraph appeared.\n`;
+
+/**
+ * The fixture with its second paragraph rewritten and nothing added, so a
+ * change that stays away from the end of the document.
+ */
+const MIDDLE = INITIAL.replace('apples', 'oranges');
+
+/**
+ * The fixture with its heading and its second paragraph rewritten: two
+ * hunks, so one can land while the other meets the reader's edit.
+ */
+const CONFLICTING = MIDDLE.replace('# Report', '# Report, revised');
+
+/**
+ * The fixture with its heading rewritten and its second paragraph rewritten
+ * word for word, so that paragraph's hunks cover the whole line the reader is
+ * editing rather than one word of it.
+ */
+const LINE_REWRITTEN = CONFLICTING.replace(
+  'The second paragraph mentions oranges.',
+  'The second section lists oranges and pears.'
+);
+
+/**
+ * The fixture with two lines put in above it.
+ */
+const ABOVE = `A preface line.\n\n${INITIAL}`;
 
 /**
  * Save the current document without waiting: a File Changed dialog, when one
@@ -322,21 +350,77 @@ test.describe('a document open in the editor as well', () => {
     await openPreview(page, `${tmpPath}/${FILE}`);
   });
 
-  test('is never overwritten by the change on disk while edits are unsaved', async ({
+  test('ACC-APPLY-10 merges the change on disk around unsaved edits and keeps them', async ({
     page,
     tmpPath
   }) => {
-    await typeInEditor(page, `${tmpPath}/${FILE}`, 'UNSAVED WORK');
+    const path = `${tmpPath}/${FILE}`;
+    await typeInEditor(page, path, 'UNSAVED WORK');
+    await page.contents.uploadContent(MIDDLE, 'text', path);
 
-    await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
-    await page.waitForTimeout(8000);
-
+    // The change lands around the reader's text: both are in the document,
+    // the preview shows the change, and the document stays unsaved.
+    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
+      'oranges',
+      { timeout: 20000 }
+    );
     const source = await page.evaluate(() => {
       const app = (window as any).jupyterapp;
       return app.shell.currentWidget?.context?.model?.toString?.() ?? '';
     });
     expect(source).toContain('UNSAVED WORK');
-    expect(source).not.toContain('A third paragraph appeared.');
+    expect(source).toContain('oranges');
+    expect(source).not.toContain('apples');
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
+    ).toHaveCount(1);
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked')
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).jupyterapp.shell.currentWidget?.context?.model?.dirty
+      )
+    ).toBe(true);
+    // Nothing was saved on the reader's behalf.
+    expect(await readDisk(page, path)).not.toContain('UNSAVED WORK');
+  });
+
+  test('ACC-APPLY-13 keeps the editor cursor on its text when lines are added above it', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await typeInEditor(page, path, 'UNSAVED WORK');
+    const cursor = () =>
+      page.evaluate((target: string) => {
+        const app = (window as any).jupyterapp;
+        for (const widget of app.shell.widgets('main')) {
+          if (widget.context?.path === target && widget.content?.editor) {
+            return widget.content.editor.getCursorPosition();
+          }
+        }
+        return null;
+      }, path);
+    const before = await cursor();
+    expect(before).toEqual({ line: 5, column: 12 });
+
+    await page.contents.uploadContent(ABOVE, 'text', path);
+    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
+      'A preface line.',
+      { timeout: 20000 }
+    );
+    // Two lines went in above: the cursor is on the same text, two lines
+    // down, and stays where the reader types.
+    expect(await cursor()).toEqual({ line: 7, column: 12 });
+    await page.keyboard.type(' AND MORE');
+    const source = await page.evaluate(() => {
+      const app = (window as any).jupyterapp;
+      return app.shell.currentWidget?.context?.model?.toString?.() ?? '';
+    });
+    expect(source).toContain('UNSAVED WORK AND MORE');
+    expect(source.startsWith('A preface line.')).toBe(true);
   });
 
   test('saves from the editor after an applied change without a File Changed dialog', async ({
@@ -396,57 +480,72 @@ test.describe('a document open in the editor as well', () => {
     ).toHaveCount(0);
   });
 
-  test('keeps the blocked marker while the reader looks, and drops it once the edits are saved', async ({
+  test('ACC-APPLY-11 keeps the unsaved text where the change overlaps it, applies the rest, and saves without a dialog', async ({
     page,
     tmpPath
   }) => {
     const path = `${tmpPath}/${FILE}`;
-    await typeInEditor(page, path, 'UNSAVED WORK');
-    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await typeInEditorAfter(page, path, 'apples', ' UNSAVED WORK');
+    await page.contents.uploadContent(CONFLICTING, 'text', path);
 
+    // The heading's change lands; the second paragraph is the reader's, and
+    // the marker of a change held back names the conflict.
     const blockedTab = page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked');
     await expect(blockedTab).toHaveCount(1, { timeout: 20000 });
+    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
+      'Report, revised'
+    );
+    const source = await page.evaluate(() => {
+      const app = (window as any).jupyterapp;
+      return app.shell.currentWidget?.context?.model?.toString?.() ?? '';
+    });
+    expect(source).toContain('apples UNSAVED WORK.');
+    expect(source).not.toContain('oranges');
+    const tooltip = await blockedTab.getAttribute('title');
+    expect(tooltip).toContain('unsaved edits');
+    expect(tooltip).toContain('Your text is kept');
 
-    // Looking at the stale preview does not make the change on disk go away.
+    // Looking at the preview does not make the conflict go away.
     await blockedTab.click();
     await page.locator('.jp-RenderedMarkdown').click();
-    await page.mouse.wheel(0, 40);
     await page.waitForTimeout(1500);
     await expect(blockedTab).toHaveCount(1);
 
-    // Saving over unsaved edits is the editor's own conflict: the dialog
-    // stays, and Overwrite settles it. Nothing then waits on disk.
+    // A save keeps the reader's version. The document holds the file's
+    // revision under their edits, so the save raises no File Changed dialog
+    // and the marker comes down.
     await startSave(page);
-    const dialog = page.locator('.jp-Dialog');
-    await expect(dialog).toContainText('File Changed');
-    await dialog.locator('button', { hasText: 'Overwrite' }).click();
-
     await expect(blockedTab).toHaveCount(0, { timeout: 10000 });
-    expect(await readDisk(page, path)).toContain('UNSAVED WORK');
+    await expect(page.locator('.jp-Dialog')).toHaveCount(0);
+    const disk = await readDisk(page, path);
+    expect(disk).toContain('apples UNSAVED WORK.');
+    expect(disk).toContain('Report, revised');
+    expect(disk).not.toContain('oranges');
   });
 
-  test('takes the change on Revert and drops the blocked marker', async ({
+  test("ACC-APPLY-11 keeps the reader's line whole when the change rewrites that line around their text", async ({
     page,
     tmpPath
   }) => {
     const path = `${tmpPath}/${FILE}`;
-    await typeInEditor(page, path, 'UNSAVED WORK');
-    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await typeInEditorAfter(page, path, 'apples', ' UNSAVED WORK');
+    await page.contents.uploadContent(LINE_REWRITTEN, 'text', path);
 
+    // The heading's change lands. The rewrite of the reader's own line is one
+    // place the writer put a cursor, so it is dropped whole rather than woven
+    // word by word into the sentence they are typing in.
     const blockedTab = page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked');
     await expect(blockedTab).toHaveCount(1, { timeout: 20000 });
-
-    await startSave(page);
-    const dialog = page.locator('.jp-Dialog');
-    await expect(dialog).toContainText('File Changed');
-    await dialog.locator('button', { hasText: 'Revert' }).click();
-
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A third paragraph appeared.',
-      { timeout: 10000 }
+    const source = await page.evaluate(() => {
+      const app = (window as any).jupyterapp;
+      return app.shell.currentWidget?.context?.model?.toString?.() ?? '';
+    });
+    expect(source).toContain(
+      'The second paragraph mentions apples UNSAVED WORK.'
     );
-    await expect(blockedTab).toHaveCount(0, { timeout: 10000 });
-    expect(await readDisk(page, path)).not.toContain('UNSAVED WORK');
+    expect(source).not.toContain('section');
+    expect(source).not.toContain('pears');
+    expect(source).toContain('Report, revised');
   });
 
   test('takes the change on Reload from Disk, drops the blocked marker and follows the next write', async ({
@@ -454,7 +553,8 @@ test.describe('a document open in the editor as well', () => {
     tmpPath
   }) => {
     const path = `${tmpPath}/${FILE}`;
-    await typeInEditor(page, path, 'UNSAVED WORK');
+    // The edit sits in the passage the file rewrites: a conflict.
+    await typeInEditorAfter(page, path, 'apples', ' UNSAVED WORK');
     await page.contents.uploadContent(REWRITTEN, 'text', path);
 
     const blockedTab = page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked');
@@ -565,26 +665,58 @@ test.describe('a document open in the editor as well', () => {
 test.describe('a preview opened over unsaved edits', () => {
   test.use({ mockSettings: settings() });
 
-  test('DEF-APPLY-90 holds the first write over text typed before the preview was opened', async ({
+  test('DEF-APPLY-90 merges the first write over text typed before the preview was opened', async ({
     page,
     tmpPath
   }) => {
     const path = `${tmpPath}/${FILE}`;
     await page.contents.uploadContent(INITIAL, 'text', path);
     // The reader types in the editor before any preview exists, then opens
-    // one: its watcher is built over a document that differs from the file,
-    // and the file's text is held back from the moment the preview opens.
+    // one: its watcher is built over a document that differs from the file.
+    // The file is still the revision the editor loaded, so it is the text
+    // the reader typed over, and the first write merges around their text.
     await typeInEditor(page, path, 'UNSAVED WORK');
     await openPreview(page, path, 'UNSAVED WORK');
     const blockedTab = page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked');
-    await expect(blockedTab).toHaveCount(1, { timeout: 20000 });
-
-    await page.contents.uploadContent(REWRITTEN, 'text', path);
-    await expect
-      .poll(() => readDisk(page, path), { timeout: 10000 })
-      .toContain('A third paragraph appeared.');
     await page.waitForTimeout(2500);
-    // The reader's text is still in the document, the write is not shown,
+    await expect(blockedTab).toHaveCount(0);
+
+    await page.contents.uploadContent(MIDDLE, 'text', path);
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'oranges',
+      { timeout: 20000 }
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'UNSAVED WORK'
+    );
+    await expect(blockedTab).toHaveCount(0);
+    expect(await readDisk(page, path)).not.toContain('UNSAVED WORK');
+  });
+
+  test('DEF-APPLY-90 holds the first write when the file moved on before the preview was opened', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    // The file changes while only the editor is open, then the preview is
+    // opened: the text the reader typed over is not on disk any more, so
+    // there is nothing to merge over and the file's text is held back.
+    await typeInEditor(page, path, 'UNSAVED WORK');
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await openPreview(page, path, 'UNSAVED WORK');
+    const blockedTab = page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked');
+    await expect(blockedTab).toHaveCount(1, { timeout: 20000 });
+    const tooltip = await blockedTab.getAttribute('title');
+    expect(tooltip).toContain('held back');
+
+    await page.contents.uploadContent(
+      `${REWRITTEN}\nA fourth paragraph appeared.\n`,
+      'text',
+      path
+    );
+    await page.waitForTimeout(2500);
+    // The reader's text is still in the document, the writes are not shown,
     // and nothing was saved on their behalf.
     await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
       'UNSAVED WORK'
@@ -594,6 +726,15 @@ test.describe('a preview opened over unsaved edits', () => {
     ).not.toContainText('A third paragraph appeared.');
     await expect(blockedTab).toHaveCount(1);
     expect(await readDisk(page, path)).not.toContain('UNSAVED WORK');
+
+    // Saving over a file that moved on is the editor's own conflict: the
+    // dialog stays, and Overwrite settles it. Nothing then waits on disk.
+    await startSave(page);
+    const dialog = page.locator('.jp-Dialog');
+    await expect(dialog).toContainText('File Changed');
+    await dialog.locator('button', { hasText: 'Overwrite' }).click();
+    await expect(blockedTab).toHaveCount(0, { timeout: 10000 });
+    expect(await readDisk(page, path)).toContain('UNSAVED WORK');
   });
 });
 
@@ -654,8 +795,8 @@ test.describe('the reader position', () => {
 
 test.describe('change animation', () => {
   // 20 characters per second: the third paragraph (27 characters) types for
-  // 1350 ms and the ghost 'apples.' is held for 750 ms then deleted over
-  // 350 ms, both long enough to sample every 20 ms.
+  // 1350 ms and the ghost 'apples.' is held for its 500 ms rise then deleted
+  // over 350 ms, both long enough to sample every 20 ms.
   test.use({ mockSettings: settings({ animationSpeed: 20 }) });
 
   const THIRD = 'A third paragraph appeared.';
@@ -700,6 +841,68 @@ test.describe('change animation', () => {
     ).toBe(THIRD);
   });
 
+  test('ACC-HILITE-156 holds the ghost for its rise while the added text types, then deletes it beside the typing', async ({
+    page,
+    tmpPath
+  }) => {
+    // An observer in the page clocks the ghost from the frame it appears to
+    // the frame it first loses a letter, and reads how much of the added
+    // paragraph had typed by then.
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__ghost = null;
+      const observer = new MutationObserver(() => {
+        const ghost = document.querySelector('.jp-AdvancedMd-removed');
+        if (!ghost) {
+          return;
+        }
+        const now = performance.now();
+        const length = (ghost.textContent ?? '').length;
+        if (w.__ghost === null) {
+          w.__ghost = {
+            created: now,
+            whole: length,
+            shrank: null,
+            typed: null
+          };
+          return;
+        }
+        if (w.__ghost.shrank === null && length < w.__ghost.whole) {
+          const added = document.querySelectorAll('.jp-AdvancedMd-added');
+          const last = added[added.length - 1];
+          w.__ghost.shrank = now;
+          w.__ghost.typed = last ? (last.textContent ?? '').length : 0;
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, {
+        childList: true,
+        characterData: true,
+        subtree: true
+      });
+    });
+    await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
+    await expect
+      .poll(
+        () => page.evaluate(() => (window as any).__ghost?.shrank ?? null),
+        {
+          timeout: 20000
+        }
+      )
+      .not.toBeNull();
+
+    const ghost = await page.evaluate(() => (window as any).__ghost);
+    expect(ghost.whole).toBe('apples.'.length);
+    // Whole for the 500 ms rise, a frame or two either way; the 750 ms hold
+    // of earlier builds falls outside.
+    expect(ghost.shrank - ghost.created).toBeGreaterThanOrEqual(450);
+    expect(ghost.shrank - ghost.created).toBeLessThan(650);
+    // The paragraph was still typing when the ghost began to go: side by
+    // side, not one after the other.
+    expect(ghost.typed).toBeGreaterThan(0);
+    expect(ghost.typed).toBeLessThan(THIRD.length);
+  });
+
   test('holds removed text, deletes it from the end, then takes it out', async ({
     page,
     tmpPath
@@ -713,17 +916,18 @@ test.describe('change animation', () => {
       'line-through'
     );
 
-    // Sampling starts a few hundred milliseconds into the 750 ms hold, after
-    // the two polls above returned. Without a hold the 7 characters would be
-    // gone within 350 ms at 20 cps, so ten full-length samples (200 ms) prove
-    // the ghost stood before its deletion started.
+    // Sampling starts some way into the 500 ms hold, after the two polls
+    // above returned. Without a hold the 7 characters would be gone within
+    // 350 ms at 20 cps, so five full-length samples (100 ms) prove the ghost
+    // stood before its deletion started; the hold's length is measured by
+    // the ACC-HILITE-156 case above.
     const samples = await sampleLength(page, '.jp-AdvancedMd-removed', 100, 20);
     expect(samples[0]).toBe('apples.'.length);
     let held = 0;
     while (held < samples.length && samples[held] === 'apples.'.length) {
       held += 1;
     }
-    expect(held).toBeGreaterThanOrEqual(10);
+    expect(held).toBeGreaterThanOrEqual(5);
     for (let i = 1; i < samples.length; i++) {
       const previous = samples[i - 1];
       const current = samples[i];
@@ -1133,10 +1337,10 @@ test.describe('a change inside a fenced code block', () => {
 });
 
 /**
- * A sentence of exactly forty characters, so how long it takes to type says
+ * A sentence of exactly sixty characters, so how long it takes to type says
  * what the speed is.
  */
-const FORTY = 'The fox jumped over the lazy brown dogs.';
+const SIXTY = 'The fox jumped over the lazy brown dogs and ran home to rest';
 
 /**
  * Sample the total length of the added highlights at a fixed interval,
@@ -1191,11 +1395,11 @@ test.describe('a fresh install with no setting touched', () => {
   // in force is the one the schema declares.
   test.use({ mockSettings: shippedSettings() });
 
-  test('ACC-ANIM-143 types a change in at 50 characters per second', async ({
+  test('ACC-ANIM-143 types a change in at 75 characters per second, its timing jittered (ACC-ANIM-158)', async ({
     page,
     tmpPath
   }) => {
-    expect(FORTY.length).toBe(40);
+    expect(SIXTY.length).toBe(60);
     const path = `${tmpPath}/${FILE}`;
     await page.contents.uploadContent(INITIAL, 'text', path);
     await openPreview(page, path);
@@ -1203,23 +1407,24 @@ test.describe('a fresh install with no setting touched', () => {
     // Sampling is started before the write, so the first sample is taken
     // within 50 ms of the highlight appearing.
     const sampling = sampleTyping(page, 50, 50, 30000);
-    await page.contents.uploadContent(`${INITIAL}\n${FORTY}\n`, 'text', path);
+    await page.contents.uploadContent(`${INITIAL}\n${SIXTY}\n`, 'text', path);
     const samples = await sampling;
 
     const whole = Math.max(...samples.map(sample => sample.length));
-    expect(whole).toBeGreaterThanOrEqual(FORTY.length);
+    expect(whole).toBeGreaterThanOrEqual(SIXTY.length);
 
-    // Four hundred milliseconds in, a forty character sentence at 50
-    // characters a second is half way through.
+    // Four hundred milliseconds in, a sixty character sentence at 75
+    // characters a second is half way through; with every draw of the
+    // quarter jitter at its bottom it would still need 600 ms.
     const early = samples.filter(sample => sample.at <= 400);
     expect(early.length).toBeGreaterThan(4);
     expect(early[early.length - 1].length).toBeLessThan(whole);
 
-    // And it is complete inside 1.2 seconds. At the 25 characters a second of
-    // the earlier 1.0.6 builds the same sentence would still be typing at
-    // 1.6, and at the 10 of 1.0.5 at four.
+    // And it is complete inside 1.1 seconds: 800 ms on average, a second
+    // with every draw at its top. At the 50 characters a second of the
+    // earlier 1.0.9 builds the same sentence would take 1.2 s even.
     const done = samples.find(sample => sample.length === whole);
-    expect((done as { at: number }).at).toBeLessThanOrEqual(1200);
+    expect((done as { at: number }).at).toBeLessThanOrEqual(1100);
   });
 });
 

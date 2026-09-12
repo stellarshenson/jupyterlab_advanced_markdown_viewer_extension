@@ -124,6 +124,30 @@ describe('diffWords', () => {
     expect(ranges.removed.map(removal => removal.text)).toEqual(['1500.']);
   });
 
+  it('keeps two small edits apart when more than MAX_LCS_LINES lines lie between them (DEF-HILITE-88)', () => {
+    const lines = Array.from(
+      { length: 1700 },
+      (_, i) => `Line ${i + 1} of the long report, some words here.`
+    );
+    const base = lines.join('\n');
+    const later = base
+      .replace('Line 2 of', 'Line 2 (revised) of')
+      .replace('Line 1690 of', 'Line 1690 (revised) of');
+    const ops = diffWords(base, later);
+    expect(before(ops)).toBe(base);
+    expect(after(ops)).toBe(later);
+    expect(ops.filter(op => op.kind === 'insert')).toHaveLength(2);
+  });
+
+  it('falls back to one replacement past the bound when no line is unique on both sides', () => {
+    const base = Array.from({ length: 1700 }, () => 'the same line').join('\n');
+    const later = `${base}\nthe same line\nthe same line`;
+    const ops = diffWords(base, later);
+    expect(before(ops)).toBe(base);
+    expect(after(ops)).toBe(later);
+    expect(ops.filter(op => op.kind === 'insert')).toHaveLength(1);
+  });
+
   it('falls back to one replacement past the alignment bound', () => {
     const a = Array.from({ length: 3000 }, (_, i) => `a${i}`).join(' ');
     const b = Array.from({ length: 3000 }, (_, i) => `b${i}`).join(' ');

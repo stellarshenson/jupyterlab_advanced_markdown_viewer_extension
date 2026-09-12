@@ -62,7 +62,7 @@ import {
   SELECTING_CLASS,
   NotesController
 } from '../notes';
-import { MARK_CLASS, NotesPanel } from '../notes-panel';
+import { MARK_CLASS, MARK_CLOSED_CLASS, NotesPanel } from '../notes-panel';
 import { fetchAPI } from '../request';
 
 /** The write route stand-in. */
@@ -929,7 +929,6 @@ describe('NotesController', () => {
       const [mark] = parseMarks(h.source());
       expect(mark.notes[0].text).toBe('first line\nwith a | pipe');
       const opening = h.source().slice(mark.open!.start, mark.open!.end);
-      expect(opening).not.toContain('\n');
       expect(opening).toContain('first line\\nwith a \\| pipe');
       // The table still has three rows of two cells.
       expect(
@@ -939,6 +938,47 @@ describe('NotesController', () => {
           .filter(line => line.trim())
       ).toHaveLength(3);
       expect(h.source()).toContain(`<!-- /mark:${ONE} --> | 3 |`);
+    });
+
+    it('writes the note on one line when the table sits in a blockquote (ACC-NOTES-154)', async () => {
+      const h = open(
+        `> [!NOTE]\n> | Fruit | Count |\n> | --- | --- |\n> | <!-- mark:${ONE} note colour=yellow -->beta gamma<!-- /mark:${ONE} --> | 3 |\n`
+      );
+      await ready();
+
+      await h.controller.addNote(ONE, 'first line\nsecond line');
+
+      const [mark] = parseMarks(h.source());
+      expect(mark.notes[0].text).toBe('first line\nsecond line');
+      // The quote and its table keep their four lines.
+      expect(
+        h
+          .source()
+          .split('\n')
+          .filter(line => line.trim())
+      ).toHaveLength(4);
+      expect(h.source()).toContain(`<!-- /mark:${ONE} --> | 3 |`);
+      expect(h.source()).not.toContain('\n-->');
+    });
+
+    it('writes the note on one line when the table follows a text line with no blank between (ACC-NOTES-154)', async () => {
+      const h = open(
+        `Fruit stock:\n| Fruit | Count |\n| --- | --- |\n| <!-- mark:${ONE} note colour=yellow -->beta gamma<!-- /mark:${ONE} --> | 3 |\n`
+      );
+      await ready();
+
+      await h.controller.addNote(ONE, 'first line\nsecond line');
+
+      const [mark] = parseMarks(h.source());
+      expect(mark.notes[0].text).toBe('first line\nsecond line');
+      expect(
+        h
+          .source()
+          .split('\n')
+          .filter(line => line.trim())
+      ).toHaveLength(4);
+      expect(h.source()).toContain(`<!-- /mark:${ONE} --> | 3 |`);
+      expect(h.source()).not.toContain('\n-->');
     });
 
     it('writes the note into the first of the two pairs a copy left behind', async () => {
@@ -1030,6 +1070,44 @@ describe('NotesController', () => {
 
       expect(h.transactions).toHaveLength(0);
       expect(h.source()).toBe(source);
+    });
+
+    it('closes and reopens a mark through its status attribute, keeping colour and notes (ACC-NOTES-155)', async () => {
+      const h = open(marked());
+      await ready();
+      await h.controller.addNote(ONE, 'kept');
+
+      await h.controller.setClosed(ONE, true);
+      let [mark] = parseMarks(h.source());
+      expect(mark.closed).toBe(true);
+      expect(mark.attributes).toEqual([
+        { key: 'colour', value: 'yellow' },
+        { key: 'status', value: 'closed' }
+      ]);
+      expect(mark.notes[0].text).toBe('kept');
+
+      await h.controller.setClosed(ONE, false);
+      [mark] = parseMarks(h.source());
+      expect(mark.closed).toBe(false);
+      expect(mark.attributes).toEqual([{ key: 'colour', value: 'yellow' }]);
+      expect(h.source()).toContain('-->beta gamma<!-- /mark:');
+    });
+
+    it('paints no closed mark until asked to show them, then paints it muted (ACC-NOTES-155)', async () => {
+      const h = open(marked(ONE, 'colour=yellow status=closed'));
+      await ready();
+      h.render(markedHtml(ONE, 'colour=yellow status=closed'));
+      expect(h.root.querySelector(`.${MARK_CLASS}`)).toBeNull();
+      expect(h.controller.marks[0].closed).toBe(true);
+
+      h.controller.setShowClosed(true);
+      const span = h.root.querySelector(`.${MARK_CLASS}[data-mark="${ONE}"]`);
+      expect(span?.textContent).toBe('beta gamma');
+      expect(span?.classList.contains(MARK_CLOSED_CLASS)).toBe(true);
+      expect(h.controller.showClosed).toBe(true);
+
+      h.controller.setShowClosed(false);
+      expect(h.root.querySelector(`.${MARK_CLASS}`)).toBeNull();
     });
 
     it('reads a change that landed on disk before rewriting the marker', async () => {
@@ -1337,6 +1415,8 @@ describe('NotesController', () => {
         handlers: {
           addNote: async () => true,
           setColour: () => undefined,
+          setClosed: () => undefined,
+          setShowClosed: () => undefined,
           removeMark: () => undefined,
           removeEmptyDocument: () => undefined,
           markDocument: async () => null,

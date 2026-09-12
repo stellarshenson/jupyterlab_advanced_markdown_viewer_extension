@@ -676,9 +676,21 @@ test.describe('marking a passage', () => {
     const order = await panel(page)
       .locator('.jp-AdvancedMd-notesHeader > *')
       .evaluateAll((nodes: Element[]) =>
-        nodes.map(node => node.className.replace('jp-AdvancedMd-notes', ''))
+        nodes.map(node =>
+          (node.className.split(' ').pop() ?? '').replace(
+            'jp-AdvancedMd-notes',
+            ''
+          )
+        )
       );
-    expect(order).toEqual(['Collapse', 'Count', 'Add', 'Expand', 'Close']);
+    expect(order).toEqual([
+      'Collapse',
+      'Count',
+      'ShowClosed',
+      'Add',
+      'Expand',
+      'Close'
+    ]);
     const box = (await addControl(page).boundingBox())!;
     expect(box.width).toBeGreaterThanOrEqual(24);
     expect(box.height).toBeGreaterThanOrEqual(24);
@@ -1435,6 +1447,180 @@ test.describe('marking a passage', () => {
     await expect(painted(page)).toHaveCount(1);
     await expect(rows(page).first()).toContainText('first line');
     await expect(rows(page).first()).toContainText('with a | pipe');
+  });
+
+  test('ACC-NOTES-154 keeps a table after a text line and a table inside a quote whole when notes are written on their cells', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/tables.md`;
+    const tables = [
+      '# Fruit',
+      '',
+      'Fruit stock:',
+      '| Fruit | Count |',
+      '| --- | --- |',
+      '| apples and pears | 3 |',
+      '',
+      '> [!NOTE]',
+      '> | Fruit | Count |',
+      '> | --- | --- |',
+      '> | plums and figs | 4 |',
+      ''
+    ].join('\n');
+    await page.contents.uploadContent(tables, 'text', path);
+    await openPreview(page, path, 'Fruit stock:');
+    const cells = page.locator('.jp-RenderedMarkdown:visible table td');
+    await expect(cells).toHaveCount(4);
+
+    // A note on a cell of each table: the one that follows the text line
+    // with no blank between, and the one inside the quote.
+    await mark(page, 'and pears');
+    await openRow(page);
+    await rows(page).nth(0).locator('button', { hasText: 'Add note' }).click();
+    await writeNote(page, 'first line\nsecond line');
+    await fileWhen(path, holds => holds.includes('first line'));
+    await mark(page, 'and figs');
+    await expect(rows(page)).toHaveCount(2);
+    await openRow(page, 1);
+    await rows(page).nth(1).locator('button', { hasText: 'Add note' }).click();
+    await writeNote(page, 'third line\nfourth line');
+    const text = await fileWhen(path, holds => holds.includes('third line'));
+
+    // Both markers stayed on their rows, one line each, so the file still
+    // holds three lines of each table and marked still renders four cells.
+    expect(text.split('\n').filter(line => line.startsWith('|'))).toHaveLength(
+      3
+    );
+    expect(
+      text.split('\n').filter(line => line.startsWith('> |'))
+    ).toHaveLength(3);
+    expect(text).toContain('first line\\nsecond line');
+    expect(text).toContain('third line\\nfourth line');
+    expect(text).not.toContain('\n-->');
+    await expect(cells).toHaveCount(4);
+    await expect(cells.nth(0)).toContainText('apples and pears');
+    await expect(cells.nth(2)).toContainText('plums and figs');
+    await expect(painted(page)).toHaveCount(2);
+  });
+
+  test('ACC-NOTES-154 keeps a table without leading pipes whole when the first word of a cell is marked', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/bare-table.md`;
+    const table = [
+      '# Fruit',
+      '',
+      'A table follows.',
+      '',
+      'Fruit | Count',
+      '--- | ---',
+      'apples and pears | 3',
+      'plums | 4',
+      ''
+    ].join('\n');
+    await page.contents.uploadContent(table, 'text', path);
+    await openPreview(page, path, 'A table follows.');
+    const cells = page.locator('.jp-RenderedMarkdown:visible table td');
+    await expect(cells).toHaveCount(4);
+
+    // A marker at the start of the row would open an HTML block and end the
+    // table; the row gains a leading pipe ahead of it, which changes no cell.
+    await mark(page, 'apples and');
+    const text = await fileWhen(path, holds => holds.includes('<!-- mark:'));
+    const row = text.split('\n').find(line => line.includes('apples'))!;
+    expect(row.startsWith('| <!-- mark:')).toBe(true);
+    expect(row.endsWith(' pears | 3')).toBe(true);
+    await expect(cells).toHaveCount(4);
+    await expect(cells.nth(0)).toContainText('apples and pears');
+    await expect(painted(page)).toHaveCount(1);
+  });
+
+  test('ACC-NOTES-155 closes a mark, which hides its paint and its row until the panel shows closed marks, then reopens it', async ({
+    page,
+    tmpPath
+  }) => {
+    const file = `${tmpPath}/${FILE}`;
+    await mark(page, P1);
+    await openRow(page);
+    await panelButton(page, 'Add note').click();
+    await writeNote(page, 'Settled.');
+    await fileWhen(file, holds => holds.includes('Settled.'));
+    await expect(painted(page)).toHaveCount(1);
+
+    // Close: the paint and the row go; the file keeps the note and gains the
+    // status attribute; the header offers the one closed mark.
+    // By row: the header's Show closed control matches a search for Close.
+    await rows(page).first().locator('button', { hasText: 'Close' }).click();
+    const closed = await fileWhen(file, holds =>
+      holds.includes('status=closed')
+    );
+    // The marker holds a note, so the attributes end its first line.
+    expect(closed).toMatch(/note colour=\w+ status=closed\n/);
+    expect(closed).toContain('Settled.');
+    await expect(painted(page)).toHaveCount(0);
+    await expect(rows(page)).toHaveCount(0);
+    const show = panel(page).locator('.jp-AdvancedMd-notesShowClosed');
+    await expect(show).toHaveText('Show closed (1)');
+    await expect(panel(page).locator('.jp-AdvancedMd-notesCount')).toHaveText(
+      'No marks'
+    );
+    // The strip of the minimap has no room for it: hidden there, back with
+    // the list.
+    await panel(page).locator('.jp-AdvancedMd-notesCollapse').click();
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-minimap/);
+    await expect(show).toBeHidden();
+    await panel(page).locator('.jp-AdvancedMd-notesExpand').click();
+    await expect(show).toBeVisible();
+
+    // Shown: the row is listed dimmed and the passage painted muted.
+    await show.click();
+    await expect(show).toHaveText('Hide closed (1)');
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page).first()).toHaveClass(
+      /jp-AdvancedMd-notesRow-closed/
+    );
+    await expect(painted(page)).toHaveCount(1);
+    await expect(painted(page).first()).toHaveClass(
+      /jp-AdvancedMd-mark-closed/
+    );
+
+    // Reopen: the attribute goes, the paint and the row are as before.
+    await openRow(page);
+    await panelButton(page, 'Reopen').click();
+    const reopened = await fileWhen(
+      file,
+      holds => !holds.includes('status=closed')
+    );
+    expect(reopened).toMatch(/note colour=\w+\n@/);
+    expect(reopened).not.toContain('status=');
+    expect(reopened).toContain('Settled.');
+    await expect(painted(page)).toHaveCount(1);
+    await expect(painted(page).first()).not.toHaveClass(
+      /jp-AdvancedMd-mark-closed/
+    );
+    await expect(rows(page)).toHaveCount(1);
+    await expect(show).toBeHidden();
+  });
+
+  test('ACC-NOTES-157 copies the mark identifier from the context menu of its row', async ({
+    page,
+    tmpPath
+  }) => {
+    await page
+      .context()
+      .grantPermissions(['clipboard-read', 'clipboard-write']);
+    await mark(page, P1);
+    const row = rows(page).first();
+    const id = (await row.getAttribute('data-mark'))!;
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+
+    await row.locator('.jp-AdvancedMd-notesPassage').click({ button: 'right' });
+    await choose(page, 'Copy mark ID');
+
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(id);
+    expect(fileText(`${tmpPath}/${FILE}`)).toContain(`<!-- mark:${id} `);
   });
 
   test('ACC-NOTES-147 leaves Add note out of the row whose note is being written, and keeps its colours', async ({

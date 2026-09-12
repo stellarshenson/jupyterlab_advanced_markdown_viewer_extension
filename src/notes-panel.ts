@@ -14,7 +14,7 @@
  * bring a selected passage into sight.
  */
 
-import { MessageLoop } from '@lumino/messaging';
+import { Message, MessageLoop } from '@lumino/messaging';
 import { BoxLayout, BoxPanel, Widget } from '@lumino/widgets';
 
 import {
@@ -78,6 +78,11 @@ export const EXPAND_CLASS = 'jp-AdvancedMd-notesExpand';
 export const COLLAPSE_CLASS = 'jp-AdvancedMd-notesCollapse';
 /** Class of the header control that adds a note on the document as a whole. */
 export const ADD_CLASS = 'jp-AdvancedMd-notesAdd';
+/** Class of the header control that shows and hides the closed marks. */
+export const SHOW_CLOSED_CLASS = 'jp-AdvancedMd-notesShowClosed';
+/** Class a row of a closed mark carries, and the word its state line shows. */
+export const ROW_CLOSED_CLASS = 'jp-AdvancedMd-notesRow-closed';
+const CLOSED = 'closed';
 
 /** Title of that control, the one route to a document note. */
 const ADD_LABEL = 'Add document note';
@@ -102,6 +107,8 @@ export const BADGE_EMPTY_CLASS = 'jp-AdvancedMd-notesBadge-empty';
  */
 export const MARK_CLASS = 'jp-AdvancedMd-mark';
 export const MARK_ATTRIBUTE = 'data-mark';
+/** Class the decoration of a closed mark carries while closed marks are shown. */
+export const MARK_CLOSED_CLASS = 'jp-AdvancedMd-mark-closed';
 
 /**
  * JupyterLab's class on the viewer node, the focusable ancestor of the rendered
@@ -163,6 +170,10 @@ export interface INotesPanelHandlers {
   addNote(id: string, text: string): Promise<boolean>;
   /** Give a mark another colour. */
   setColour(id: string, colour: MarkColour): void;
+  /** Close a mark, or reopen it. */
+  setClosed(id: string, closed: boolean): void;
+  /** Show the closed marks, in the panel and the preview alike, or hide them. */
+  setShowClosed(on: boolean): void;
   /** Remove both markers of a mark, leaving the passage as it is. */
   removeMark(id: string): void;
   /**
@@ -326,6 +337,14 @@ export class NotesPanel extends Widget {
     COLLAPSE_ICON.element({ container: collapse, tag: 'span' });
     header.appendChild(collapse);
     header.appendChild(this._count);
+    // Shown while the document holds a closed mark; _render writes its text.
+    this._showClosedControl = button(
+      `${BUTTON_CLASS} ${SHOW_CLOSED_CLASS}`,
+      '',
+      '',
+      () => this._handlers.setShowClosed(!this._showClosed)
+    );
+    header.appendChild(this._showClosedControl);
     // The one route to a note on the document as a whole: the entry opens on
     // the document mark, written first when the file holds none.
     const add = button(
@@ -446,8 +465,14 @@ export class NotesPanel extends Widget {
    * nothing is scrolled unless the panel's opening pushed it out of the view
    */
   selectMark(id: string, openNote = false, fromPassage = openNote): void {
-    if (!this._items.some(item => item.mark.id === id)) {
+    const target = this._items.find(item => item.mark.id === id);
+    if (!target) {
       return;
+    }
+    // A closed mark has a row only while the closed marks are shown, and a
+    // reader who asked for its row asked for them (ACC-NOTES-155).
+    if (target.mark.closed && !this._showClosed) {
+      this._handlers.setShowClosed(true);
     }
     // A note entry, and a row a click on the passage asked for, exist only in
     // the expanded state, and a reader who asked for either asked for the
@@ -472,7 +497,34 @@ export class NotesPanel extends Widget {
       // the check reads the new layout; an open panel leaves nothing to do.
       MessageLoop.flush();
       this._keepInView(id);
+      // The row of a mark that holds a note is what the click asked to see:
+      // the focus brings it into the list's view and gives the keyboard and
+      // the screen reader the row, as the field takes them on a bare mark.
+      if (!openNote) {
+        this._body
+          .querySelector<HTMLElement>(
+            `.${ROW_CLASS}[${MARK_ATTRIBUTE}="${id}"]`
+          )
+          ?.focus();
+      }
     }
+  }
+
+  /** Whether the closed marks are listed; the controller holds the switch. */
+  get showClosed(): boolean {
+    return this._showClosed;
+  }
+  set showClosed(on: boolean) {
+    if (on !== this._showClosed) {
+      this._showClosed = on;
+      this._render();
+    }
+  }
+
+  /** A draft rebuilt while the tab was hidden is measured once it shows. */
+  protected onAfterShow(msg: Message): void {
+    super.onAfterShow(msg);
+    this._grow?.();
   }
 
   /**
@@ -503,7 +555,11 @@ export class NotesPanel extends Widget {
     // would otherwise block every entry for the rest of the session; the
     // reader opening an entry elsewhere is them saying they have moved on.
     const entry =
-      held && this._items.some(item => item.mark.id === held.id)
+      held &&
+      this._items.some(
+        item =>
+          item.mark.id === held.id && (this._showClosed || !item.mark.closed)
+      )
         ? held
         : { id, text: '' };
     // A field left empty for another row's field is closed as Cancel closes
@@ -638,12 +694,23 @@ export class NotesPanel extends Widget {
     const at = row?.dataset.mark ?? null;
     const index = row ? Array.from(this._body.children).indexOf(row) : -1;
 
-    this._count.textContent = countLabel(this._items.length);
+    // A closed mark is listed, ticked and counted only while the closed
+    // marks are shown (ACC-NOTES-155).
+    const listed = this._items.filter(
+      item => this._showClosed || !item.mark.closed
+    );
+    const closed = this._items.filter(item => item.mark.closed).length;
+    this._showClosedControl.hidden = closed === 0;
+    const showClosed = `${this._showClosed ? 'Hide' : 'Show'} closed (${closed})`;
+    this._showClosedControl.textContent = showClosed;
+    this._showClosedControl.title = showClosed;
+    this._showClosedControl.setAttribute('aria-label', showClosed);
+    this._count.textContent = countLabel(listed.length);
     // The count, then the action, under the name the menu gives it.
-    const title = `${countLabel(this._items.length)}: ${PANEL_LABELS.expanded}`;
+    const title = `${countLabel(listed.length)}: ${PANEL_LABELS.expanded}`;
     this.badge.title = title;
     this.badge.setAttribute('aria-label', title);
-    this.badge.classList.toggle(BADGE_EMPTY_CLASS, this._items.length === 0);
+    this.badge.classList.toggle(BADGE_EMPTY_CLASS, listed.length === 0);
     this._body.className = this._state === 'minimap' ? MAP_CLASS : LIST_CLASS;
     this._body.textContent = '';
     // The rows are a list a screen reader moves through; the strip of ticks
@@ -656,7 +723,7 @@ export class NotesPanel extends Widget {
     if (this._state === 'hidden') {
       return;
     }
-    for (const item of this._items) {
+    for (const item of listed) {
       // A document note has no place in the document, so no tick.
       if (this._state === 'minimap' && item.mark.type === DOCUMENT_TYPE) {
         continue;
@@ -717,6 +784,9 @@ export class NotesPanel extends Widget {
     if (mark.id === this._selected) {
       row.classList.add(SELECTED_CLASS);
       row.setAttribute('aria-current', 'true');
+    }
+    if (mark.closed) {
+      row.classList.add(ROW_CLOSED_CLASS);
     }
     row.addEventListener('keydown', event => {
       // Every control of the row is a descendant of it, so only an Enter
@@ -780,7 +850,8 @@ export class NotesPanel extends Widget {
     // offered no control, so nothing this extension cannot read is rewritten.
     const state = [
       known(mark) ? '' : mark.type,
-      item.anchored ? '' : UNANCHORED
+      item.anchored ? '' : UNANCHORED,
+      mark.closed ? CLOSED : ''
     ]
       .filter(part => part !== '')
       .join(' ');
@@ -842,6 +913,14 @@ export class NotesPanel extends Widget {
         })
       );
     }
+    controls.appendChild(
+      button(
+        BUTTON_CLASS,
+        mark.closed ? 'Reopen' : 'Close',
+        mark.closed ? 'Reopen this mark' : 'Close this mark',
+        () => this._handlers.setClosed(mark.id, !mark.closed)
+      )
+    );
     const remove = button(
       `${BUTTON_CLASS} ${REMOVE_CLASS}`,
       '',
@@ -871,15 +950,24 @@ export class NotesPanel extends Widget {
     text.rows = 4;
     text.placeholder = 'Write a note';
     text.setAttribute('aria-label', 'Note');
+    // The browser's own menu (paste, spelling) stays inside the field;
+    // JupyterLab honours this attribute (ACC-NOTES-157).
+    text.setAttribute('data-jp-suppress-context-menu', '');
     text.value = draft;
     // The box follows its content: the inline height is cleared, so the four
     // rows set the floor, then set to what the content needs plus the border
     // (ACC-NOTES-152). A scroll height is never below the client height, so
     // the box never falls under its four rows.
     const grow = (): void => {
+      // A field in a hidden tab measures 0 in every metric, and a height
+      // written from that would collapse it over the draft.
+      if (text.clientHeight === 0) {
+        return;
+      }
       text.style.height = '';
       text.style.height = `${text.scrollHeight + text.offsetHeight - text.clientHeight}px`;
     };
+    this._grow = grow;
     text.addEventListener('input', () => {
       this._entry = { id, text: text.value };
       grow();
@@ -984,6 +1072,9 @@ export class NotesPanel extends Widget {
   private _state: PanelState;
   private _selected: string | null = null;
   private _entry: { id: string; text: string } | null = null;
+  private _grow: (() => void) | null = null;
+  private _showClosed = false;
+  private _showClosedControl: HTMLButtonElement;
   private _close: HTMLButtonElement;
   /**
    * Where the reader is to be put when the body is rebuilt: null for wherever

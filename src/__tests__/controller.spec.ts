@@ -102,7 +102,8 @@ describe('LiveViewController', () => {
     pollInterval: 1,
     fadeDuration: 4000,
     animation: true,
-    animationSpeed: 0
+    animationSpeed: 0,
+    animationJitter: 0
   };
 
   beforeEach(() => {
@@ -216,6 +217,26 @@ describe('LiveViewController', () => {
       watcher.blocked.emit('dirty');
       watcher.unblocked.emit(undefined);
       expect(tabClasses()).toEqual([]);
+    });
+
+    it('names a conflict on the tab: the text kept, with no promise about the rest (ACC-APPLY-11)', () => {
+      watcher.blocked.emit('conflict');
+      expect(tabClasses()).toEqual([TAB_BLOCKED_CLASS]);
+      expect(widget.title.caption).toContain('unsaved edits');
+      expect(widget.title.caption).toContain('Your text is kept');
+      expect(widget.title.caption).toContain('Reload Markdown File from Disk');
+      expect(widget.title.caption).toContain('drops that part from the file');
+      expect(widget.title.caption).toContain('drops all your unsaved edits');
+      expect(widget.title.caption).toContain('right beside where');
+      expect(widget.title.caption).not.toContain('any other part');
+      watcher.unblocked.emit(undefined);
+      expect(tabClasses()).toEqual([]);
+    });
+
+    it('keeps the conflict marker said after the change that landed beside it', () => {
+      applied();
+      watcher.blocked.emit('conflict');
+      expect(tabClasses()).toEqual([TAB_BLOCKED_CLASS]);
     });
 
     it('replaces the blocked marker when the change lands', () => {
@@ -743,6 +764,24 @@ describe('LiveViewController', () => {
       expect(root.textContent).toBe('Alpha.\nGamma');
     });
 
+    it('holds the ghost for its rise, then deletes it beside the typing (ACC-HILITE-156)', () => {
+      const added = ` ${'x'.repeat(99)}`;
+      render('<p>alpha beta gamma</p>');
+      applied();
+      render(`<p>alpha gamma${added}</p>`);
+      expect(ghostText(root)).toBe('beta ');
+      // The added text types for a second at 100 characters a second; the
+      // ghost stands whole for the 500 ms rise, then deletes while the
+      // typing goes on: the two run side by side.
+      jest.advanceTimersByTime(GHOST_HOLD_MS - 50);
+      expect(ghostText(root)).toBe('beta ');
+      expect(addedText(root)[0].length).toBeLessThan(added.length);
+      jest.advanceTimersByTime(50 + 48);
+      expect((ghostText(root) ?? '').length).toBeLessThan('beta '.length);
+      expect(addedText(root)[0].length).toBeLessThan(added.length);
+      expect(addedText(root)[0].length).toBeGreaterThan(0);
+    });
+
     it('a ghost re-created by the next render does not warn twice', () => {
       render('<p>alpha beta gamma</p>');
       applied();
@@ -753,7 +792,9 @@ describe('LiveViewController', () => {
       render('<p>alpha gamma delta</p>');
       expect(ghostText(root)).toBe('beta ');
       expect(addedText(root)).toEqual(['']);
-      jest.advanceTimersByTime(400);
+      // The rest of the one pause: a second pause would keep the ghost
+      // whole here.
+      jest.advanceTimersByTime(GHOST_HOLD_MS - 400 + 100);
       const ghost = ghostText(root);
       expect(ghost === null || ghost.length < 'beta '.length).toBe(true);
       expect(addedText(root)[0].length).toBeGreaterThan(0);
@@ -1024,11 +1065,11 @@ describe('LiveViewController', () => {
       render('<p>The quick brown high fox jumps over the dog</p>');
       // The ghost is the removal this write made, whichever side of the word
       // the diff against the held baseline hands the whitespace to.
-      const samples = sample(() => ghosts(), 50, 14);
+      const samples = sample(() => ghosts(), 50, 9);
       for (const held of samples) {
         expect(held).toEqual(['lazy ']);
       }
-      jest.advanceTimersByTime(GHOST_HOLD_MS - 700 + 50 + 32);
+      jest.advanceTimersByTime(GHOST_HOLD_MS - 450 + 50 + 32);
       expect(ghosts()).toEqual([]);
       expect(root.textContent).toBe(
         'The quick brown high fox jumps over the dog'
@@ -1047,7 +1088,7 @@ describe('LiveViewController', () => {
       render(`<p>The ${inserted}sat.</p>`);
       // The ghost stands where the word was, after the run, not where the
       // diff against the held baseline puts the removal.
-      const samples = sample(() => ghosts(), 50, 14);
+      const samples = sample(() => ghosts(), 50, 9);
       for (const held of samples) {
         expect(held).toEqual(['cat ']);
       }
@@ -1112,7 +1153,7 @@ describe('LiveViewController', () => {
       applied();
       render('<p>w2 w3 w4</p>');
       expect(ghosts()).toEqual(['w0 w1 ']);
-      jest.advanceTimersByTime(1200);
+      jest.advanceTimersByTime(GHOST_HOLD_MS + 'w0 w1 '.length * 10 + 200);
       expect(ghosts()).toEqual([]);
       applied();
       render('<p>w5 w2 w3 w4</p>');
@@ -1131,8 +1172,8 @@ describe('LiveViewController', () => {
       jest.advanceTimersByTime(300);
       applied();
       render('<p>w5 w2 w3 w4</p>');
-      // The ghost stands whole for the 450 ms left of its pause.
-      for (const held of sample(() => ghosts(), 50, 9)) {
+      // The ghost stands whole for the 200 ms left of its pause.
+      for (const held of sample(() => ghosts(), 50, 3)) {
         expect(held).toEqual(['w0 w1 ']);
       }
       jest.advanceTimersByTime(50 + 'w0 w1 '.length * 10 + 32);
@@ -1143,16 +1184,18 @@ describe('LiveViewController', () => {
       render('<p>alpha beta gamma delta epsilon zeta eta</p>');
       applied();
       render('<p>alpha beta gamma theta delta eta</p>');
-      jest.advanceTimersByTime(1200);
+      jest.advanceTimersByTime(
+        GHOST_HOLD_MS + 'delta epsilon'.length * 10 + 200
+      );
       expect(ghosts()).toEqual([]);
       applied();
       render('<p>iota theta delta eta</p>');
       // Against the held baseline the removal arrives in two fragments around
       // the first write's addition; the ghost is what this write removed.
-      for (const held of sample(() => ghosts(), 50, 15)) {
+      for (const held of sample(() => ghosts(), 50, 9)) {
         expect(held).toEqual(['alpha beta gamma']);
       }
-      jest.advanceTimersByTime('alpha beta gamma'.length * 10 + 32);
+      jest.advanceTimersByTime(50 + 'alpha beta gamma'.length * 10 + 32);
       expect(ghosts()).toEqual([]);
       expect(root.textContent).toBe('iota theta delta eta');
     });
