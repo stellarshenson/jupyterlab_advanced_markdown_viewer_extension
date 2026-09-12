@@ -2,6 +2,34 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.9] - 2026-09-12
+
+An external change now merges around unsaved edits instead of waiting for them, the typing animation carries a jitter, and marks gained a status, an identifier copy and a table-safe form.
+
+### Added
+
+- A three-way merge: an agent's edits on disk are isolated as positioned hunks and land each at its own place around the reader's unsaved edits, with a shadow of the text the document and the file last agreed on as the base
+- A mark carries a status, open or closed; closed marks are hidden with their paint until the panel's Show closed control lists them
+- A right click on a notes row copies the mark's identifier
+- An animation jitter setting, 0 to 1, that varies the time to the next character while keeping the mean at the speed set
+
+### Changed
+
+- Animation speed default 75 characters per second, from 50, with a quarter of jitter
+- The removed-text ghost holds for the 500 ms the added highlight takes to rise, then deletes beside the typing
+- The note field grows with its content as a note is typed, and keeps the browser's own context menu for paste and spelling
+- A click on a marked passage whose mark already holds a note opens its row rather than a new note entry
+- The tab's red square now reports a conflict as well as a held change, with words of its own naming what a save and what Reload Markdown File from Disk each keep
+
+### Fixed
+
+- Text inside a marked passage can be selected again; a drag over it keeps its selection
+- A marking on a table row no longer splits the table: the opening marker stays on one line with its note lines escaped
+- Two edits far apart in a long document are tinted apart, rather than as one replacement, past the line bound
+- A rewrite of the line the reader is editing is dropped whole rather than woven into their sentence word by word
+- A change whose dropped part would take half of a code fence or an HTML comment pair is refused entirely, so the preview never runs a block to the end of the document
+- Reload from Disk over a conflict, and a save after one, both clear the marker without a File Changed dialog
+
 ## [1.0.8] - 2026-09-11
 
 The 1.0.7 content published again with no change to the extension; the 1.0.7 section below is the release content.
