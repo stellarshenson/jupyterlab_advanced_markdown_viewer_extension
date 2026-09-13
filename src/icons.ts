@@ -15,6 +15,7 @@ import {
   caretLeftIcon,
   caretRightIcon,
   closeIcon,
+  copyIcon,
   deleteIcon,
   editIcon,
   LabIcon,
@@ -104,6 +105,9 @@ export const NOTE_ICON: LabIcon = editIcon;
 
 /** The icon of the panel control that adds a note on the document as a whole. */
 export const ADD_ICON: LabIcon = addIcon;
+
+/** Copying the rendered document, in JupyterLab's own copy icon. */
+export const COPY_ICON: LabIcon = copyIcon;
 
 /** The icon of the entry that puts the panel in each state. */
 export const PANEL_ICONS: Record<PanelState, LabIcon> = {

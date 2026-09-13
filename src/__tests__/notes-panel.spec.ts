@@ -1346,6 +1346,179 @@ describe('writing a note', () => {
     expect(field.value).toBe('half a thought');
   });
 
+  describe('a field left empty (ACC-NOTES-159)', () => {
+    /** A control outside the panel, where a click away lands. */
+    let away: HTMLButtonElement;
+
+    beforeEach(() => {
+      away = document.createElement('button');
+      document.body.appendChild(away);
+    });
+
+    afterEach(() => {
+      away.remove();
+    });
+
+    it('cancels the entry when the reader leaves the panel, the mark left as it is', async () => {
+      press(rows()[0], 'Add note');
+      expect(document.activeElement).toBe(panel.node.querySelector('textarea'));
+
+      away.focus();
+      await settle();
+
+      // Nothing written and nothing removed: the mark keeps its row, and the
+      // row offers the note again.
+      expect(panel.node.querySelector('textarea')).toBeNull();
+      expect(asked).toEqual([]);
+      expect(passages()).toEqual(['first passage']);
+      expect(
+        Array.from(rows()[0].querySelectorAll('button')).some(
+          control => control.textContent === 'Add note'
+        )
+      ).toBe(true);
+    });
+
+    it('cancels the entry when the reader leaves the panel from a control of its row', async () => {
+      // The colour dots sit above the field, so a colour picked with the field
+      // open leaves the focus on the row rather than in the field; the click
+      // away that follows is still the reader leaving the entry.
+      press(rows()[0], 'Add note');
+      rows()[0].querySelector<HTMLButtonElement>(`.${DOT_CLASS}`)!.focus();
+      expect(panel.node.querySelector('textarea')).not.toBeNull();
+
+      away.focus();
+      await settle();
+
+      expect(panel.node.querySelector('textarea')).toBeNull();
+      expect(
+        Array.from(rows()[0].querySelectorAll('button')).some(
+          control => control.textContent === 'Add note'
+        )
+      ).toBe(true);
+      expect(asked).toEqual([]);
+    });
+
+    it("cancels the entry when the reader's pointer lands outside the panel", async () => {
+      // A click on text of the preview takes no focus: the browser moves it
+      // to the page body and reports no target, so the pointer is what says
+      // the reader left.
+      press(rows()[0], 'Add note');
+
+      away.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      panel.node.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      await settle();
+
+      expect(panel.node.querySelector('textarea')).toBeNull();
+      expect(asked).toEqual([]);
+    });
+
+    it('keeps the entry when the click lands on a part of the panel that takes no focus', async () => {
+      // The head of a row, the strip of controls and the gaps between rows
+      // take no focus either, and a click there is not the reader leaving.
+      press(rows()[0], 'Add note');
+
+      rows()[0]
+        .querySelector(`.${HEAD_CLASS}`)!
+        .dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      panel.node.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      await settle();
+
+      expect(panel.node.querySelector('textarea')).not.toBeNull();
+    });
+
+    it('keeps the entry, and the row, when a context menu takes the focus', async () => {
+      // A menu opened from a row is an overlay the reader opened there, not
+      // somewhere they went: rows rebuilt under it would take with them the
+      // row Copy mark ID reads the identifier from.
+      press(rows()[0], 'Add note');
+      const menu = document.createElement('div');
+      menu.className = 'lm-Menu';
+      document.body.appendChild(menu);
+
+      menu.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      panel.node.dispatchEvent(
+        new FocusEvent('focusout', { bubbles: true, relatedTarget: menu })
+      );
+      await settle();
+
+      expect(panel.node.querySelector('textarea')).not.toBeNull();
+      menu.remove();
+    });
+
+    it('keeps a draft when the reader leaves the panel', async () => {
+      press(rows()[0], 'Add note');
+      type('half a thought');
+
+      away.focus();
+      await settle();
+
+      expect(
+        panel.node.querySelector<HTMLTextAreaElement>('textarea')!.value
+      ).toBe('half a thought');
+    });
+
+    it('keeps an empty entry while the focus stays inside the panel', async () => {
+      // A click inside the panel must finish on the control it was aimed at,
+      // and rows rebuilt under it would take the click with them.
+      press(rows()[0], 'Add note');
+
+      rows()[0].focus();
+      await settle();
+
+      expect(panel.node.querySelector('textarea')).not.toBeNull();
+    });
+
+    it('cancels an empty entry when another mark is selected', () => {
+      panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+      press(rows()[0], 'Add note');
+
+      panel.selectMark('b');
+
+      expect(panel.node.querySelector('textarea')).toBeNull();
+    });
+
+    it('keeps a draft when another mark is selected', () => {
+      panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+      press(rows()[0], 'Add note');
+      type('half a thought');
+
+      panel.selectMark('b');
+
+      const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
+      expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe(
+        'a'
+      );
+      expect(field.value).toBe('half a thought');
+    });
+
+    it('keeps the entry a rebuild replaced, whose removed field reports the focus leaving', async () => {
+      // A rebuild from disk takes the field the reader is in out and builds it
+      // again with their place in it; the browser reports that removal as a
+      // focus leaving the panel, and it is the panel's own doing, not the
+      // reader's.
+      press(rows()[0], 'Add note');
+      panel.setMarks([item('a', 'first passage')]);
+
+      panel.node.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      await settle();
+
+      expect(panel.node.querySelector('textarea')).not.toBeNull();
+    });
+
+    it('takes an empty document note out with the entry the reader left', async () => {
+      panel.setMarks([documentItem('d'), item('a', 'first passage')]);
+      documentId = 'd';
+      panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!.click();
+      await settle();
+
+      away.focus();
+      await settle();
+
+      expect(asked).toEqual(['document', 'empty document d']);
+      expect(panel.node.querySelector('textarea')).toBeNull();
+    });
+  });
+
   it('puts the focus back in the open document field when the plus is pressed again', async () => {
     panel.setMarks([documentItem('d')]);
     documentId = 'd';
@@ -1388,6 +1561,48 @@ describe('writing a note', () => {
 
     expect(asked).toEqual(['document', 'empty document d']);
     expect(panel.node.querySelector('textarea')).toBeNull();
+  });
+
+  it('keeps the marker of a document note the reader closed rather than cancelled (DEF-NOTES-97)', async () => {
+    // Close is not Cancel: the reader who closed the row chose to keep the
+    // mark, so the entry they left empty takes nothing out of the file.
+    panel.setMarks([documentItem('d'), item('a', 'first passage')]);
+    documentId = 'd';
+    panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!.click();
+    await settle();
+    asked = [];
+    // The parse after Close returns the mark closed, which takes its row out
+    // of the list while the closed marks are hidden.
+    panel.setMarks([
+      item('d', '', {
+        mark: mark('d', {
+          type: 'document',
+          close: null,
+          passage: null,
+          closed: true
+        })
+      }),
+      item('a', 'first passage')
+    ]);
+
+    panel.selectMark('a');
+
+    expect(asked).toEqual([]);
+  });
+
+  it('takes the marker out when the document mark is missing from one parse (DEF-NOTES-97)', async () => {
+    // A mark absent from one parse is the ordinary shape of a streamed
+    // rewrite; the entry the reader left empty still takes its marker with it.
+    panel.setMarks([documentItem('d'), item('a', 'first passage')]);
+    documentId = 'd';
+    panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!.click();
+    await settle();
+    asked = [];
+    panel.setMarks([item('a', 'first passage')]);
+
+    panel.selectMark('a');
+
+    expect(asked).toEqual(['empty document d']);
   });
 
   it('removes the document note left empty by Save and by the field opened on another row', async () => {

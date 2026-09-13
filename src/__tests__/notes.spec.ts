@@ -2667,6 +2667,21 @@ describe('NotesController', () => {
       expect(h.source()).toBe(BARE);
     });
 
+    it('keeps the marker of a closed document mark that holds no note (DEF-NOTES-97)', async () => {
+      // Closing a mark is the reader keeping it: the empty entry they leave
+      // behind takes nothing out of the file. The file is the record a parse
+      // the panel missed cannot take away, so the test is made here.
+      const id = '0d4b0d0a-4a4e-4f6a-9d8c-1d6b0a3c2e11';
+      const closed = `<!-- mark:${id} document status=closed -->\n${BARE}`;
+      const h = open(closed);
+      await ready();
+      h.render(BARE_HTML);
+
+      await h.controller.removeEmptyDocument(id);
+
+      expect(h.source()).toBe(closed);
+    });
+
     it('keeps a document marker a note reached before the removal was written', async () => {
       // The reader cancelled on an empty document note while another writer
       // put a note into the marker: the removal reads the file it writes over.

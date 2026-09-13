@@ -541,6 +541,22 @@ describe('LiveViewController', () => {
       expect(decorationCount(root)).toBe(0);
     });
 
+    it('completes the typing on the spot when the copy asks for it (ACC-COPY-160)', () => {
+      // Copy Content reads the rendered view, and the view holds half a word
+      // while a change is being typed in.
+      const addition = 'x'.repeat(40);
+      render('<p>alpha</p>');
+      applied();
+      render(`<p>alpha</p>\n<p>${addition}</p>`);
+      jest.advanceTimersByTime(20);
+      expect(addedText(root)[0].length).toBeLessThan(40);
+
+      controller.completeTyping();
+
+      expect(addedText(root)).toEqual([addition]);
+      expect(typingCount(root)).toBe(0);
+    });
+
     it('lands the change at once when the animation is turned off', () => {
       setup({ animation: false });
       render('<p>alpha</p>');
@@ -742,6 +758,19 @@ describe('LiveViewController', () => {
       expect(ghostText(root)).toBe('beta ');
       jest.advanceTimersByTime(1);
       expect(decorationCount(root)).toBe(0);
+    });
+
+    it('leaves a removal ghost in its warning hold when the copy completes the typing (ACC-COPY-160)', () => {
+      // Completing the typing for the copy must not take the struck text off
+      // the reader's screen: the ghost holds and fades in its own time.
+      render('<p>alpha beta gamma</p>');
+      applied();
+      render('<p>alpha gamma</p>');
+      jest.advanceTimersByTime(100);
+
+      controller.completeTyping();
+
+      expect(ghostText(root)).toBe('beta ');
     });
 
     it('deletes a paragraph removed before a heading from the block before it', () => {

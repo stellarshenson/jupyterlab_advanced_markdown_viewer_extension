@@ -11,6 +11,7 @@
  */
 
 import { Clipboard } from '@jupyterlab/apputils';
+import { MimeData } from '@lumino/coreutils';
 import { Signal } from '@lumino/signaling';
 import { BoxLayout, Widget } from '@lumino/widgets';
 
@@ -683,10 +684,11 @@ describe('the plugin', () => {
       ).toBe('beta gamma');
     });
 
-    it('lists the mark-selection and the panel commands in the palette, and no document note', async () => {
+    it('lists the mark-selection, the copy and the panel commands in the palette, and no document note', async () => {
       const lab = await start(SOURCE);
       expect(lab.palette).toEqual([
         { command: COMMANDS.markSelection, category: 'Markdown Viewer' },
+        { command: COMMANDS.copyContent, category: 'Markdown Viewer' },
         {
           command: COMMANDS.panel,
           args: { state: 'expanded' },
@@ -811,7 +813,7 @@ describe('the plugin', () => {
   });
 
   describe('the context menu', () => {
-    it('offers a Mark submenu of the six colours, the note and the three states', async () => {
+    it('offers a Mark submenu of the six colours, the note, the copy and the three states', async () => {
       const lab = await start(SOURCE);
       expect(
         lab.menu.map(item => [
@@ -822,6 +824,7 @@ describe('the plugin', () => {
       ).toEqual([
         ['submenu', undefined, undefined],
         ['command', COMMANDS.addNote, undefined],
+        ['command', COMMANDS.copyContent, undefined],
         ['command', COMMANDS.panel, 'expanded'],
         ['command', COMMANDS.panel, 'minimap'],
         ['command', COMMANDS.panel, 'hidden'],
@@ -878,6 +881,45 @@ describe('the plugin', () => {
       lab.openedOver(lab.widget.rendered);
       expect(lab.commands.isVisible(COMMANDS.copyMarkId)).toBe(false);
       await lab.commands.execute(COMMANDS.copyMarkId);
+      expect(copied).toHaveBeenCalledTimes(1);
+    });
+
+    it('copies the rendered document as basic HTML and as text (ACC-COPY-160)', async () => {
+      const lab = await start(MARKED);
+      lab.widget.render(MARKED_HTML);
+      const copied = Clipboard.copyToSystem as jest.Mock;
+      copied.mockClear();
+
+      lab.openedOver(lab.widget.rendered);
+      await lab.commands.execute(COMMANDS.copyContent);
+
+      expect(copied).toHaveBeenCalledTimes(1);
+      const data = copied.mock.calls[0][0] as MimeData;
+      expect(data.types().sort()).toEqual(['text/html', 'text/plain']);
+      const html = data.getData('text/html') as string;
+      // The words of the marked passage, none of the paint they carry.
+      expect(html).toContain('beta gamma');
+      expect(html).not.toContain('class=');
+      expect(html).not.toContain('jp-AdvancedMd');
+      expect(data.getData('text/plain')).not.toContain('<');
+      // The copy reads the rendered view and changes nothing in it.
+      expect(lab.widget.rendered.querySelectorAll('[data-mark]')).toHaveLength(
+        1
+      );
+    });
+
+    it('copies the document while the marks and notes are switched off', async () => {
+      // The copy is not one of the notes: it reads the rendered view and
+      // writes nothing, so the setting that hides the marks leaves it alone.
+      const lab = await start(SOURCE, { notes: false });
+      lab.widget.render(HTML);
+      const copied = Clipboard.copyToSystem as jest.Mock;
+      copied.mockClear();
+
+      lab.openedOver(lab.widget.rendered);
+      expect(lab.commands.isEnabled(COMMANDS.copyContent)).toBe(true);
+      await lab.commands.execute(COMMANDS.copyContent);
+
       expect(copied).toHaveBeenCalledTimes(1);
     });
 

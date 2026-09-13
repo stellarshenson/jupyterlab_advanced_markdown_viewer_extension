@@ -798,7 +798,8 @@ export class NotesController implements IDisposable {
    * Remove a document marker that holds no note, which is what the plus wrote
    * for a note the reader then left without writing. The test runs inside the
    * edit, on the source of each attempt, so a note another writer put into the
-   * marker meanwhile keeps it.
+   * marker meanwhile keeps it, and so does a mark the reader closed, since
+   * closing it is them keeping it (DEF-NOTES-97).
    */
   async removeEmptyDocument(id: string): Promise<void> {
     await this._refresh();
@@ -807,7 +808,11 @@ export class NotesController implements IDisposable {
     }
     await this._write(current => {
       const found = parseMarks(current).find(each => each.id === id);
-      if (found?.type !== DOCUMENT_TYPE || found.notes.length > 0) {
+      if (
+        found?.type !== DOCUMENT_TYPE ||
+        found.closed ||
+        found.notes.length > 0
+      ) {
         return [];
       }
       return [found.open, found.close]

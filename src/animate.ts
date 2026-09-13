@@ -222,6 +222,24 @@ export class ChangeAnimator {
   }
 
   /**
+   * Put the added text of every run in at once: a reader who copies the
+   * document while a change is being typed in takes the whole change and not
+   * the half of it the frame happens to hold (ACC-COPY-160). A removal ghost
+   * keeps its own warning hold and its fade, since the copy leaves it out
+   * either way and taking it off the screen would be the copy changing what
+   * the reader is watching.
+   */
+  finish(): void {
+    for (const run of this._runs) {
+      if (run.done || run.kind !== 'added') {
+        continue;
+      }
+      run.shown = run.text.length;
+      this._write(run);
+    }
+  }
+
+  /**
    * Stop and forget the runs, when the fade they belong to is over.
    */
   clear(): void {

@@ -262,6 +262,15 @@ export class LiveViewController implements IDisposable {
   }
 
   /**
+   * Put a change that is still being typed in at its end at once. Copy Content
+   * reads the rendered view, and the view holds half a word while the
+   * animation runs (ACC-COPY-160).
+   */
+  completeTyping(): void {
+    this._animator.finish();
+  }
+
+  /**
    * Apply changed settings without reopening the document.
    */
   updateSettings(settings: ILiveViewSettings): void {

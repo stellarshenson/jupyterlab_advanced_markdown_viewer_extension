@@ -2,6 +2,24 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.10] - 2026-09-13
+
+A Copy Content entry puts the rendered document on the clipboard as basic HTML, and a note entry left empty is cancelled when the reader clicks away.
+
+### Added
+
+- Copy Content, in the preview's context menu and in the command palette: the whole rendered document goes on the clipboard as HTML carrying the tags and the words alone, with no class, no style, no identifier and none of the colours the theme or this extension paint with, so a paste into a mail client arrives as headings, paragraphs, lists, tables, links, images and code and nothing else
+- The same copy carries the words a second time as plain text, for a target that takes no HTML
+
+### Changed
+
+- A note entry the reader typed nothing into is cancelled when they click away from the notes panel or select another mark, leaving the marking in place; an entry holding typed text stands until they save or cancel it
+- A copy taken while an external change is still typing in carries the finished text: the typing completes on the spot, and a removal ghost keeps its hold
+
+### Fixed
+
+- An empty note on the document as a whole keeps or removes its marker by what the reader did rather than by what the panel's latest parse listed: a marker on a mark they closed is kept, and one whose mark a single parse of a streamed rewrite missed is still taken out
+
 ## [1.0.9] - 2026-09-12
 
 An external change now merges around unsaved edits instead of waiting for them, the typing animation carries a jitter, and marks gained a status, an identifier copy and a table-safe form.

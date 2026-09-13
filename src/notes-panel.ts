@@ -191,6 +191,17 @@ export interface INotesPanelHandlers {
 }
 
 /**
+ * The note being written: the mark it stands on, what the field holds, and
+ * what the mark was when the reader opened it, which is what leaving the
+ * entry acts on (DEF-NOTES-97).
+ */
+interface IEntry {
+  id: string;
+  text: string;
+  wholeDocument: boolean;
+}
+
+/**
  * How a panel is built.
  */
 export interface INotesPanelOptions {
@@ -482,6 +493,13 @@ export class NotesPanel extends Widget {
     }
     this._selected = id;
     this._open.add(id);
+    // A field the reader opened on another mark and typed nothing into closes
+    // as they move to this one, the way leaving the panel closes it
+    // (ACC-NOTES-159). _openEntry drops it too, for the field that opens in
+    // its place; this catches the row that is only selected.
+    if (this._entry && this._entry.id !== id && !this._entry.text.trim()) {
+      this._closeEntry();
+    }
     if (openNote) {
       this._openEntry(id);
     }
@@ -527,6 +545,58 @@ export class NotesPanel extends Widget {
     this._grow?.();
   }
 
+  /** Listen for the two shapes of the reader leaving a note entry. */
+  protected onAfterAttach(msg: Message): void {
+    super.onAfterAttach(msg);
+    this.node.addEventListener('focusout', this);
+    document.addEventListener('pointerdown', this, true);
+  }
+
+  protected onBeforeDetach(msg: Message): void {
+    this.node.removeEventListener('focusout', this);
+    document.removeEventListener('pointerdown', this, true);
+    super.onBeforeDetach(msg);
+  }
+
+  /**
+   * The two shapes of the reader leaving a note entry they never began: their
+   * pointer landing outside the panel, and the focus moving to something
+   * outside it, which is how the keyboard leaves.
+   *
+   * A focus that lands nowhere is neither. The panel rebuilds its rows on
+   * every render and the focus comes off the node the rebuild removes, which
+   * the browser reports exactly as it reports a click on a part of the panel
+   * that takes no focus - the gap between two rows, a row's own head. The
+   * pointer says where the reader went and the focus alone cannot.
+   */
+  handleEvent(event: Event): void {
+    const inside =
+      event.type === 'pointerdown'
+        ? event.target
+        : (event as FocusEvent).relatedTarget;
+    if (
+      inside instanceof Node &&
+      (this.node.contains(inside) ||
+        // A menu is an overlay the reader opened from the panel, not
+        // somewhere they went; rows rebuilt under it would take away the row
+        // the menu was opened on, which Copy mark ID reads its mark from.
+        (inside instanceof Element && inside.closest('.lm-Menu')))
+    ) {
+      return;
+    }
+    if (event.type !== 'pointerdown' && !(inside instanceof Node)) {
+      return;
+    }
+    // A field the reader opened, typed nothing into and then left behind is a
+    // note they never began: it closes as Cancel closes it, the mark standing
+    // as it is (ACC-NOTES-159). A draft is theirs to come back to and stays.
+    if (!this._entry || this._entry.text.trim() !== '') {
+      return;
+    }
+    this._closeEntry();
+    this._render();
+  }
+
   /**
    * A click on the marked passage: the row opens, and the note entry with it
    * only on a mark that holds no note yet (ACC-NOTES-153). A mark that has a
@@ -561,11 +631,20 @@ export class NotesPanel extends Widget {
           item.mark.id === held.id && (this._showClosed || !item.mark.closed)
       )
         ? held
-        : { id, text: '' };
+        : {
+            id,
+            text: '',
+            // What the entry stands on is read here and not at its close:
+            // a parse that does not list the mark must not change what
+            // leaving the entry does (DEF-NOTES-97).
+            wholeDocument:
+              this._items.find(item => item.mark.id === id)?.mark.type ===
+              DOCUMENT_TYPE
+          };
     // A field left empty for another row's field is closed as Cancel closes
     // it.
     if (this._entry && this._entry.id !== entry.id) {
-      this._closeEntry(this._entry.id);
+      this._closeEntry();
     }
     this._entry = entry;
     this._open.add(entry.id);
@@ -575,18 +654,23 @@ export class NotesPanel extends Widget {
   }
 
   /**
-   * Close the note entry on a mark without writing a note.
+   * Close the open note entry without writing a note.
    *
    * A document note that holds no note goes with the entry: the plus wrote its
    * marker for the note the reader has now left, and a document marker holds
    * nothing else. A passage mark stays, since its colour still marks the
-   * passage.
+   * passage, and so does a document mark the reader closed, since closing it
+   * is them keeping it (DEF-NOTES-97).
    */
-  private _closeEntry(id: string): void {
+  private _closeEntry(): void {
+    const entry = this._entry;
     this._entry = null;
-    const mark = this._items.find(item => item.mark.id === id)?.mark;
-    if (mark?.type === DOCUMENT_TYPE && mark.notes.length === 0) {
-      this._handlers.removeEmptyDocument(id);
+    if (!entry?.wholeDocument) {
+      return;
+    }
+    const mark = this._items.find(item => item.mark.id === entry.id)?.mark;
+    if (!mark?.closed && !mark?.notes.length) {
+      this._handlers.removeEmptyDocument(entry.id);
     }
   }
 
@@ -881,7 +965,7 @@ export class NotesPanel extends Widget {
       const entry = this._entry?.id === mark.id ? this._entry : null;
       row.appendChild(this._controls(mark, entry === null));
       if (entry) {
-        row.appendChild(this._form(mark.id, entry.text));
+        row.appendChild(this._form(entry));
       }
     }
     return row;
@@ -943,7 +1027,7 @@ export class NotesPanel extends Widget {
    * front of the reader, beside the row's unanchored line, rather than
    * dropped.
    */
-  private _form(id: string, draft: string): HTMLElement {
+  private _form(entry: IEntry): HTMLElement {
     const form = document.createElement('div');
     form.className = FORM_CLASS;
     const text = document.createElement('textarea');
@@ -953,7 +1037,7 @@ export class NotesPanel extends Widget {
     // The browser's own menu (paste, spelling) stays inside the field;
     // JupyterLab honours this attribute (ACC-NOTES-157).
     text.setAttribute('data-jp-suppress-context-menu', '');
-    text.value = draft;
+    text.value = entry.text;
     // The box follows its content: the inline height is cleared, so the four
     // rows set the floor, then set to what the content needs plus the border
     // (ACC-NOTES-152). A scroll height is never below the client height, so
@@ -969,7 +1053,7 @@ export class NotesPanel extends Widget {
     };
     this._grow = grow;
     text.addEventListener('input', () => {
-      this._entry = { id, text: text.value };
+      this._entry = { ...entry, text: text.value };
       grow();
     });
     // A restored draft is measured once the form is in the document.
@@ -982,7 +1066,7 @@ export class NotesPanel extends Widget {
     // form's main action is expected.
     buttons.appendChild(
       button(BUTTON_CLASS, 'Cancel', 'Cancel this note', () => {
-        this._closeEntry(id);
+        this._closeEntry();
         this._render();
       })
     );
@@ -990,12 +1074,12 @@ export class NotesPanel extends Widget {
       button(BUTTON_CLASS, 'Save', 'Save this note', () => {
         const written = text.value.trim();
         if (!written) {
-          this._closeEntry(id);
+          this._closeEntry();
           this._render();
           return;
         }
-        void this._handlers.addNote(id, written).then(saved => {
-          if (saved && this._entry?.id === id) {
+        void this._handlers.addNote(entry.id, written).then(saved => {
+          if (saved && this._entry?.id === entry.id) {
             this._entry = null;
           }
           this._render();
@@ -1071,7 +1155,7 @@ export class NotesPanel extends Widget {
   private _items: INotesPanelItem[] = [];
   private _state: PanelState;
   private _selected: string | null = null;
-  private _entry: { id: string; text: string } | null = null;
+  private _entry: IEntry | null = null;
   private _grow: (() => void) | null = null;
   private _showClosed = false;
   private _showClosedControl: HTMLButtonElement;

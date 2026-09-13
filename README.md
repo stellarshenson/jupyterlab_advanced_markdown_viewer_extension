@@ -19,6 +19,7 @@ See the changes an AI agent, or any other program, makes to a Markdown file as i
 - **Unsaved edits are kept** - a change from disk lands around your unsaved edits; where it overlaps or sits right beside them your text stands and the tab shows a red square; when the part that is dropped adds or removes a code fence or an HTML comment marker, such as a mark, none of the change is shown; save to keep your version, or choose File, Reload Markdown File from Disk to take the file's
 - **Mark and note while the agent writes** - six colours, notes on a passage or on the whole document, all listed beside the preview
 - **Notes are stored in the file** - as HTML comments that other Markdown renderers do not show; a note line an agent adds appears in the thread
+- **Copy the document for an email** - **Copy Content** in the preview's context menu puts the rendered document on the clipboard as basic HTML, without the theme's colours, the marks' paint or any styling
 
 ## Screenshots
 
@@ -38,6 +39,7 @@ Notes beside the preview: a note on the whole document, then three marked passag
 - Select a passage in the preview, right-click and pick a colour under **Mark**; or select with caret browsing (F7) and press Ctrl Shift M (Cmd Shift M on macOS). Choose **Add note** to mark and write a note in one step
 - Press the plus in the notes panel header for a note on the document as a whole; the panel is shown from the badge at the top right of the preview or from Show notes in the context menu. The context menu and the palette offer no entry for the document note itself
 - Click a row in the panel to reveal its passage and open its notes, colours and removal control; the caret at the header's left edge collapses the panel to a strip of ticks, the cross hides it. With the panel hidden, the notes badge at the top right of the preview brings it back
+- Right-click the preview and choose **Copy Content** to put the whole rendered document on the clipboard as basic HTML: headings, lists, tables, links and code, with no colours or styling, ready to paste into an email. The same entry is in the command palette
 
 ## Limitations
 

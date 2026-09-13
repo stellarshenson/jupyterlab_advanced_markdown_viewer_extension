@@ -452,8 +452,8 @@ test.describe('marking a passage', () => {
   }) => {
     await openMenu(page, await select(page, P1));
     // Every entry this extension offers: the Mark entry opening the submenu,
-    // Add note, the two panel states the panel is not in, and the six
-    // colours inside the submenu; the document note has no entry
+    // Add note, Copy Content, the two panel states the panel is not in, and
+    // the six colours inside the submenu; the document note has no entry
     // (ACC-NOTES-139).
     await expect(
       entry(page, 'Mark').locator('.lm-Menu-itemIcon svg')
@@ -462,7 +462,7 @@ test.describe('marking a passage', () => {
     const ours = page.locator(
       '.lm-Menu-item[data-command^="advanced-markdown-viewer:"]:not(.lm-mod-hidden)'
     );
-    await expect(ours).toHaveCount(9);
+    await expect(ours).toHaveCount(10);
     const count = await ours.count();
     for (let i = 0; i < count; i++) {
       await expect(ours.nth(i).locator('.lm-Menu-itemIcon svg')).toHaveCount(1);
@@ -1348,6 +1348,48 @@ test.describe('marking a passage', () => {
     );
     expect(new Set(closingIds(text))).toEqual(new Set(openingIds(text)));
     await expect(rows(page)).toHaveCount(2);
+  });
+
+  test('ACC-NOTES-159 cancels a note entry left empty when the reader clicks away, and keeps one they have written in', async ({
+    page,
+    tmpPath
+  }) => {
+    await mark(page, P1);
+    await mark(page, P2);
+    await expect(rows(page)).toHaveCount(2);
+    const form = page.locator('.jp-AdvancedMd-notesForm textarea');
+
+    // A click on a bare mark opens its note entry; a click back into the
+    // preview with nothing typed cancels it, and the mark stays as it was.
+    await painted(page).first().click();
+    await expect(form).toHaveCount(1);
+    await page.locator('.jp-RenderedMarkdown:visible p').last().click();
+    await expect(form).toHaveCount(0);
+    await expect(painted(page)).toHaveCount(2);
+    await expect(rows(page)).toHaveCount(2);
+    await expect(panelButton(page, 'Add note')).toBeVisible();
+    const text = fileText(`${tmpPath}/${FILE}`);
+    // The whole marker on one line is what says it carries no note.
+    expect(text).toContain(
+      `${opening(openingIds(text)[0])}${P1}${closing(openingIds(text)[0])}`
+    );
+
+    // The click that carries the reader away still lands: the row it was
+    // aimed at is selected, and the entry left empty is gone.
+    await painted(page).first().click();
+    await expect(form).toHaveCount(1);
+    await rows(page).nth(1).locator('.jp-AdvancedMd-notesHead').click();
+    await expect(rows(page).nth(1)).toHaveClass(
+      /jp-AdvancedMd-notesRow-selected/
+    );
+    await expect(form).toHaveCount(0);
+
+    // A note the reader has written in is theirs to come back to: clicking
+    // away leaves the draft where it is.
+    await painted(page).first().click();
+    await form.fill('half a thought');
+    await page.locator('.jp-RenderedMarkdown:visible p').last().click();
+    await expect(form).toHaveValue('half a thought');
   });
 
   test('DEF-NOTES-91 lets the mouse select text inside a marked passage', async ({

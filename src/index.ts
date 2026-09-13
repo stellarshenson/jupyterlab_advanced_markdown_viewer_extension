@@ -29,11 +29,19 @@ import {
   MarkdownDocument
 } from '@jupyterlab/markdownviewer';
 import { Clipboard, ICommandPalette } from '@jupyterlab/apputils';
+import { MimeData } from '@lumino/coreutils';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { Menu } from '@lumino/widgets';
 
 import { ChangeChannel } from './channel';
-import { MARK_ICONS, MARK_MENU_ICON, NOTE_ICON, PANEL_ICONS } from './icons';
+import { copiedContent } from './content';
+import {
+  COPY_ICON,
+  MARK_ICONS,
+  MARK_MENU_ICON,
+  NOTE_ICON,
+  PANEL_ICONS
+} from './icons';
 import {
   DEFAULT_SETTINGS,
   HIGHLIGHT_VISIBILITIES,
@@ -78,7 +86,9 @@ export const COMMANDS = {
   /** Put the notes panel into the state named by the `state` argument. */
   panel: 'advanced-markdown-viewer:notes-panel',
   /** Copy the identifier of the mark whose panel row the menu was opened on. */
-  copyMarkId: 'advanced-markdown-viewer:copy-mark-id'
+  copyMarkId: 'advanced-markdown-viewer:copy-mark-id',
+  /** Copy the rendered document as basic HTML, for a mail client. */
+  copyContent: 'advanced-markdown-viewer:copy-content'
 };
 
 /**
@@ -301,16 +311,12 @@ const plugin: JupyterFrontEndPlugin<void> = {
     /**
      * The preview a command acts on: the one the context menu was opened
      * over, else the one in front, which a right click or a Tab focused.
-     * Null while the feature is off.
      *
      * The hit test walks up from the node the menu was opened over, and a
      * render between the menu and the choice replaces that node, so the walk
      * then reaches no preview; the preview in front is the same one.
      */
-    const target = (): IAttachment | null => {
-      if (!current.notes) {
-        return null;
-      }
+    const preview = (): IAttachment | null => {
       const node = app.contextMenuHitTest(candidate =>
         candidate.classList.contains(RENDERED_CLASS)
       );
@@ -325,6 +331,14 @@ const plugin: JupyterFrontEndPlugin<void> = {
       const widget = found?.widget ?? tracker.currentWidget;
       return (widget && attachments.get(widget)) ?? null;
     };
+
+    /**
+     * The same preview for the marks and the notes, which are offered only
+     * while they are switched on. The copy is not one of them: it reads the
+     * rendered view and writes nothing, so it stands whatever the setting
+     * says (ACC-COPY-160).
+     */
+    const target = (): IAttachment | null => (current.notes ? preview() : null);
 
     /**
      * The preview to mark, for the commands that need a selection: the
@@ -388,6 +402,32 @@ const plugin: JupyterFrontEndPlugin<void> = {
       }
     });
 
+    // The browser's own copy carries the theme's colours and this extension's
+    // paint into the email written from it; this one carries the tags and the
+    // words alone (ACC-COPY-160).
+    app.commands.addCommand(COMMANDS.copyContent, {
+      label: 'Copy Content',
+      icon: COPY_ICON,
+      isEnabled: () => preview() !== null,
+      execute: () => {
+        const attachment = preview();
+        // A change still being typed in holds half a word in the view, and the
+        // copy reads the view (ACC-COPY-160).
+        attachment?.live.completeTyping();
+        const root = attachment?.widget.node.querySelector<HTMLElement>(
+          `.${RENDERED_CLASS}`
+        );
+        if (!root) {
+          return;
+        }
+        const copied = copiedContent(root);
+        const data = new MimeData();
+        data.setData('text/html', copied.html);
+        data.setData('text/plain', copied.text);
+        Clipboard.copyToSystem(data);
+      }
+    });
+
     app.commands.addCommand(COMMANDS.panel, {
       label: args => {
         const state = args.state as PanelState;
@@ -409,6 +449,10 @@ const plugin: JupyterFrontEndPlugin<void> = {
     // must list the command to be found, so it greys it instead.
     palette?.addItem({
       command: COMMANDS.markSelection,
+      category: 'Markdown Viewer'
+    });
+    palette?.addItem({
+      command: COMMANDS.copyContent,
       category: 'Markdown Viewer'
     });
     // The panel has no toolbar item, so the palette is the route to it that
@@ -440,6 +484,11 @@ const plugin: JupyterFrontEndPlugin<void> = {
       command: COMMANDS.addNote,
       selector: CONTEXT_SELECTOR,
       rank: 20
+    });
+    app.contextMenu.addItem({
+      command: COMMANDS.copyContent,
+      selector: CONTEXT_SELECTOR,
+      rank: 25
     });
     PANEL_ORDER.forEach((state, index) => {
       app.contextMenu.addItem({
