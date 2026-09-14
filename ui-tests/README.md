@@ -165,3 +165,32 @@ cd ./ui-tests
 jlpm up "@playwright/test"
 jlpm playwright install
 ```
+
+## Waiting
+
+A test may wait for a condition. It must never race a production window.
+
+A fixed sleep standing in for something that is observable is the defect this rule exists
+for: it fails when the machine is loaded, it is slow when the machine is not, and the
+failure says nothing about the behaviour under test. Wait for the condition instead -
+`expect(locator)`, `expect.poll(...)`, `page.waitForFunction` - all of which converge as
+fast as the machine allows and cannot be outrun by load.
+
+Three shapes, and what each one must do:
+
+- **Waiting for something to happen** - wait for it, never for a duration long enough to
+  contain it
+- **Separating two stimuli that must land inside a window** - set the window, never hope
+  about the gap. A sleep names a floor and never a ceiling, so a 50 ms gap against a 100 ms
+  window is decided by the load and not by the code. Where the window is a plugin setting,
+  `settings({ ... })` sets it; where it is a server constant, pytest reaches it with
+  `monkeypatch.setattr`
+- **Waiting to show that something did not happen** - a duration is the only way, since a
+  non-event cannot be waited for. Derive it from the window the mechanism itself uses, say
+  in a comment which window that is, and keep it far enough past it that the answer does
+  not turn on the machine
+
+Where a layer cannot reach the window it would have to race - a browser test against a
+server constant - the timing claim belongs to the layer that can set it, and the browser
+case asserts the settled state, which no gap can change. `events.spec.ts` 'settles on the
+last write of a burst' and `test_routes.py` `test_burst_writes_coalesce` are that split.

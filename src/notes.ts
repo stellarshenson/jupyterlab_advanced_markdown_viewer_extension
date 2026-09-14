@@ -35,6 +35,7 @@ import {
   IRenderedRange,
   ISourceScan,
   passageToRendered,
+  renderedToDomRange,
   renderedToSource,
   renderedWords,
   selectionOffsets,
@@ -1067,7 +1068,12 @@ export class NotesController implements IDisposable {
    * Only while nothing but the page or the viewer holds the focus: adding a
    * range while a textarea is focused keeps the focus there but resets its
    * caret, so a reader typing a note is left alone and the record stays for
-   * the next render.
+   * the next render. An open context menu is the exception, since it holds the
+   * focus itself from the right-click until the moment it runs the command -
+   * and Copy Content is only ever chosen while it stands, so a render or a
+   * fade landing under an open menu would otherwise leave the reader's
+   * selection gone with nothing to put it back (DEF-COPY-106, DEF-COPY-107). A
+   * menu has no caret of its own for the range to disturb.
    */
   private _restoreSelection(): void {
     const record = this._selection;
@@ -1076,27 +1082,21 @@ export class NotesController implements IDisposable {
       return;
     }
     const active = document.activeElement;
-    if (active !== document.body && active !== this._widget.content.node) {
+    if (
+      active !== document.body &&
+      active !== this._widget.content.node &&
+      !(active instanceof Element && active.closest('.lm-Menu'))
+    ) {
       return;
     }
     const selection = window.getSelection();
     if (!selection) {
       return;
     }
-    const { spans } = captureText(root);
-    const first = spans.find(span => span.end > record.start);
-    let last: ITextSnapshot['spans'][number] | null = null;
-    for (const span of spans) {
-      if (span.start < record.end) {
-        last = span;
-      }
-    }
-    if (!first || !last) {
+    const range = renderedToDomRange(record, root);
+    if (!range) {
       return;
     }
-    const range = document.createRange();
-    range.setStart(first.node, Math.max(record.start - first.start, 0));
-    range.setEnd(last.node, Math.min(record.end, last.end) - last.start);
     selection.removeAllRanges();
     selection.addRange(range);
   }

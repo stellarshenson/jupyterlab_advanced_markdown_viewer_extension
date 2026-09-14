@@ -302,6 +302,33 @@ describe('ChangeAnimator', () => {
       expect(root.querySelectorAll(`.${TYPING_CLASS}`).length).toBe(0);
     });
 
+    it('leaves a selection inside the typed text where the reader put it (DEF-COPY-102)', () => {
+      // Writing the whole value into a text node moves every live range
+      // boundary inside it to the front, which is how the reader's selection
+      // disappears while an agent is still typing.
+      const root = render('<p>The quick brown fox jumps over the lazy dog</p>');
+      const created = decorateFrom(root, '');
+      animator.start(created, 100);
+      // Let enough text arrive to select inside.
+      for (let t = 0; t < 200; t += 16) {
+        jest.advanceTimersByTime(16);
+      }
+      const node = root.querySelector(`.${ADDED_CLASS}`)?.firstChild as Text;
+      expect(node.data.length).toBeGreaterThan(6);
+      const range = (globalThis as any).Document.prototype.createRange.call(
+        document
+      ) as Range;
+      range.setStart(node, 4);
+      range.setEnd(node, 6);
+      const held = range.toString();
+
+      jest.advanceTimersByTime(16);
+
+      expect(range.startOffset).toBe(4);
+      expect(range.endOffset).toBe(6);
+      expect(range.toString()).toBe(held);
+    });
+
     it('takes as long as a plain paragraph of the same length', () => {
       const plain = render(
         '<p>The quick brown fox jumps over the lazy dog</p>'

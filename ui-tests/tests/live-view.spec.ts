@@ -783,10 +783,17 @@ test.describe('the reader position', () => {
     await expect(page.locator('.jp-AdvancedMd-added').first()).toBeAttached({
       timeout: 20000
     });
-    await page.waitForTimeout(1500);
-
     // A change renders twice: at once when it is applied, and again when the
-    // viewer's own render timeout runs; the stand-in fires on both.
+    // viewer's own render timeout runs; the stand-in fires on both. This
+    // waits for the second rather than for a duration chosen to contain it.
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__anchorScrolls))
+      .toBe(2);
+    // A third render is a non-event, and only a duration can show one did not
+    // come: past the viewer's own render timeout of 1000 ms and the stand-in's
+    // 100 ms delay, with margin. The position is read after it, so a late
+    // scroll would be in the number this compares.
+    await page.waitForTimeout(1500);
     expect(await page.evaluate(() => (window as any).__anchorScrolls)).toBe(2);
     const after = await previewScrollTop(page);
     expect(Math.abs(after - before)).toBeLessThan(50);
@@ -1223,8 +1230,12 @@ test.describe('the highlight colours in each theme', () => {
     await expect(page.locator('.jp-AdvancedMd-added').first()).toBeVisible({
       timeout: 20000
     });
-    // Past the 500 ms rise, so the colour read is the settled one.
-    await page.waitForTimeout(800);
+    // The rise takes 500 ms and load can stretch it, so this waits for the
+    // settled alpha rather than for a duration chosen to contain the rise;
+    // the colour read after it is the settled one.
+    await expect
+      .poll(async () => (await highlightAlphas(page)).added)
+      .toBeCloseTo(0.35, 2);
 
     const light = await readHighlight(page);
     await page.theme.setDarkTheme();
@@ -1308,7 +1319,10 @@ test.describe('a change inside a fenced code block', () => {
       '.jp-RenderedMarkdown pre code .jp-AdvancedMd-added'
     );
     await expect(added.first()).toBeVisible({ timeout: 20000 });
-    // Both renders of the change are over.
+    // Both renders of the change are over: past the viewer's own 1000 ms
+    // render timeout, which is when the block is rebuilt, with margin. At the
+    // animation speed of 0 this describe uses, the text lands whole at apply,
+    // so waiting for it would return before the render this case survives.
     await page.waitForTimeout(2000);
     expect((await added.allTextContents()).join('')).toContain('33');
 
@@ -1442,11 +1456,13 @@ test.describe('the strength of the change highlights', () => {
     await expect(page.locator('.jp-AdvancedMd-removed').first()).toBeVisible({
       timeout: 20000
     });
-    // Past the 500 ms rise, so the colour read is the settled one.
-    await page.waitForTimeout(800);
+    // The rise takes 500 ms and load can stretch it, so this waits for the
+    // settled value itself rather than for a duration chosen to contain it.
+    await expect
+      .poll(async () => (await highlightAlphas(page)).added)
+      .toBeCloseTo(0.35, 2);
 
     const light = await highlightAlphas(page);
-    expect(light.added).toBeCloseTo(0.35, 2);
     expect(light.removed).toBeCloseTo(0.31, 2);
 
     await page.theme.setDarkTheme();

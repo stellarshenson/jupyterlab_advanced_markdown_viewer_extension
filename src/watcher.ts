@@ -363,6 +363,9 @@ export class FileWatcher implements IDisposable {
    */
   private _onSaveState(_: unknown, state: DocumentRegistry.SaveState): void {
     if (state === 'completed') {
+      // Counted so a read already in flight can tell that the file moved
+      // under it while it waited (DEF-APPLY-101).
+      this._saves += 1;
       this._shadow = this._context.model.toString();
       this._record(this._context.contentsModel);
       this._release();
@@ -531,6 +534,11 @@ export class FileWatcher implements IDisposable {
     ) {
       return;
     }
+    // A save completing while this read is in flight leaves it holding the
+    // bytes from before that save, and applying those would put the reader's
+    // just-saved text back to what it was (DEF-APPLY-101). The count says so
+    // without any assumption about which of the two lands first.
+    const saves = this._saves;
     let full: Contents.IModel;
     try {
       full = await this._contents.get(this._path, {
@@ -546,7 +554,7 @@ export class FileWatcher implements IDisposable {
       this._blocked.emit('missing');
       return;
     }
-    if (this._disposed || !this._enabled) {
+    if (this._disposed || !this._enabled || this._saves !== saves) {
       return;
     }
     // The Context holds a CRLF or CR file as LF and puts the line ending
@@ -711,6 +719,9 @@ export class FileWatcher implements IDisposable {
   private _contents: Contents.IManager;
   private _channel: ChangeChannel;
   private _path = '';
+  /** Saves this session has completed, so a read can tell the file moved. */
+  private _saves = 0;
+
   private _shadow: string | null;
   private _inFlight: Promise<void> | null = null;
   private _again = false;

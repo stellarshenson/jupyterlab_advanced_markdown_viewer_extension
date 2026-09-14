@@ -367,13 +367,51 @@ function select(root: HTMLElement, from: string, to: string): void {
   const range: ISelectionRange & {
     commonAncestorContainer: Node;
     toString(): string;
+    cloneContents(): DocumentFragment;
   } = {
     startContainer: start.node,
     startOffset: start.offset,
     endContainer: end.node,
     endOffset: end.offset,
-    commonAncestorContainer: root,
-    toString: () => 'selected'
+    commonAncestorContainer: start.node === end.node ? start.node : root,
+    toString: () => 'selected',
+    // The browser's own range is what the copy clones from; jest's DOM has no
+    // working Range, so the fake one carries an extraction of its own. What it
+    // produces is judged in the browser, by the Galata case for DEF-COPY-99.
+    cloneContents: () => {
+      const fragment = document.createDocumentFragment();
+      if (start!.node === end!.node) {
+        fragment.appendChild(
+          document.createTextNode(
+            (start!.node.nodeValue ?? '').slice(start!.offset, end!.offset)
+          )
+        );
+        return fragment;
+      }
+      let inside = false;
+      for (const node of textNodes(root)) {
+        inside = inside || node === start!.node;
+        if (!inside) {
+          continue;
+        }
+        const value = node.nodeValue ?? '';
+        const from = node === start!.node ? start!.offset : 0;
+        const to = node === end!.node ? end!.offset : value.length;
+        const piece = document.createTextNode(value.slice(from, to));
+        const parent = node.parentElement;
+        if (parent && parent !== root) {
+          const shell = parent.cloneNode(false);
+          shell.appendChild(piece);
+          fragment.appendChild(shell);
+        } else {
+          fragment.appendChild(piece);
+        }
+        if (node === end!.node) {
+          break;
+        }
+      }
+      return fragment;
+    }
   };
   // A live range whose nodes a render took out collapses onto their parent,
   // which is what the browser's selection reports after a render.
@@ -906,6 +944,93 @@ describe('the plugin', () => {
       expect(lab.widget.rendered.querySelectorAll('[data-mark]')).toHaveLength(
         1
       );
+    });
+
+    it('copies only the passage the reader selected (DEF-COPY-99)', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render(
+        '<p>Alpha beta gamma delta.</p><p>Second paragraph stays behind.</p>'
+      );
+      const copied = Clipboard.copyToSystem as jest.Mock;
+      copied.mockClear();
+      select(lab.widget.rendered, 'beta', 'gamma');
+
+      lab.openedOver(lab.widget.rendered);
+      await lab.commands.execute(COMMANDS.copyContent);
+
+      expect(copied).toHaveBeenCalledTimes(1);
+      const data = copied.mock.calls[0][0] as MimeData;
+      expect(data.getData('text/html')).toContain('beta gamma');
+      expect(data.getData('text/html')).not.toContain('Second paragraph');
+      expect(data.getData('text/plain')).not.toContain('Second paragraph');
+    });
+
+    it('copies the held passage when the browser has lost the selection (DEF-COPY-102, DEF-COPY-103)', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render(
+        '<p>Alpha beta gamma delta.</p><p>Second paragraph stays behind.</p>'
+      );
+      const copied = Clipboard.copyToSystem as jest.Mock;
+      copied.mockClear();
+      select(lab.widget.rendered, 'beta', 'gamma');
+      lab.openedOver(lab.widget.rendered);
+      // The fallback builds a real range over the rendered nodes, which this
+      // project's jest DOM stubs out; the real one is put back for this case.
+      // `Document` is a widget class in this file, so the real one is reached
+      // through globalThis.
+      const real = document.createRange;
+      document.createRange = () =>
+        (globalThis as any).Document.prototype.createRange.call(document);
+
+      // The palette taking the focus, and the write that finishes typed text,
+      // both leave the browser with no selection to read. Where it was is
+      // still held as offsets, so the copy asks for those rather than
+      // answering with the whole document.
+      selectNothing();
+      await lab.commands.execute(COMMANDS.copyContent);
+      document.createRange = real;
+
+      const data = copied.mock.calls[0][0] as MimeData;
+      expect(data.getData('text/html')).toContain('beta gamma');
+      expect(data.getData('text/html')).not.toContain('Second paragraph');
+    });
+
+    it('copies the whole document when nothing is selected (DEF-COPY-99)', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render(
+        '<p>Alpha beta gamma delta.</p><p>Second paragraph comes too.</p>'
+      );
+      const copied = Clipboard.copyToSystem as jest.Mock;
+      copied.mockClear();
+
+      lab.openedOver(lab.widget.rendered);
+      await lab.commands.execute(COMMANDS.copyContent);
+
+      const data = copied.mock.calls[0][0] as MimeData;
+      expect(data.getData('text/html')).toContain('Alpha beta gamma delta');
+      expect(data.getData('text/html')).toContain('Second paragraph comes too');
+    });
+
+    it('copies the document when the selection lies inside a removal ghost (DEF-COPY-99)', async () => {
+      // The ghost of text a change is deleting is swept out of the copy, so a
+      // selection made wholly inside one would leave the reader an empty
+      // clipboard. The documented fallback is the whole document.
+      const lab = await start(SOURCE);
+      lab.widget.render(
+        '<p>Alpha <span class="jp-AdvancedMd-removed">beta gamma</span> delta.</p>' +
+          '<p>Second paragraph comes too.</p>'
+      );
+      const copied = Clipboard.copyToSystem as jest.Mock;
+      copied.mockClear();
+      select(lab.widget.rendered, 'beta', 'gamma');
+
+      lab.openedOver(lab.widget.rendered);
+      await lab.commands.execute(COMMANDS.copyContent);
+
+      const data = copied.mock.calls[0][0] as MimeData;
+      expect(data.getData('text/html')).toContain('Second paragraph comes too');
+      // The deleted words are not in the document, so neither route yields them.
+      expect(data.getData('text/html')).not.toContain('beta gamma');
     });
 
     it('copies the document while the marks and notes are switched off', async () => {

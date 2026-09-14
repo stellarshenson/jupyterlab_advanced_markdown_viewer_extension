@@ -997,3 +997,36 @@ export function passageToRendered(
   const last = Math.min(at + needle.length - 1, words.length - 1);
   return { start: words[at].start, end: words[last].end };
 }
+
+/**
+ * A recorded range as a live range over the nodes of the render on screen, or
+ * null when the render holds no text the offsets reach.
+ *
+ * The record is offsets into the text {@link captureText} reads, which survive
+ * a render and a change; the nodes under them do not. This turns the one into
+ * the other, and is what puts a selection back after a render and what lets
+ * the copy read a selection the browser has lost.
+ */
+export function renderedToDomRange(
+  range: IRenderedRange,
+  root: HTMLElement
+): Range | null {
+  const { spans } = captureText(root);
+  const first = spans.find(span => span.end > range.start);
+  let last: ITextSpan | null = null;
+  for (const span of spans) {
+    if (span.start < range.end) {
+      last = span;
+    }
+  }
+  if (!first || !last) {
+    return null;
+  }
+  const made = document.createRange();
+  made.setStart(first.node, Math.max(range.start - first.start, 0));
+  made.setEnd(last.node, Math.min(range.end, last.end) - last.start);
+  // A DOM that stubs `createRange` - this project's jest environment is one,
+  // for CodeMirror's sake - hands back an object the boundaries never reached,
+  // and there is nothing in it to read.
+  return made.commonAncestorContainer ? made : null;
+}

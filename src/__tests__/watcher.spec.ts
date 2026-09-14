@@ -674,6 +674,42 @@ describe('FileWatcher', () => {
     expect(fixture.source()).toBe('alpha beta gamma\ntyped\n');
   });
 
+  it('drops a read whose bytes predate a save that completed while it was in flight (DEF-APPLY-101)', async () => {
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>(resolve => {
+      open = resolve;
+    });
+    const read = fixture.contents.get.getMockImplementation();
+    fixture.contents.get.mockImplementationOnce(async path => {
+      // The bytes as they are now, before the save: the read holds them
+      // across the await, which is the whole of the race.
+      const answer = await read!(path);
+      await gate;
+      return answer;
+    });
+    fixture.write('alpha beta\n', 'h1');
+    const inFlight = change();
+
+    // The reader saves while that read is parked.
+    fixture.model.sharedModel.updateSource(10, 10, ' gamma');
+    fixture.model.dirty = false;
+    fixture.context.contentsModel = {
+      ...fixture.context.contentsModel,
+      hash: 'h2'
+    };
+    fixture.write(fixture.source(), 'h2');
+    const saved = fixture.source();
+    fixture.context.saveState.emit('completed');
+
+    open();
+    await inFlight;
+
+    // The bytes that read holds predate the save, so applying them would put
+    // the reader's just-saved word back to what it was. Nothing is applied.
+    expect(fixture.source()).toBe(saved);
+    expect(events).toEqual([]);
+  });
+
   it('applies a write that landed while the reload was being read, the held revision being what the document holds', async () => {
     await hold();
     let open: () => void = () => undefined;

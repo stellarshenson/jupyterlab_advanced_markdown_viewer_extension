@@ -24,7 +24,21 @@ classifiers = [
 ]
 dependencies = [
     "jupyter_server>=2.13.0,<3",
-    "watchdog>=4,<7"
+    "watchdog>=4,<7",
+    # The Markdown family this extension is built to work beside: installing it
+    # installs them, so a reader gets the whole set in one command. Each floor
+    # is the version that sibling was published at when the family was surveyed
+    # on 2026-09-13, not a minimum any behaviour here was proved against.
+    "jupyterlab_colourful_tab_extension>=1.1.21",
+    "jupyterlab_edit_markdown_at_content_extension>=1.0.24",
+    "jupyterlab_export_markdown_extension>=1.6.28",
+    "jupyterlab_github_markdown_alerts_extension>=1.0.25",
+    "jupyterlab_markdown_insert_content_extension>=1.1.28",
+    "jupyterlab_markdown_switch_tab_scrolling_fix>=1.0.18",
+    "jupyterlab_markdown_syntax_rendering_fix>=1.0.2",
+    "jupyterlab_markdown_viewer_toc_fix>=1.0.15",
+    "jupyterlab_paste_content_as_markdown_extension>=1.0.8",
+    "jupyterlab_refresh_view_extension>=1.2.33"
 ]
 dynamic = ["version", "description", "authors", "urls", "keywords"]
 

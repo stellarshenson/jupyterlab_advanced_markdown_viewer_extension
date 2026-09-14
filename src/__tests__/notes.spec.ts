@@ -2915,6 +2915,10 @@ describe('NotesController', () => {
       const bounds: Array<[Node, number]> = [];
       document.createRange = () =>
         ({
+          // A real range always reports the node its boundaries share; the
+          // restore does not read it, but the code that turns a record into a
+          // range checks it to tell a range the DOM built from a stub.
+          commonAncestorContainer: h.root,
           setStart: (node: Node, offset: number) => bounds.push([node, offset]),
           setEnd: (node: Node, offset: number) => bounds.push([node, offset])
         }) as any;
@@ -2942,6 +2946,37 @@ describe('NotesController', () => {
 
       expect(selection.addRange).toHaveBeenCalledTimes(1);
       expect(h.controller.selection).not.toBeNull();
+    });
+
+    it('restores the selection while the context menu stands (DEF-COPY-107)', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      document.createRange = () =>
+        ({
+          commonAncestorContainer: h.root,
+          setStart: () => undefined,
+          setEnd: () => undefined
+        }) as any;
+      selectRange(h.root, 'beta', 'gamma');
+      const selection = (window as any).getSelection();
+      (selection.addRange as jest.Mock).mockClear();
+
+      // A Lumino menu holds the focus itself from the right-click until the
+      // moment it runs the command, so a restore that waited for the focus to
+      // come back would never happen while the menu is up - and Copy Content
+      // is only ever chosen while it is up.
+      const menu = document.createElement('div');
+      menu.className = 'lm-Menu';
+      menu.tabIndex = 0;
+      document.body.appendChild(menu);
+      menu.focus();
+
+      h.settle();
+
+      expect(selection.addRange).toHaveBeenCalledTimes(1);
+      expect(h.controller.selection).not.toBeNull();
+      menu.remove();
     });
 
     it('keeps the record on a focus move and drops it for a caret in text', async () => {

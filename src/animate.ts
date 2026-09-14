@@ -74,6 +74,27 @@ const SAME_OFFSETS: IOffsetMap = {
 };
 
 /**
+ * Put `text` into `node` by the smallest change that gets there.
+ *
+ * Assigning the whole value moves every live range boundary inside the node to
+ * its front, which takes away a selection the reader made over text an agent is
+ * still typing (DEF-COPY-102). Appending what was added, or deleting what was
+ * taken away, leaves the boundaries before the change where they are. The
+ * relationship is tested rather than assumed: a frame that is neither a growth
+ * nor a shrink of what is there falls back to the whole value.
+ */
+function write(node: Text, text: string): void {
+  const current = node.data;
+  if (text.startsWith(current)) {
+    node.appendData(text.slice(current.length));
+  } else if (current.startsWith(text)) {
+    node.deleteData(text.length, current.length - text.length);
+  } else {
+    node.data = text;
+  }
+}
+
+/**
  * Drives the change animation of one document.
  */
 export class ChangeAnimator {
@@ -449,7 +470,7 @@ export class ChangeAnimator {
     if (run.kind === 'added') {
       const slice = run.text.slice(0, Math.max(0, Math.floor(run.shown)));
       if (run.node.data !== slice) {
-        run.node.data = slice;
+        write(run.node, slice);
       }
       if (run.shown >= run.text.length) {
         run.element.classList.remove(TYPING_CLASS);
@@ -464,7 +485,7 @@ export class ChangeAnimator {
     }
     const slice = run.text.slice(0, Math.ceil(run.shown));
     if (run.node.data !== slice) {
-      run.node.data = slice;
+      write(run.node, slice);
     }
   }
 

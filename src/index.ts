@@ -34,7 +34,8 @@ import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { Menu } from '@lumino/widgets';
 
 import { ChangeChannel } from './channel';
-import { copiedContent } from './content';
+import { contentOfRange, copiedContent, selectedContent } from './content';
+import { renderedToDomRange } from './anchor';
 import {
   COPY_ICON,
   MARK_ICONS,
@@ -411,6 +412,11 @@ const plugin: JupyterFrontEndPlugin<void> = {
       isEnabled: () => preview() !== null,
       execute: () => {
         const attachment = preview();
+        // Where the reader's selection is, read before anything disturbs it:
+        // completeTyping below writes whole values into the typed nodes, which
+        // moves every live range boundary to the front of its node and empties
+        // the record with it (DEF-COPY-102).
+        const held = attachment?.notes.selection ?? null;
         // A change still being typed in holds half a word in the view, and the
         // copy reads the view (ACC-COPY-160).
         attachment?.live.completeTyping();
@@ -420,7 +426,18 @@ const plugin: JupyterFrontEndPlugin<void> = {
         if (!root) {
           return;
         }
-        const copied = copiedContent(root);
+        // The reader's selection is what they asked for; the whole document is
+        // the answer only when there is nothing in the selection it can copy
+        // (DEF-COPY-99, DEF-COPY-104). The browser loses that selection in
+        // ways the reader never sees - the palette's search field takes the
+        // focus and empties it, the typing above rewrites the nodes under it -
+        // and the recorded offsets outlive all of them, so they answer when
+        // the live selection cannot (DEF-COPY-102, DEF-COPY-103).
+        const recorded = held && renderedToDomRange(held, root);
+        const chosen =
+          selectedContent(root) ??
+          (recorded ? contentOfRange(root, recorded) : null);
+        const copied = copiedContent(chosen ?? root);
         const data = new MimeData();
         data.setData('text/html', copied.html);
         data.setData('text/plain', copied.text);

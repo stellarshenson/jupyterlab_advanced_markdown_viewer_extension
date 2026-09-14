@@ -218,7 +218,8 @@ async def test_write_reports_one_change_within_200ms(
     The criterion's 200 ms covers the fixed coalescing window plus the machine: inotify, the
     observer thread, the IOLoop hop and the socket read. Measuring both against 200 ms leaves
     the machine 100 ms and turns a loaded runner into a failure, so the window is shortened
-    here; test_burst_writes_coalesce holds it to its production value separately.
+    here. test_burst_writes_coalesce widens it instead, for the same reason: the window is
+    set rather than raced.
     """
     pytest.importorskip("watchdog")
     monkeypatch.setattr(watch, "COALESCE_SECONDS", 0.01)
@@ -234,17 +235,33 @@ async def test_write_reports_one_change_within_200ms(
     ws.close()
 
 
-async def test_burst_writes_coalesce(jp_ws_fetch, jp_root_dir, registry):
+async def test_burst_writes_coalesce(jp_ws_fetch, jp_root_dir, registry, monkeypatch):
+    """ACC-EVENT-85: writes inside one window reach the browser as a single change.
+
+    The window is widened rather than left at its production 0.1 s. What decides this test
+    is whether the second write lands inside the open window, and asyncio.sleep names a
+    floor, never a ceiling - on a loaded machine a 0.05 s sleep returns after 0.1 s, the
+    server then correctly reports two changes, and the test fails on the machine rather than
+    on the behaviour. Widening the window to 1 s leaves the sleep twenty times the room it
+    needs, so the gap cannot escape it and the verdict is the coalescing alone. Both
+    constants move together because _queue caps the restarted window at MAX_COALESCE_SECONDS
+    after the first event, which would otherwise hold the effective window at 0.4 s.
+    """
     pytest.importorskip("watchdog")
+    # Named once so the gap below and the read that waits for the flush are both derived
+    # from the window rather than guessed against it.
+    window = 1.0
+    monkeypatch.setattr(watch, "COALESCE_SECONDS", window)
+    monkeypatch.setattr(watch, "MAX_COALESCE_SECONDS", window)
     doc = jp_root_dir / "doc.md"
     doc.write_text("# one\n")
     ws = await open_channel(jp_ws_fetch, "doc.md")
     doc.write_text("# two\n")
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(window / 20)
     doc.write_text("# three\n")
-    message = await next_message(ws)
+    message = await next_message(ws, window * 3)
     assert message == {"type": "change", "path": "doc.md", "event": "changed"}
-    await assert_silent(ws, 0.3)
+    await assert_silent(ws, window / 3)
     ws.close()
 
 

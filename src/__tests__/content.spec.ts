@@ -3,7 +3,7 @@
  * nothing of the look the theme and this extension put on them.
  */
 
-import { copiedContent } from '../content';
+import { copiedContent, selectedContent } from '../content';
 
 /** A rendered view holding `html`, as JupyterLab builds it. */
 function rendered(html: string): HTMLElement {
@@ -204,5 +204,176 @@ describe('copiedContent (ACC-COPY-160)', () => {
     copiedContent(root);
 
     expect(root.innerHTML).toBe(before);
+  });
+});
+
+describe('selectedContent (ACC-COPY-160)', () => {
+  /**
+   * Hold `range` as the reader's selection.
+   *
+   * Under this project's jest DOM the `Range` constructor and
+   * `document.createRange` both give an object with no `cloneContents`, so the
+   * selection is described rather than built.
+   * What the browser really extracts is judged in ui-tests/tests/copy.spec.ts.
+   */
+  function selecting(
+    commonAncestorContainer: Node,
+    contents: () => DocumentFragment
+  ): void {
+    const range = {
+      commonAncestorContainer,
+      cloneContents: contents
+    } as unknown as Range;
+    jest.spyOn(window, 'getSelection').mockReturnValue({
+      rangeCount: 1,
+      isCollapsed: false,
+      getRangeAt: () => range
+    } as unknown as Selection);
+  }
+
+  /** The children of `element`, detached, as a range's contents would be. */
+  function fragmentOf(element: Element): DocumentFragment {
+    const fragment = document.createDocumentFragment();
+    for (const child of Array.from(element.childNodes)) {
+      fragment.appendChild(child.cloneNode(true));
+    }
+    return fragment;
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('keeps the element the selection sits in, inside the root', () => {
+    const root = rendered('<ul><li>alpha</li><li>beta</li></ul>');
+    const list = root.querySelector('ul') as HTMLElement;
+    selecting(list, () => fragmentOf(list));
+
+    const held = selectedContent(root);
+
+    expect(held).not.toBeNull();
+    // The list's own tag reaches the copy, so the items are not loose.
+    expect(copiedContent(held as HTMLElement).html).toContain('<ul>');
+    expect(copiedContent(held as HTMLElement).html).toContain('<li>alpha</li>');
+  });
+
+  it('gives a selected row its table back, so the cells survive the paste', () => {
+    // A row on its own is not a fragment a paste target can host: setting
+    // '<tr><td>one</td><td>1</td></tr>' as innerHTML leaves the words and no
+    // cells at all, so the reader's two cells arrive run together.
+    const root = rendered(
+      '<table><tbody><tr><td>one</td><td>1</td></tr></tbody></table>'
+    );
+    const row = root.querySelector('tr') as HTMLElement;
+    selecting(row, () => fragmentOf(row));
+
+    const held = selectedContent(root);
+
+    expect(held).not.toBeNull();
+    expect(copiedContent(held as HTMLElement).html).toContain('<table>');
+    expect(copiedContent(held as HTMLElement).html).toContain('<td>one</td>');
+  });
+
+  it('gives a selected fenced block its pre back, so the lines survive the paste', () => {
+    // A code element on its own carries no white-space rule in any browser's
+    // own stylesheet, so a paste target joins the lines of the block and the
+    // reader's program arrives as one line. Only the pre around it says the
+    // line breaks are the content.
+    const root = rendered(
+      '<pre><code class="language-python">one = 1\ntwo = 2\n</code></pre>'
+    );
+    const code = root.querySelector('code') as HTMLElement;
+    selecting(code, () => fragmentOf(code));
+
+    const held = selectedContent(root);
+
+    expect(held).not.toBeNull();
+    expect(copiedContent(held as HTMLElement).html).toContain('<pre>');
+    expect(copiedContent(held as HTMLElement).html).toContain(
+      'one = 1\ntwo = 2'
+    );
+  });
+
+  it('frames a code phrase in nothing when it has no pre, even inside a table', () => {
+    // The frame is the one parent that carries the shell's meaning, so it is
+    // named per tag rather than looked for as a group: an inline code phrase
+    // in a cell has a table above it, and a table around a bare code phrase
+    // is foster-parented out by the receiving parser.
+    const root = rendered(
+      '<table><tbody><tr><td>run <code>make install</code></td></tr></tbody></table>'
+    );
+    const code = root.querySelector('code') as HTMLElement;
+    selecting(code, () => fragmentOf(code));
+
+    const held = selectedContent(root);
+
+    expect(held).not.toBeNull();
+    expect(copiedContent(held as HTMLElement).html).toBe(
+      '<code>make install</code>'
+    );
+  });
+
+  it('reads a selection holding only a picture as a selection (DEF-COPY-104)', () => {
+    // An image has no text of its own, so a drag that lands on it and nothing
+    // else leaves the copy wordless; it is still the thing the reader asked
+    // for, and answering with the whole document gives them far more.
+    const root = rendered('<p><img src="figure.png" alt="the figure"></p>');
+    const paragraph = root.querySelector('p') as HTMLElement;
+    selecting(paragraph, () => fragmentOf(paragraph));
+
+    const held = selectedContent(root);
+
+    expect(held).not.toBeNull();
+    expect(copiedContent(held as HTMLElement).html).toContain('<img');
+  });
+
+  it('frames a fenced block dragged inside its painted words (DEF-COPY-105)', () => {
+    // The green paint on added text is a span the copy dissolves, so it
+    // carries no meaning of its own; the frame is the nearest ancestor that
+    // does, which is still the pre the lines belong to.
+    const root = rendered(
+      '<pre><code><span class="jp-AdvancedMd-added">one = 1\ntwo = 2\n</span></code></pre>'
+    );
+    const painted = root.querySelector('span') as HTMLElement;
+    selecting(painted, () => fragmentOf(painted));
+
+    const held = selectedContent(root);
+
+    expect(held).not.toBeNull();
+    expect(copiedContent(held as HTMLElement).html).toContain('<pre>');
+    expect(copiedContent(held as HTMLElement).html).toContain(
+      'one = 1\ntwo = 2'
+    );
+  });
+
+  it('reads a selection the copy would empty as no selection', () => {
+    // A drag that starts in the ghost of deleted words and ends past it: the
+    // common ancestor is the paragraph, so the shell is not itself dropped,
+    // and only the finished copy shows there is nothing left to put on the
+    // clipboard. The caller falls back to the whole document.
+    const root = rendered(
+      '<p><span class="jp-AdvancedMd-removed">deleted</span> </p>'
+    );
+    const paragraph = root.querySelector('p') as HTMLElement;
+    selecting(paragraph, () => fragmentOf(paragraph));
+
+    expect(selectedContent(root)).toBeNull();
+  });
+
+  it('reads a drag across whitespace alone as no selection', () => {
+    const root = rendered('<p>   </p>');
+    const paragraph = root.querySelector('p') as HTMLElement;
+    selecting(paragraph, () => fragmentOf(paragraph));
+
+    expect(selectedContent(root)).toBeNull();
+  });
+
+  it('reads a selection made outside the rendered view as none', () => {
+    const root = rendered('<p>Alpha.</p>');
+    const elsewhere = document.createElement('p');
+    elsewhere.textContent = 'In the notes panel.';
+    selecting(elsewhere, () => fragmentOf(elsewhere));
+
+    expect(selectedContent(root)).toBeNull();
   });
 });

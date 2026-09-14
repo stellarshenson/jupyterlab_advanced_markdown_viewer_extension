@@ -78,6 +78,28 @@ To install the extension, execute:
 pip install jupyterlab_advanced_markdown_viewer_extension
 ```
 
+## The Markdown suite
+
+The install above brings ten more extensions with it. Each fixes or adds one thing in JupyterLab's
+Markdown handling, and this extension is built to work beside all of them:
+
+| Extension                                        | What it adds                                                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `jupyterlab_markdown_viewer_toc_fix`             | Table of Contents navigation and anchor links work in the Markdown Viewer        |
+| `jupyterlab_markdown_switch_tab_scrolling_fix`   | A Markdown file stops scrolling by itself when you switch tabs while images load |
+| `jupyterlab_markdown_syntax_rendering_fix`       | Syntax colours in rendered fenced code blocks with no editor open                |
+| `jupyterlab_github_markdown_alerts_extension`    | GitHub alert blocks render, such as `> [!NOTE]` and `> [!WARNING]`               |
+| `jupyterlab_edit_markdown_at_content_extension`  | Opens the editor at the line you were reading in the preview                     |
+| `jupyterlab_markdown_insert_content_extension`   | Inserts reusable content blocks, starting with a generated table of contents     |
+| `jupyterlab_paste_content_as_markdown_extension` | Pastes formatted clipboard content as Markdown                                   |
+| `jupyterlab_export_markdown_extension`           | Exports a Markdown file to PDF, DOCX and HTML                                    |
+| `jupyterlab_refresh_view_extension`              | A Refresh View command reloads a file from disk, keeping the scroll position     |
+| `jupyterlab_colourful_tab_extension`             | Pastel tab colours, so many open documents stay tellable apart                   |
+
+Each one also works on its own. The version floors are simply what each sibling was published at
+when the family was surveyed; none of them is imported, required or linked by this extension's
+code, so an older one degrades rather than breaks.
+
 ## Uninstall
 
 To remove the extension, execute:

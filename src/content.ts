@@ -62,6 +62,24 @@ const DROPPED = [
  */
 const UNWRAPPED = new Set(['FONT', 'SPAN']);
 
+/**
+ * Tags whose meaning lives in a parent the copy never emits, each named with
+ * the parent that carries it. A row, or a section of rows, keeps its words and
+ * loses every cell around them when a paste target hosts it alone; a fenced
+ * block's code carries no white-space rule of its own, so without its `pre` the
+ * program arrives on one line. A shell that is one of these is framed in a
+ * shallow clone of that parent before it travels. The parent is named per tag
+ * rather than looked for as a group, since a code phrase inside a table cell
+ * has a table above it and a table is not its frame.
+ */
+const FRAMED = new Map([
+  ['TR', 'table'],
+  ['TBODY', 'table'],
+  ['THEAD', 'table'],
+  ['TFOOT', 'table'],
+  ['CODE', 'pre']
+]);
+
 /** Tags whose content stands on a line of its own in the text flavour. */
 const LINES = new Set([
   'ARTICLE',
@@ -182,4 +200,91 @@ function asText(node: Node): string {
     }
   }
   return LINES.has(element.tagName) ? `\n${written}\n` : written;
+}
+
+/**
+ * What the reader selected inside `root`, as a detached element holding a copy
+ * of it, or null when they selected nothing there.
+ *
+ * The common ancestor is cloned shallow around the selected fragment and that
+ * shell sits inside a clone of the root, because the copy is serialised from
+ * the returned element's `innerHTML` and the outermost tag is never emitted.
+ * So the selection keeps the one level of context that names it: a list its
+ * `ul`, a whole table its `table`, an emphasised phrase its `strong`. A shell
+ * whose meaning lives in a parent tag the copy never emits gets that parent
+ * back as well - a row its table, a fenced block's code its `pre` - since
+ * neither is something a paste target can host on its own. A phrase dragged
+ * inside one cell is the case this does not reach: it arrives as text, without
+ * the cell it came from.
+ *
+ * A selection the reader made outside the preview, in the notes panel or in
+ * another document, is not theirs to copy from here and reads as none. So does
+ * one the copy leaves neither words nor a picture in - a drag over the ghost of
+ * deleted words, or over a heading's anchor - so the caller falls back to the
+ * whole document rather than putting an empty clipboard in the reader's hands.
+ */
+export function selectedContent(root: HTMLElement): HTMLElement | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return null;
+  }
+  const range = selection.getRangeAt(0);
+  if (!root.contains(range.commonAncestorContainer)) {
+    return null;
+  }
+  return contentOfRange(root, range);
+}
+
+/**
+ * The content of one range inside `root`, held the way
+ * {@link selectedContent} describes, or null when the copy would leave it
+ * empty.
+ *
+ * Taken apart from the window's own selection so a caller holding a range of
+ * its own can ask - the copy does, when the browser has lost the selection the
+ * reader made and only the recorded offsets say where it was.
+ */
+export function contentOfRange(
+  root: HTMLElement,
+  range: Range
+): HTMLElement | null {
+  const ancestor = range.commonAncestorContainer;
+  const context =
+    ancestor.nodeType === Node.ELEMENT_NODE
+      ? (ancestor as Element)
+      : (ancestor.parentElement ?? root);
+  const shell = context.cloneNode(false) as HTMLElement;
+  shell.appendChild(range.cloneContents());
+  const holder = root.cloneNode(false) as HTMLElement;
+  // The frame is the nearest ancestor that carries the shell's meaning, and an
+  // ancestor the copy dissolves carries none - the paint on a change, a mark's
+  // colour - so the walk passes through those to the tag that does. Without it
+  // a fenced block dragged inside its own paint loses the `pre` that says its
+  // line breaks are the content (DEF-COPY-105).
+  let framing: Element | null = context;
+  while (framing && UNWRAPPED.has(framing.tagName)) {
+    framing = framing.parentElement;
+  }
+  const wanted = framing ? FRAMED.get(framing.tagName) : undefined;
+  const parent = wanted && framing ? framing.closest(wanted) : null;
+  if (parent) {
+    const frame = parent.cloneNode(false) as HTMLElement;
+    frame.appendChild(shell);
+    holder.appendChild(frame);
+  } else {
+    holder.appendChild(shell);
+  }
+  // What the copy would leave decides, and a picture counts although it
+  // carries no words: an image, a drawn formula or a diagram is the thing the
+  // reader dragged over, and answering with the whole document gives them far
+  // more than they asked for (DEF-COPY-104). A drag across whitespace, and one
+  // over text the copy sweeps out - the ghost of deleted words, a heading's
+  // anchor - leave neither words nor picture, and the whole document is the
+  // answer then rather than an empty clipboard. Only the finished copy knows:
+  // the selection's own element is what the reader dragged inside, not what
+  // the filter will leave.
+  const copied = copiedContent(holder);
+  const keeps =
+    copied.text.trim() !== '' || /<(?:img|svg)\b/i.test(copied.html);
+  return keeps ? holder : null;
 }

@@ -945,8 +945,9 @@ test.describe('marking a passage', () => {
     await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
       'quinces and medlars'
     );
-    await page.waitForTimeout(600);
-    expect(await selectedText(page)).toBe('');
+    // The selection is dropped as the change lands, so this waits for it to
+    // be gone rather than for a duration chosen to outlast the drop.
+    await expect.poll(() => selectedText(page)).toBe('');
     expect(
       await page.evaluate(() => window.getSelection()?.isCollapsed ?? true)
     ).toBe(true);
