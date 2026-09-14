@@ -1,5 +1,13 @@
-# Makefile for Jupyterlab extensions version 1.39
+# Makefile for Jupyterlab extensions version 1.40
 # changelog:
+#   1.40 - publish stages yarn.lock in the post-publish commit. It staged only
+#          package.json and package-lock.json, and `git add package.json` takes every
+#          change in that file, so a dependency added since the last commit went out
+#          without its yarn.lock entry. CI installs with an immutable lockfile and
+#          failed both workflows on that commit with YN0028 "The lockfile would have
+#          been modified by this install" (measured on 2026-09-14, release 1.0.12 of
+#          jupyterlab_advanced_markdown_viewer_extension). The staged yarn.lock is the
+#          one `jlpm install` wrote for the build that was published.
 #   1.39 - upgrade no longer runs `npm audit fix --force`; it reports with
 #          `jlpm npm audit --recursive` instead. Measured on six extensions on
 #          2026-09-08: the forced fix rewrote every @jupyterlab/* range to a 0.x
@@ -187,7 +195,7 @@ publish: check_dependencies install
 	}
 	$(NPM) publish --access public
 	python -m twine upload dist/*
-	git add package.json package-lock.json
+	git add package.json package-lock.json yarn.lock
 	git commit -m "chore: post-publish $$($(NODE) -p "require('./package.json').version") package metadata"
 	git push
 
