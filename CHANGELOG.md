@@ -2,6 +2,28 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.11] - 2026-09-14
+
+Copy Content now takes the passage the reader selected, framed by the tag that gives it its meaning, and the ten sibling Markdown extensions are declared as dependencies of this one.
+
+### Added
+
+- Copy Content puts the selected passage on the clipboard, and the whole rendered document only when nothing is selected
+- A selected table row, or a run of rows, arrives at the paste target inside its own table with its cells intact, and a selected fenced block arrives inside its `pre`, so the program keeps its line breaks instead of joining onto one line
+- A selection holding a picture and no words - an image, a drawn formula, a rendered diagram - is copied as that picture rather than read as no selection at all
+- The ten sibling Markdown extensions are required dependencies of this package, so installing it installs the family it is built to work beside
+
+### Changed
+
+- The copy answers from the selection this extension records when the browser has lost the live one, which is what an open context menu and the command palette's search field both do
+- An external change writes each frame of its typing as the smallest edit that reaches the new text, so a selection made over words an agent is still typing stays where the reader put it
+- The reader's selection is put back while a context menu stands open, so a change arriving behind the menu no longer costs them the passage they had chosen
+
+### Fixed
+
+- A read of the file already under way when a save completed could put the just-saved text back to what it had been; such a read is now dropped, and the save's own file event carries the correct bytes
+- A fenced block selected inside the green paint on newly added text kept its words but lost the `pre` that says its line breaks are the content
+
 ## [1.0.10] - 2026-09-13
 
 A Copy Content entry puts the rendered document on the clipboard as basic HTML, and a note entry left empty is cancelled when the reader clicks away.
