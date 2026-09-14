@@ -336,12 +336,12 @@ describe('decorate', () => {
       '<h2 id="r">Summary<a class="jp-InternalAnchorLink">¶</a></h2>\n<p>Body</p>'
     );
     const snapshot = captureText(root);
-    const ranges = changeRanges(diffWords('Report¶\nBody', snapshot.text));
+    const ranges = changeRanges(diffWords('Report\nBody', snapshot.text));
     const created = decorate(root, snapshot, ranges, 1000);
     const ghost = created.find(element =>
       element.classList.contains(REMOVED_CLASS)
     ) as HTMLElement;
-    expect(ghost.textContent).toBe('Report¶');
+    expect(ghost.textContent).toBe('Report');
     expect(ghost.parentElement).toBe(root.querySelector('p'));
     const heading = root.querySelector('h2') as HTMLElement;
     expect(heading.textContent).toBe('Summary¶');

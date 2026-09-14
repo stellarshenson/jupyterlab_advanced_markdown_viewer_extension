@@ -831,7 +831,16 @@ function boundaryOffset(
   }
   let last: ITextSpan | null = null;
   for (const span of snapshot.spans) {
-    if (atOrBefore(span.node, past ? node : reference)) {
+    // An end before child k of an element leaves child k out of the range:
+    // a triple-click on a block ends at offset 0 of the next block element,
+    // whose text is not selected (DEF-NOTES-109).
+    if (
+      past
+        ? atOrBefore(span.node, node)
+        : (reference.compareDocumentPosition(span.node) &
+            Node.DOCUMENT_POSITION_PRECEDING) !==
+          0
+    ) {
       last = span;
     }
   }

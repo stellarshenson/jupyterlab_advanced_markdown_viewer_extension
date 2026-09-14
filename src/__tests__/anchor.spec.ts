@@ -519,6 +519,77 @@ describe('selectionToSource', () => {
     );
   });
 
+  it('marks a heading of one or two words past the anchor link JupyterLab appends to it (DEF-NOTES-84-1)', () => {
+    // The link follows the last word with no space, so read as text it would
+    // make that word another word than the source holds.
+    const link = (id: string) =>
+      `<a class="jp-InternalAnchorLink" href="#${id}">¶</a>`;
+    const source = '### Hard criteria\n\nAll hard criteria are confirmed.';
+    const root = render(
+      `<h3 id="Hard-criteria">Hard criteria${link('Hard-criteria')}</h3>\n` +
+        '<p>All hard criteria are confirmed.</p>'
+    );
+    expect(
+      applyMarkers(source, sourceRange(root, source, 'Hard', 'criteria'))
+    ).toBe(
+      '<!-- mark:m note -->\n### Hard criteria\n<!-- /mark:m -->\n\n' +
+        'All hard criteria are confirmed.'
+    );
+
+    const single = '## Notes\n\nOrder one model.';
+    const one = render(
+      `<h2 id="Notes">Notes${link('Notes')}</h2>\n<p>Order one model.</p>`
+    );
+    // The one word, selected from its first three letters to its last two.
+    expect(applyMarkers(single, sourceRange(one, single, 'Not', 'es'))).toBe(
+      '<!-- mark:m note -->\n## Notes\n<!-- /mark:m -->\n\nOrder one model.'
+    );
+  });
+
+  it('ends a triple-click on a block before the block below it (DEF-NOTES-109)', () => {
+    // Chromium reports a triple-click on a block as a range from the start of
+    // its text to offset 0 of the next block element, which is before any of
+    // that element's text.
+    const source = '### Hard criteria\n\nAll hard criteria are confirmed.';
+    const root = render(
+      '<h3 id="Hard-criteria">Hard criteria' +
+        '<a class="jp-InternalAnchorLink" href="#Hard-criteria">¶</a></h3>\n' +
+        '<p>All hard criteria are confirmed.</p>'
+    );
+    const heading = selectionToSource(
+      selection(
+        { node: root.querySelector('h3')!.firstChild!, offset: 0 },
+        { node: root.querySelector('p')!, offset: 0 }
+      ),
+      root,
+      source
+    );
+    expect(heading).not.toBeNull();
+    expect(applyMarkers(source, heading!)).toBe(
+      '<!-- mark:m note -->\n### Hard criteria\n<!-- /mark:m -->\n\n' +
+        'All hard criteria are confirmed.'
+    );
+
+    const paragraphs = 'First paragraph here.\n\nSecond paragraph here.';
+    const two = render(
+      '<p>First paragraph here.</p>\n<p>Second paragraph here.</p>'
+    );
+    const [first, second] = Array.from(two.querySelectorAll('p'));
+    const paragraph = selectionToSource(
+      selection(
+        { node: first.firstChild!, offset: 0 },
+        { node: second, offset: 0 }
+      ),
+      two,
+      paragraphs
+    );
+    expect(paragraph).not.toBeNull();
+    expect(applyMarkers(paragraphs, paragraph!)).toBe(
+      '<!-- mark:m note -->\nFirst paragraph here.<!-- /mark:m -->\n\n' +
+        'Second paragraph here.'
+    );
+  });
+
   it('takes the whole line of a heading that interrupts a paragraph', () => {
     // The line is a continuation line of its block, so only the heading being
     // a block of its own puts the marker on a line of its own.
@@ -806,6 +877,26 @@ describe('passageToRendered', () => {
     expect(inRender(passage, source, root)).toEqual({
       start: text.indexOf('Alpha'),
       end: text.indexOf('Beta') + 'Beta'.length
+    });
+  });
+
+  it('finds the passage of a mark on a heading of two words, past its anchor link (DEF-NOTES-84-1)', () => {
+    const source =
+      '<!-- mark:a note -->\n### Hard criteria\n<!-- /mark:a -->\n\n' +
+      'All hard criteria are confirmed.';
+    const root = render(
+      '<!-- mark:a note -->\n<h3 id="Hard-criteria">Hard criteria' +
+        '<a class="jp-InternalAnchorLink" href="#Hard-criteria">¶</a></h3>\n' +
+        '<!-- /mark:a -->\n<p>All hard criteria are confirmed.</p>'
+    );
+    const passage = {
+      start: source.indexOf('-->') + 3,
+      end: source.indexOf('<!-- /mark:a -->')
+    };
+    const text = captureText(root).text;
+    expect(inRender(passage, source, root)).toEqual({
+      start: text.indexOf('Hard'),
+      end: text.indexOf('criteria') + 'criteria'.length
     });
   });
 

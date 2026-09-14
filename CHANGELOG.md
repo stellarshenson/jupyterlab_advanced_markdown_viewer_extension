@@ -2,6 +2,19 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.12] - 2026-09-14
+
+A note can be added to a heading of one or two words, and a triple-click on a block marks that block alone.
+
+### Fixed
+
+- A heading of one or two words, such as `### Hard criteria`, could not be marked or given a note: the `¶` link JupyterLab adds to every heading was read as part of the heading's last word, so the words no longer matched the file
+- A triple-click on a heading or a paragraph marked the block below it as well as the block the reader selected
+
+### Changed
+
+- The context-menu and palette commands describe the arguments they take, and their labels and the note box's accessible name go through JupyterLab's translator
+
 ## [1.0.11] - 2026-09-14
 
 Copy Content now takes the passage the reader selected, framed by the tag that gives it its meaning, and the ten sibling Markdown extensions are declared as dependencies of this one.

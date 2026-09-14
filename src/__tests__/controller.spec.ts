@@ -1009,9 +1009,10 @@ describe('LiveViewController', () => {
       expect(h2.textContent).toBe('Summary¶');
       expect(h2.id).toBe('Report');
       // The struck old text is shown in the paragraph below, where it is
-      // deleted like any other ghost.
+      // deleted like any other ghost, without the heading's anchor link, which
+      // is not text of the document (DEF-NOTES-84-1).
       const ghost = root.querySelector(`.${REMOVED_CLASS}`) as HTMLElement;
-      expect(ghost.textContent).toBe('Report¶');
+      expect(ghost.textContent).toBe('Report');
       expect(ghost.parentElement).toBe(root.querySelector('p'));
       jest.advanceTimersByTime(GHOST_HOLD_MS + 200);
       expect(ghostText(root)).toBeNull();

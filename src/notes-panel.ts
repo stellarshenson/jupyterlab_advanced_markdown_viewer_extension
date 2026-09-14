@@ -14,6 +14,7 @@
  * bring a selected passage into sight.
  */
 
+import { nullTranslator, TranslationBundle } from '@jupyterlab/translation';
 import { Message, MessageLoop } from '@lumino/messaging';
 import { BoxLayout, BoxPanel, Widget } from '@lumino/widgets';
 
@@ -213,6 +214,8 @@ export interface INotesPanelOptions {
   handlers: INotesPanelHandlers;
   /** State the panel opens in. */
   state: PanelState;
+  /** Translates the panel's labels; without one they stay in English. */
+  trans?: TranslationBundle;
 }
 
 /**
@@ -334,6 +337,9 @@ export class NotesPanel extends Widget {
     this.addClass(PANEL_CLASS);
     this._root = options.root;
     this._handlers = options.handlers;
+    this._trans =
+      options.trans ??
+      nullTranslator.load('jupyterlab_advanced_markdown_viewer_extension');
 
     this._count = document.createElement('span');
     this._count.className = COUNT_CLASS;
@@ -1033,7 +1039,7 @@ export class NotesPanel extends Widget {
     const text = document.createElement('textarea');
     text.rows = 4;
     text.placeholder = 'Write a note';
-    text.setAttribute('aria-label', 'Note');
+    text.setAttribute('aria-label', this._trans.__('Note'));
     // The browser's own menu (paste, spelling) stays inside the field;
     // JupyterLab honours this attribute (ACC-NOTES-157).
     text.setAttribute('data-jp-suppress-context-menu', '');
@@ -1147,6 +1153,7 @@ export class NotesPanel extends Widget {
 
   private readonly _root: () => HTMLElement | null;
   private readonly _handlers: INotesPanelHandlers;
+  private readonly _trans: TranslationBundle;
   private readonly _count: HTMLElement;
   private readonly _body: HTMLElement;
   private readonly _closedHint: HTMLElement;

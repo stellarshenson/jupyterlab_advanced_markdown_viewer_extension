@@ -31,6 +31,7 @@ import {
 import { Clipboard, ICommandPalette } from '@jupyterlab/apputils';
 import { MimeData } from '@lumino/coreutils';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
+import { ITranslator, nullTranslator } from '@jupyterlab/translation';
 import { Menu } from '@lumino/widgets';
 
 import { ChangeChannel } from './channel';
@@ -224,13 +225,17 @@ const plugin: JupyterFrontEndPlugin<void> = {
     'Keeps an open Markdown preview current with its file, highlighting what an external change added and removed, and holds the reader marks and notes the file itself carries',
   autoStart: true,
   requires: [IMarkdownViewerTracker],
-  optional: [ISettingRegistry, ICommandPalette],
+  optional: [ISettingRegistry, ICommandPalette, ITranslator],
   activate: (
     app: JupyterFrontEnd,
     tracker: IMarkdownViewerTracker,
     settingRegistry: ISettingRegistry | null,
-    palette: ICommandPalette | null
+    palette: ICommandPalette | null,
+    translator: ITranslator | null
   ) => {
+    const trans = (translator ?? nullTranslator).load(
+      'jupyterlab_advanced_markdown_viewer_extension'
+    );
     const contents = app.serviceManager.contents;
     const channel = new ChangeChannel(app.serviceManager.serverSettings);
     const attachments = new Map<MarkdownDocument, IAttachment>();
@@ -269,7 +274,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
           markDocument: () => notes.markDocument(),
           setState: state => void notes.setPanelState(state)
         },
-        state: notes.panelState
+        state: notes.panelState,
+        trans
       });
       // Nothing is added to the document toolbar: one visible item would make
       // JupyterLab open the toolbar to its full height on every preview, where
@@ -354,6 +360,12 @@ const plugin: JupyterFrontEndPlugin<void> = {
     app.commands.addCommand(COMMANDS.mark, {
       label: args => colourLabel(colourOf(args.colour)),
       icon: args => MARK_ICONS[colourOf(args.colour)],
+      describedBy: {
+        args: {
+          type: 'object',
+          properties: { colour: { type: 'string', enum: MARK_COLOURS } }
+        }
+      },
       isVisible: () => marking() !== null,
       execute: async args => {
         await marking()?.notes.mark(colourOf(args.colour));
@@ -361,8 +373,14 @@ const plugin: JupyterFrontEndPlugin<void> = {
     });
 
     app.commands.addCommand(COMMANDS.markSelection, {
-      label: 'Mark the selected passage',
+      label: trans.__('Mark the selected passage'),
       icon: args => MARK_ICONS[colourOf(args.colour)],
+      describedBy: {
+        args: {
+          type: 'object',
+          properties: { colour: { type: 'string', enum: MARK_COLOURS } }
+        }
+      },
       isEnabled: () => marking() !== null,
       execute: async args => {
         await marking()?.notes.mark(colourOf(args.colour));
@@ -370,8 +388,9 @@ const plugin: JupyterFrontEndPlugin<void> = {
     });
 
     app.commands.addCommand(COMMANDS.addNote, {
-      label: 'Add note',
+      label: trans.__('Add note'),
       icon: NOTE_ICON,
+      describedBy: { args: { type: 'object', properties: {} } },
       isVisible: () => marking() !== null,
       execute: async () => {
         const attachment = marking();
@@ -393,7 +412,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
       app.contextMenuHitTest(node => node.classList.contains(ROW_CLASS))
         ?.dataset.mark ?? null;
     app.commands.addCommand(COMMANDS.copyMarkId, {
-      label: 'Copy mark ID',
+      label: trans.__('Copy mark ID'),
+      describedBy: { args: { type: 'object', properties: {} } },
       isVisible: () => rowUnderMenu() !== null,
       execute: () => {
         const id = rowUnderMenu();
@@ -407,8 +427,9 @@ const plugin: JupyterFrontEndPlugin<void> = {
     // paint into the email written from it; this one carries the tags and the
     // words alone (ACC-COPY-160).
     app.commands.addCommand(COMMANDS.copyContent, {
-      label: 'Copy Content',
+      label: trans.__('Copy Content'),
       icon: COPY_ICON,
+      describedBy: { args: { type: 'object', properties: {} } },
       isEnabled: () => preview() !== null,
       execute: () => {
         const attachment = preview();
@@ -453,6 +474,12 @@ const plugin: JupyterFrontEndPlugin<void> = {
           : PANEL_LABELS[state];
       },
       icon: args => PANEL_ICONS[args.state as PanelState],
+      describedBy: {
+        args: {
+          type: 'object',
+          properties: { state: { type: 'string', enum: PANEL_ORDER } }
+        }
+      },
       isVisible: args => {
         const attachment = target();
         return !!attachment && attachment.panel.state !== args.state;
@@ -486,7 +513,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
     // reader reaches the rest. The panel entries follow and are offered with
     // or without a selection.
     const markMenu = new Menu({ commands: app.commands });
-    markMenu.title.label = 'Mark';
+    markMenu.title.label = trans.__('Mark');
     markMenu.title.icon = MARK_MENU_ICON;
     for (const colour of MARK_COLOURS) {
       markMenu.addItem({ command: COMMANDS.mark, args: { colour } });

@@ -426,6 +426,86 @@ test.describe('marking a passage', () => {
     await expect(painted(page).first()).toHaveText('Alpha');
   });
 
+  test('DEF-NOTES-84-1 adds a note to a heading of two words', async ({
+    page,
+    tmpPath
+  }) => {
+    // JupyterLab appends a paragraph-mark link to every heading with no space
+    // before it, so on screen the last word of the heading runs into it.
+    const path = `${tmpPath}/${FILE}`;
+    await writeExternally(
+      page,
+      path,
+      [
+        '# Camera purchase',
+        '',
+        '### Hard criteria',
+        '',
+        'All hard criteria can be confirmed from the datasheet.',
+        ''
+      ].join('\n')
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'All hard criteria'
+    );
+
+    await openMenu(page, await select(page, 'Hard', 'criteria'));
+    await choose(page, 'Add note');
+    await writeNote(page, 'On the heading.');
+
+    const text = await fileWhen(path, holds =>
+      holds.includes('On the heading.')
+    );
+    expect(text).toMatch(
+      /\n\n<!-- mark:[0-9a-f-]{36} note colour=\w+\n@[^\n]*: On the heading\.\n-->\n### Hard criteria\n<!-- \/mark:[0-9a-f-]{36} -->\n\nAll hard criteria/
+    );
+    await expect(rows(page)).toHaveCount(1);
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesPassage')
+    ).toHaveText('Hard criteria');
+    await expect(painted(page)).toHaveCount(1);
+    await expect(painted(page).first()).toHaveText('Hard criteria');
+  });
+
+  test('DEF-NOTES-109 marks only the heading a triple-click selects', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await writeExternally(
+      page,
+      path,
+      [
+        '# Camera purchase',
+        '',
+        '### Hard criteria',
+        '',
+        'All hard criteria can be confirmed from the datasheet.',
+        ''
+      ].join('\n')
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'All hard criteria'
+    );
+
+    // A triple-click selects the whole heading, and Chromium reports the range
+    // as ending at the start of the paragraph below it.
+    const point = await select(page, 'Hard', 'criteria');
+    await page.mouse.click(point.x, point.y, { clickCount: 3 });
+    await openMenu(page, point);
+    await choose(page, 'Add note');
+    await writeNote(page, 'Only the heading.');
+
+    const text = await fileWhen(path, holds =>
+      holds.includes('Only the heading.')
+    );
+    expect(text).toMatch(
+      /-->\n### Hard criteria\n<!-- \/mark:[0-9a-f-]{36} -->\n\nAll hard criteria can be confirmed from the datasheet\./
+    );
+    await expect(painted(page)).toHaveCount(1);
+    await expect(painted(page).first()).toHaveText('Hard criteria');
+  });
+
   test('ACC-NOTES-44 adds a note from a selection through the context menu', async ({
     page,
     tmpPath

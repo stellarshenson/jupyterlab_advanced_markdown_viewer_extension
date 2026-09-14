@@ -134,6 +134,14 @@ export function captureText(root: HTMLElement): ITextSnapshot {
         if (parent.closest(`.${DECORATION_CLASS}`)) {
           return NodeFilter.FILTER_REJECT;
         }
+        // The paragraph mark JupyterLab appends to every heading is a link of
+        // the page, not text of the document. It follows the last word with
+        // no space, so read it would make that word one the source does not
+        // hold, and a heading of one or two words could not be marked
+        // (DEF-NOTES-84-1).
+        if (parent.closest('.jp-InternalAnchorLink')) {
+          return NodeFilter.FILTER_REJECT;
+        }
         return NodeFilter.FILTER_ACCEPT;
       }
     }
