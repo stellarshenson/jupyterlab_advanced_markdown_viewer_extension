@@ -2,6 +2,10 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.16] - 2026-09-15
+
+No change from 1.0.15; the same code is published again.
+
 ## [1.0.15] - 2026-09-15
 
 A row in the notes panel shows the state of its mark, and a thread at rest shows only its text.
