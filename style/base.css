@@ -393,10 +393,19 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   white-space: nowrap;
 }
 
-/* The Show closed control, a text button beside the count (ACC-NOTES-155). */
+/*
+ | The Show hidden control, a toggle text button beside the count
+ | (ACC-NOTES-155, ACC-NOTES-174). The header has no room for the base size,
+ | so this one button keeps the smaller one (ACC-NOTES-165).
+ */
 .jp-AdvancedMd-notesShowClosed {
   margin-left: 4px;
   font-size: var(--jp-ui-font-size0);
+}
+
+.jp-AdvancedMd-notesShowClosed[aria-pressed='true'] {
+  background-color: var(--jp-layout-color2);
+  border-color: var(--jp-brand-color1);
 }
 
 .jp-AdvancedMd-notes-minimap .jp-AdvancedMd-notesCount,
@@ -447,11 +456,17 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 .jp-AdvancedMd-notesCollapse svg,
 .jp-AdvancedMd-notesClose svg,
 .jp-AdvancedMd-notesAdd svg,
-.jp-AdvancedMd-notesRemove svg,
-.jp-AdvancedMd-notesCloseMark svg,
 .jp-AdvancedMd-notesBadge svg {
   width: 14px;
   height: 14px;
+}
+
+/* The icons of a row are 16 px in a 24 px target (ACC-NOTES-165). */
+.jp-AdvancedMd-notesRemove svg,
+.jp-AdvancedMd-notesCloseMark svg,
+.jp-AdvancedMd-notesEntryIcon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .jp-AdvancedMd-notesClose {
@@ -476,11 +491,11 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 
 .jp-AdvancedMd-notesButton {
   min-height: 24px;
-  padding: 1px 6px;
+  padding: 2px 8px;
   color: inherit;
 
-  /* The size the author and time lines use (ACC-NOTES-165). */
-  font-size: var(--jp-ui-font-size0);
+  /* The size the row's note text is set in (ACC-NOTES-165). */
+  font-size: var(--jp-ui-font-size1);
   cursor: pointer;
   background: none;
   border: 1px solid var(--jp-border-color2);
@@ -495,6 +510,8 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 .jp-AdvancedMd-notesRemove {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-width: 24px;
   margin-left: auto;
   padding: 1px 4px;
 }
@@ -503,6 +520,8 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 .jp-AdvancedMd-notesCloseMark {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-width: 24px;
   padding: 1px 4px;
 }
 
@@ -591,10 +610,8 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 }
 
 .jp-AdvancedMd-notesEntry {
-  position: relative;
-
-  /* Room in the corner for the edit icon and the x (ACC-NOTES-164). */
-  padding-right: 36px;
+  /* The floated icons are part of the entry's own height. */
+  display: flow-root;
   margin-top: 4px;
 }
 
@@ -605,30 +622,29 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   border-left: 2px solid var(--jp-border-color2);
 }
 
+/*
+ | The edit icon and the x sit at the right of the entry's first line
+ | (ACC-NOTES-164), floated so the note text below them keeps the full width
+ | of the entry (ACC-NOTES-165).
+ */
 .jp-AdvancedMd-notesEntryIcons {
-  position: absolute;
-  top: 0;
-  right: 0;
+  float: right;
   display: flex;
   gap: 2px;
+  margin-left: 4px;
 }
 
 .jp-AdvancedMd-notesEntryIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   color: var(--jp-ui-font-color2);
   cursor: pointer;
   background: none;
   border: none;
-}
-
-.jp-AdvancedMd-notesEntryIcon svg {
-  width: 12px;
-  height: 12px;
 }
 
 .jp-AdvancedMd-notesAuthor {
@@ -658,13 +674,65 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   cursor: default;
 }
 
-.jp-AdvancedMd-notesDot {
-  width: 12px;
-  height: 12px;
+/*
+ | The swatch of a row is the button that rolls the other colours down under
+ | it (ACC-NOTES-173). The button is a 24 px pointer target (ACC-NOTES-165)
+ | around the 10 px swatch, pulled back into the line so the head keeps its
+ | height, and the list is laid over the rows below.
+ */
+.jp-AdvancedMd-notesColour {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.jp-AdvancedMd-notesSwatchButton,
+.jp-AdvancedMd-notesColourOption {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   padding: 0;
   cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 2px;
+}
+
+.jp-AdvancedMd-notesSwatchButton {
+  margin: -3px 0;
+}
+
+.jp-AdvancedMd-notesSwatchButton:hover,
+.jp-AdvancedMd-notesColourOption:hover {
+  background-color: var(--jp-layout-color2);
+}
+
+.jp-AdvancedMd-notesColours {
+  position: absolute;
+
+  /* The swatch button is pulled 3px below the line it sits on, so the list
+     starts that much lower and covers no part of the button. */
+  top: calc(100% + 3px);
+  left: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--jp-layout-color1);
   border: 1px solid var(--jp-border-color1);
-  border-radius: 50%;
+  border-radius: 2px;
+  animation: jp-AdvancedMd-roll-down 120ms ease-out;
+}
+
+@keyframes jp-AdvancedMd-roll-down {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+
+  to {
+    clip-path: inset(0);
+  }
 }
 
 .jp-AdvancedMd-notesForm {

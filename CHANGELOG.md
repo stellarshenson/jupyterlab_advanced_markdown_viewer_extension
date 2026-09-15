@@ -2,6 +2,22 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.14] - 2026-09-15
+
+The controls of a row in the notes panel are readable and easier to hit, the colour of a mark is chosen from the row's own swatch, and the time on a note follows JupyterLab rather than the browser.
+
+### Added
+
+- The colour swatch at the left of a row rolls the other five colours down: pick one to recolour the mark, press the swatch again, Escape or anywhere else to roll them back up
+
+### Changed
+
+- The buttons of a row are set in the interface font size again, with every icon control a 24 pixel target holding a 16 pixel icon
+- An entry's edit icon and x sit at the right of its first line, so the note text keeps the full width of the row
+- The six colour dots are gone from a row's controls, replaced by the swatch of the row itself
+- The header control that lists the closed marks reads Show hidden in both states and says which state it is in
+- The time on a note entry reads on a 24 hour clock, in the language JupyterLab is set to rather than the language the browser is set to; the tooltip still carries the UTC time the file holds
+
 ## [1.0.13] - 2026-09-15
 
 Each mark in the notes panel holds a comment thread whose entries can be edited and deleted, and the address of a link in the preview can be copied.

@@ -243,6 +243,9 @@ const plugin: JupyterFrontEndPlugin<void> = {
     const trans = (translator ?? nullTranslator).load(
       'jupyterlab_advanced_markdown_viewer_extension'
     );
+    // The language the lab itself is set to, which the note stamps are
+    // written in (ACC-NOTES-175).
+    const language = (translator ?? nullTranslator).languageCode;
     const contents = app.serviceManager.contents;
     const channel = new ChangeChannel(app.serviceManager.serverSettings);
     const attachments = new Map<MarkdownDocument, IAttachment>();
@@ -284,7 +287,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
           setState: state => void notes.setPanelState(state)
         },
         state: notes.panelState,
-        trans
+        trans,
+        locale: language
       });
       // Nothing is added to the document toolbar: one visible item would make
       // JupyterLab open the toolbar to its full height on every preview, where

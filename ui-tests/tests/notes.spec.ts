@@ -706,8 +706,8 @@ test.describe('marking a passage', () => {
     await expect(panel(page).locator('.jp-AdvancedMd-notesCount')).toHaveText(
       '2 marks'
     );
-    // The entry left the row open: a note and a removal, no colour dots.
-    await expect(first.locator('.jp-AdvancedMd-notesDot')).toHaveCount(0);
+    // The entry left the row open: a note and a removal, no colour.
+    await expect(first.locator('.jp-AdvancedMd-notesColour')).toHaveCount(0);
     await expect(first.locator('button', { hasText: 'Reply' })).toHaveCount(1);
 
     await openMenuOnPreview(page);
@@ -1683,7 +1683,8 @@ test.describe('marking a passage', () => {
     await expect(painted(page)).toHaveCount(0);
     await expect(rows(page)).toHaveCount(0);
     const show = panel(page).locator('.jp-AdvancedMd-notesShowClosed');
-    await expect(show).toHaveText('Show closed (1)');
+    await expect(show).toHaveText('Show hidden (1)');
+    await expect(show).toHaveAttribute('aria-pressed', 'false');
     await expect(panel(page).locator('.jp-AdvancedMd-notesCount')).toHaveText(
       'No marks'
     );
@@ -1697,7 +1698,8 @@ test.describe('marking a passage', () => {
 
     // Shown: the row is listed dimmed and the passage painted muted.
     await show.click();
-    await expect(show).toHaveText('Hide closed (1)');
+    await expect(show).toHaveText('Show hidden (1)');
+    await expect(show).toHaveAttribute('aria-pressed', 'true');
     await expect(rows(page)).toHaveCount(1);
     await expect(rows(page).first()).toHaveClass(
       /jp-AdvancedMd-notesRow-closed/
@@ -1763,8 +1765,10 @@ test.describe('marking a passage', () => {
     await addNote(first).click();
     await expect(first.locator('textarea')).toBeVisible();
     await expect(addNote(first)).toHaveCount(0);
-    // The colours and the removal stay, and the other row keeps its Add note.
-    await expect(first.locator('.jp-AdvancedMd-notesDot')).toHaveCount(6);
+    // The swatch and the removal stay, and the other row keeps its Add note.
+    await expect(first.locator('.jp-AdvancedMd-notesSwatchButton')).toHaveCount(
+      1
+    );
     await expect(first.locator('button[title="Remove this mark"]')).toHaveCount(
       1
     );
@@ -2513,18 +2517,18 @@ test.describe('a document that already carries marks', () => {
     ).toBeFocused();
   });
 
-  test('ACC-NOTES-132 puts the trash icon at the right, apart from the colour dots', async ({
+  test('ACC-NOTES-132 puts the trash icon at the right, apart from the other controls', async ({
     page
   }) => {
     await openRow(page);
-    const dots = rows(page).first().locator('.jp-AdvancedMd-notesDot');
-    await expect(dots).toHaveCount(6);
-    const lastDot = await dots.last().boundingBox();
+    const eye = rows(page).first().locator('button[title="Close this mark"]');
+    await expect(eye).toHaveCount(1);
+    const lastControl = await eye.boundingBox();
     const remove = await removeButton(page).boundingBox();
-    expect(lastDot).not.toBeNull();
+    expect(lastControl).not.toBeNull();
     expect(remove).not.toBeNull();
-    // More than a dot's width of free row between the last dot and the icon.
-    expect(remove!.x).toBeGreaterThan(lastDot!.x + 2 * lastDot!.width);
+    // More than the eye's width of free row between the eye and the icon.
+    expect(remove!.x).toBeGreaterThan(lastControl!.x + 2 * lastControl!.width);
     const controls = await rows(page)
       .first()
       .locator('.jp-AdvancedMd-notesControls')
@@ -2532,6 +2536,60 @@ test.describe('a document that already carries marks', () => {
     expect(remove!.x + remove!.width).toBeGreaterThan(
       controls!.x + controls!.width - 8
     );
+  });
+
+  test('ACC-NOTES-173 rolls the other colours down from the swatch and recolours the mark', async ({
+    page,
+    tmpPath
+  }) => {
+    const file = `${tmpPath}/${FILE}`;
+    const row = rows(page).first();
+    const swatch = row.locator('.jp-AdvancedMd-notesSwatchButton');
+    const list = row.locator('.jp-AdvancedMd-notesColours');
+    await expect(swatch).toHaveAttribute('title', 'Colour: yellow');
+    await expect(swatch).toHaveAttribute('aria-expanded', 'false');
+    await expect(list).toHaveCount(0);
+
+    // The other five roll down under the swatch, the mark's own colour left
+    // out of them.
+    await swatch.click();
+    await expect(list).toBeVisible();
+    await expect(list.locator('button')).toHaveCount(5);
+    // The list hangs clear of the swatch button, so a press on the button
+    // rolls the list up instead of landing on a colour.
+    const target = (await swatch.boundingBox())!;
+    const rolled = (await list.boundingBox())!;
+    expect(rolled.y).toBeGreaterThanOrEqual(target.y + target.height);
+    const offered = await list
+      .locator('button')
+      .evaluateAll((nodes: HTMLElement[]) => nodes.map(node => node.title));
+    expect(offered).not.toContain('yellow');
+    expect(offered).toContain('blue');
+
+    // Escape rolls them up and leaves the colour as it was.
+    await page.keyboard.press('Escape');
+    await expect(list).toHaveCount(0);
+    await expect(swatch).toHaveAttribute('title', 'Colour: yellow');
+
+    // A colour pressed there is the mark's colour, in the file and on the row.
+    await swatch.click();
+    await list.locator('button[title="blue"]').click();
+    const recoloured = await fileWhen(file, holds =>
+      holds.includes(`mark:${ONE} note colour=blue`)
+    );
+    expect(recoloured).toContain(P1);
+    await expect(list).toHaveCount(0);
+    await expect(swatch).toHaveAttribute('title', 'Colour: blue');
+    await expect(row.locator('.jp-AdvancedMd-notesSwatch')).toHaveAttribute(
+      'aria-label',
+      'blue'
+    );
+
+    // A press anywhere else rolls the list up.
+    await swatch.click();
+    await expect(list).toBeVisible();
+    await panel(page).locator('.jp-AdvancedMd-notesCount').click();
+    await expect(list).toHaveCount(0);
   });
 
   test('ACC-NOTES-133 draws the menu swatch as the row swatch', async ({
@@ -4097,21 +4155,50 @@ test.describe('the comment thread of a mark', () => {
       });
     expect(indent).toBeGreaterThan(0);
 
-    // The row's buttons are set in the smaller interface size, the size of
-    // the stamp, not the size of the note text (ACC-NOTES-165).
+    // The stamp of an entry reads on a 24-hour clock, never AM or PM, in the
+    // language the lab is set to (ACC-NOTES-175).
+    const stamped = await entries(page)
+      .nth(0)
+      .locator('.jp-AdvancedMd-notesStamp')
+      .textContent();
+    expect(stamped).toMatch(/\d{1,2}:\d{2}/);
+    expect(stamped).not.toMatch(/\b[AP]M\b/i);
+
+    // The row's buttons are set in the size the note text is set in, in a
+    // box at least 24 px high, and every icon control of the row is a 24 px
+    // target holding a 16 px icon (ACC-NOTES-165).
     const sizes = await rows(page)
       .first()
       .evaluate((row: Element) => {
+        const box = (selector: string) => {
+          const node = row.querySelector(selector)!;
+          const rect = node.getBoundingClientRect();
+          return { width: rect.width, height: rect.height };
+        };
         const px = (selector: string) =>
           parseFloat(getComputedStyle(row.querySelector(selector)!).fontSize);
         return {
           button: px('.jp-AdvancedMd-notesButton'),
-          stamp: px('.jp-AdvancedMd-notesStamp'),
-          text: px('.jp-AdvancedMd-notesText')
+          text: px('.jp-AdvancedMd-notesText'),
+          reply: box('.jp-AdvancedMd-notesButton'),
+          swatch: box('.jp-AdvancedMd-notesSwatchButton'),
+          eye: box('button[title="Close this mark"]'),
+          remove: box('button[title="Remove this mark"]'),
+          edit: box('button[title="Edit this note"]'),
+          icon: box('button[title="Edit this note"] svg'),
+          entry: box('.jp-AdvancedMd-notesEntry'),
+          entryText: box('.jp-AdvancedMd-notesText')
         };
       });
-    expect(sizes.button).toBe(sizes.stamp);
-    expect(sizes.button).toBeLessThan(sizes.text);
+    expect(sizes.button).toBe(sizes.text);
+    expect(sizes.reply.height).toBeGreaterThanOrEqual(24);
+    for (const target of [sizes.swatch, sizes.eye, sizes.remove, sizes.edit]) {
+      expect(target.width).toBeGreaterThanOrEqual(24);
+      expect(target.height).toBeGreaterThanOrEqual(24);
+    }
+    expect(sizes.icon.width).toBeCloseTo(16, 0);
+    // The floated icons leave the note text the full width of its entry.
+    expect(sizes.entryText.width).toBeCloseTo(sizes.entry.width, 0);
 
     // Every entry carries an edit icon and an x in its top right corner.
     const first = entries(page).nth(0);
@@ -4211,7 +4298,9 @@ test.describe('the comment thread of a mark', () => {
     await panelButton(page, 'Comment').click();
     await expect(close).toHaveCount(0);
     await expect(panelButton(page, 'Comment')).toHaveCount(0);
-    await expect(row.locator('.jp-AdvancedMd-notesDot')).toHaveCount(6);
+    await expect(row.locator('.jp-AdvancedMd-notesSwatchButton')).toHaveCount(
+      1
+    );
     await expect(removeButton(page)).toHaveCount(1);
     await panelButton(page, 'Cancel').click();
     await expect(close).toHaveCount(1);

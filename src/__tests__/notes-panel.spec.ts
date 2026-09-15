@@ -20,7 +20,9 @@ import {
   REMOVE_CLASS,
   COUNT_CLASS,
   CONTROLS_CLASS,
-  DOT_CLASS,
+  COLOUR_CLASS,
+  COLOURS_CLASS,
+  COLOUR_OPTION_CLASS,
   ENTRY_CLASS,
   ENTRY_ICON_CLASS,
   ENTRY_ICONS_CLASS,
@@ -46,12 +48,14 @@ import {
   SELECTED_CLASS,
   STAMP_CLASS,
   STATE_CLASS,
+  SWATCH_BUTTON_CLASS,
   SWATCH_CLASS,
   TEXT_CLASS,
   TICK_CLASS,
   TOGGLE_CLASS,
   colourClass,
   installNotesPanel,
+  localeTag,
   openingState,
   BADGE_EMPTY_CLASS,
   ADD_CLASS
@@ -351,7 +355,8 @@ describe('closed marks (ACC-NOTES-155)', () => {
       '1 mark'
     );
     expect(control().hidden).toBe(false);
-    expect(control().textContent).toBe('Show closed (1)');
+    expect(control().textContent).toBe('Show hidden (1)');
+    expect(control().getAttribute('aria-pressed')).toBe('false');
     panel.state = 'minimap';
     expect(ticks()).toHaveLength(1);
   });
@@ -370,7 +375,9 @@ describe('closed marks (ACC-NOTES-155)', () => {
     expect(rows()[1].querySelector(`.${STATE_CLASS}`)!.textContent).toBe(
       'closed'
     );
-    expect(control().textContent).toBe('Hide closed (1)');
+    // One set of words in both states; the pressed state says which is on.
+    expect(control().textContent).toBe('Show hidden (1)');
+    expect(control().getAttribute('aria-pressed')).toBe('true');
     panel.state = 'minimap';
     expect(ticks()).toHaveLength(2);
     panel.state = 'expanded';
@@ -612,15 +619,13 @@ describe('a row', () => {
       '',
       ''
     ]);
-    // The corner container is the entry's first child, positioned by the
-    // stylesheet at its top right.
+    // The corner container is the entry's first child, floated by the
+    // stylesheet to the right of its first line.
     expect(
       rows()[0].querySelector(`.${ENTRY_CLASS}`)!.firstElementChild!.className
     ).toBe(ENTRY_ICONS_CLASS);
     expect(
-      /\.jp-AdvancedMd-notesEntryIcons \{[^}]*position: absolute;[^}]*top: 0;[^}]*right: 0;/.test(
-        readCss()
-      )
+      /\.jp-AdvancedMd-notesEntryIcons \{[^}]*float: right;/.test(readCss())
     ).toBe(true);
 
     // The x deletes at once, no confirmation, and asks nothing else.
@@ -756,7 +761,9 @@ describe('a row', () => {
     expect(icons(rows()[0])).toBe(0);
     expect(labelled(rows()[0], 'Reply to this comment')).toBe(false);
     expect(labelled(rows()[0], 'Close this mark')).toBe(false);
-    expect(rows()[0].querySelectorAll(`.${DOT_CLASS}`)).toHaveLength(6);
+    expect(rows()[0].querySelectorAll(`.${SWATCH_BUTTON_CLASS}`)).toHaveLength(
+      1
+    );
     expect(labelled(rows()[0], 'Remove this mark')).toBe(true);
     expect(icons(rows()[1])).toBe(2);
     expect(labelled(rows()[1], 'Close this mark')).toBe(true);
@@ -855,13 +862,60 @@ describe('a row', () => {
     expect(rows()[1].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
   });
 
-  it('carries the stamp as local time and the file value in its title', () => {
+  it('carries the stamp as local time on a 24-hour clock, and the file value in its title (ACC-NOTES-175)', () => {
     expand(rows()[0]);
     const stamp = rows()[0].querySelector(`.${STAMP_CLASS}`)!;
     expect(stamp.getAttribute('title')).toBe('2026-09-06T16:00:00Z');
     expect(stamp.textContent).toBe(
-      new Date('2026-09-06T16:00:00Z').toLocaleString()
+      new Date('2026-09-06T16:00:00Z').toLocaleString(undefined, {
+        hourCycle: 'h23'
+      })
     );
+    // No lab language reaches this panel, so the reader's browser chooses the
+    // words and the order of the date; the clock is 24-hour either way.
+    expect(stamp.textContent).not.toMatch(/\b[AP]M\b/i);
+    expect(stamp.textContent).toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it('writes the stamp in the language the lab is set to, on a 24-hour clock (ACC-NOTES-175)', () => {
+    // JupyterLab writes the code with an underscore where a language tag has
+    // a hyphen, and Intl throws on the underscore form. The language is one
+    // that reads the clock in AM and PM, so the 24-hour rule is what the
+    // assertion below rests on.
+    const american = new NotesPanel({
+      root: () => root,
+      handlers,
+      state: 'expanded',
+      locale: 'en_US'
+    });
+    Widget.attach(american, document.body);
+    american.setMarks([
+      item('a', 'first passage', {
+        mark: mark('a', {
+          notes: [note('kj', '2026-09-06T16:00:00Z', 'the only entry')]
+        })
+      })
+    ]);
+    // Opening the row rebuilds the body, so the row is read again after it.
+    const row = (): HTMLElement =>
+      american.node.querySelector<HTMLElement>(`.${ROW_CLASS}`)!;
+    expand(row());
+    const written = row().querySelector(`.${STAMP_CLASS}`)!.textContent;
+    expect(written).toBe(
+      new Date('2026-09-06T16:00:00Z').toLocaleString('en-US', {
+        hourCycle: 'h23'
+      })
+    );
+    expect(written).not.toMatch(/\b[AP]M\b/i);
+    // The conversion is asserted directly as well: where the environment's
+    // own default is en-US, which is the shape CI runs in, the rendered value
+    // alone cannot tell a converted tag from a dropped one.
+    expect(localeTag('en_US')).toBe('en-US');
+    expect(localeTag('pl_PL')).toBe('pl-PL');
+    // A code Intl has no data for leaves the language to the browser.
+    expect(localeTag('zz_ZZ')).toBeUndefined();
+    expect(localeTag('')).toBeUndefined();
+    american.dispose();
   });
 
   it('says when a mark is unanchored', () => {
@@ -952,7 +1006,9 @@ describe('a row', () => {
       'task'
     );
     expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).toBeNull();
-    expect(rows()[0].querySelectorAll(`.${DOT_CLASS}`)).toHaveLength(0);
+    // Its swatch shows the colour and offers no list (ACC-NOTES-173).
+    expect(rows()[0].querySelector(`.${SWATCH_CLASS}`)).not.toBeNull();
+    expect(rows()[0].querySelector(`.${SWATCH_BUTTON_CLASS}`)).toBeNull();
   });
 });
 
@@ -1413,6 +1469,21 @@ describe('writing a note', () => {
     );
   });
 
+  it('keeps the reader in the panel when the state changes while the colours are rolled down (ACC-NOTES-173)', () => {
+    rows()[0]
+      .querySelector<HTMLButtonElement>(`.${SWATCH_BUTTON_CLASS}`)!
+      .click();
+    // The reader stands in the list, which the state change takes away with
+    // the rows; taking it away any earlier would drop them on the page body.
+    expect(document.activeElement).toBe(
+      rows()[0].querySelector(`.${COLOUR_OPTION_CLASS}`)
+    );
+    panel.state = 'minimap';
+    expect(document.activeElement).toBe(
+      panel.node.querySelector(`.${MAP_CLASS}`)
+    );
+  });
+
   it('moves the focus to the viewer when the panel is hidden from its own button', () => {
     const viewer = document.createElement('div');
     viewer.className = 'jp-MarkdownViewer';
@@ -1495,7 +1566,7 @@ describe('writing a note', () => {
     panel.setMarks([documentItem('d')]);
     panel.selectMark('d');
     const row = rows()[0];
-    expect(row.querySelectorAll(`.${DOT_CLASS}`)).toHaveLength(0);
+    expect(row.querySelector(`.${COLOUR_CLASS}`)).toBeNull();
     expect(row.querySelector(`.${REMOVE_CLASS}`)).not.toBeNull();
     expect(
       Array.from(row.querySelectorAll('button')).some(
@@ -1663,11 +1734,13 @@ describe('writing a note', () => {
     });
 
     it('cancels the entry when the reader leaves the panel from a control of its row', async () => {
-      // The colour dots sit above the field, so a colour picked with the field
+      // The swatch sits above the field, so a colour picked with the field
       // open leaves the focus on the row rather than in the field; the click
       // away that follows is still the reader leaving the entry.
       press(rows()[0], 'Comment');
-      rows()[0].querySelector<HTMLButtonElement>(`.${DOT_CLASS}`)!.focus();
+      rows()[0]
+        .querySelector<HTMLButtonElement>(`.${SWATCH_BUTTON_CLASS}`)!
+        .focus();
       expect(panel.node.querySelector('textarea')).not.toBeNull();
 
       away.focus();
@@ -2358,16 +2431,86 @@ describe('the controls of a row', () => {
     ).toBe(true);
   });
 
-  it('offers the six colours and asks for the one pressed', () => {
-    const dots = Array.from(
-      rows()[0].querySelectorAll<HTMLButtonElement>(`.${DOT_CLASS}`)
+  it('rolls the other colours down from the swatch and asks for the one pressed (ACC-NOTES-173)', () => {
+    const swatch = (): HTMLButtonElement =>
+      rows()[0].querySelector<HTMLButtonElement>(`.${SWATCH_BUTTON_CLASS}`)!;
+    expect(swatch().title).toBe('Colour: yellow');
+    expect(swatch().getAttribute('aria-expanded')).toBe('false');
+    expect(rows()[0].querySelector(`.${COLOURS_CLASS}`)).toBeNull();
+
+    swatch().click();
+    expect(swatch().getAttribute('aria-expanded')).toBe('true');
+    const options = (): HTMLButtonElement[] =>
+      Array.from(
+        rows()[0].querySelectorAll<HTMLButtonElement>(`.${COLOUR_OPTION_CLASS}`)
+      );
+    // The other five: the mark's own colour is the swatch itself.
+    expect(options().map(option => option.title)).toEqual(
+      MARK_COLOURS.filter(colour => colour !== 'yellow')
     );
-    expect(dots.map(dot => dot.title)).toEqual([...MARK_COLOURS]);
-    for (const [index, colour] of MARK_COLOURS.entries()) {
-      expect(dots[index].classList.contains(colourClass(colour))).toBe(true);
+    for (const option of options()) {
+      expect(
+        option.firstElementChild!.classList.contains(
+          colourClass(option.title as MarkColour)
+        )
+      ).toBe(true);
     }
-    dots[2].click();
-    expect(asked).toEqual([`colour a ${MARK_COLOURS[2]}`]);
+    // The list takes the focus, so the keyboard is in it.
+    expect(document.activeElement).toBe(options()[0]);
+
+    const chosen = options()[0];
+    const colour = chosen.title;
+    chosen.click();
+    expect(asked).toEqual([`colour a ${colour}`]);
+    expect(rows()[0].querySelector(`.${COLOURS_CLASS}`)).toBeNull();
+    expect(swatch().getAttribute('aria-expanded')).toBe('false');
+    // The reader is left on the swatch they opened, not on the page body.
+    expect(document.activeElement).toBe(swatch());
+  });
+
+  it('rolls the list up on a second press, on Escape and on a press elsewhere (ACC-NOTES-173)', () => {
+    const swatch = (): HTMLButtonElement =>
+      rows()[0].querySelector<HTMLButtonElement>(`.${SWATCH_BUTTON_CLASS}`)!;
+    const list = (): Element | null =>
+      rows()[0].querySelector(`.${COLOURS_CLASS}`);
+
+    swatch().click();
+    expect(list()).not.toBeNull();
+    swatch().click();
+    expect(list()).toBeNull();
+
+    swatch().click();
+    list()!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    );
+    expect(list()).toBeNull();
+    expect(document.activeElement).toBe(swatch());
+
+    swatch().click();
+    document.body.dispatchEvent(
+      new MouseEvent('pointerdown', { bubbles: true })
+    );
+    expect(list()).toBeNull();
+    // Nothing was written by any of it.
+    expect(asked).toEqual([]);
+  });
+
+  it('keeps the rolled-down list through a rebuild, and rolls it up on a state change (ACC-NOTES-173)', () => {
+    const swatch = (): HTMLButtonElement =>
+      rows()[0].querySelector<HTMLButtonElement>(`.${SWATCH_BUTTON_CLASS}`)!;
+    swatch().click();
+    expect(rows()[0].querySelector(`.${COLOURS_CLASS}`)).not.toBeNull();
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
+    expect(rows()[0].querySelector(`.${COLOURS_CLASS}`)).not.toBeNull();
+    expect(rows()[1].querySelector(`.${COLOURS_CLASS}`)).toBeNull();
+    // The rebuilt list hangs under the rebuilt swatch, which the reader is
+    // left on, so Escape still rolls it up.
+    expect(document.activeElement).toBe(swatch());
+
+    // A state change empties the rows; the list does not come back with them.
+    panel.state = 'minimap';
+    panel.state = 'expanded';
+    expect(rows()[0].querySelector(`.${COLOURS_CLASS}`)).toBeNull();
   });
 
   it('leaves Add note out of a row while its note is written, and keeps the colours', async () => {
@@ -2381,8 +2524,8 @@ describe('the controls of a row', () => {
     press(rows()[0], 'Comment');
     expect(rows()[0].querySelector('textarea')).not.toBeNull();
     expect(offersNote(rows()[0])).toBe(false);
-    expect(rows()[0].querySelectorAll(`.${DOT_CLASS}`)).toHaveLength(
-      MARK_COLOURS.length
+    expect(rows()[0].querySelectorAll(`.${SWATCH_BUTTON_CLASS}`)).toHaveLength(
+      1
     );
     expect(rows()[0].querySelector(`.${REMOVE_CLASS}`)).not.toBeNull();
     expect(offersNote(rows()[1])).toBe(true);
@@ -2401,20 +2544,6 @@ describe('the controls of a row', () => {
     expect(offersNote(rows()[0])).toBe(true);
   });
 
-  it('keeps the colour dots in place when Add note leaves the row', () => {
-    const places = (): number[] =>
-      Array.from(rows()[0].querySelector(`.${CONTROLS_CLASS}`)!.children)
-        .map((control, index) =>
-          control.classList.contains(DOT_CLASS) ? index : -1
-        )
-        .filter(index => index >= 0);
-    const before = places();
-    expect(before).toHaveLength(MARK_COLOURS.length);
-    press(rows()[0], 'Comment');
-    expect(rows()[0].querySelector('textarea')).not.toBeNull();
-    expect(places()).toEqual(before);
-  });
-
   it('asks for the mark to be removed', () => {
     press(rows()[0], 'Remove this mark');
     expect(asked).toEqual(['remove a']);
@@ -2431,10 +2560,10 @@ describe('the controls of a row', () => {
       addNote,
       ...Array.from(panel.node.querySelectorAll('button'))
     ];
-    // The expand, collapse, Show closed, add and close controls, the toggle,
-    // Comment, the six dots, Remove, Save and Cancel; Close is withheld
-    // while the field is open (ACC-NOTES-166).
-    expect(buttons).toHaveLength(16);
+    // The expand, collapse, Show hidden, add and close controls, the toggle,
+    // Comment, the swatch, Remove, Save and Cancel; Close is withheld while
+    // the field is open (ACC-NOTES-166).
+    expect(buttons).toHaveLength(11);
     for (const button of buttons) {
       expect(button.getAttribute('aria-label')).toBe(button.title);
       // A button with a worded label is spoken and voice-driven by that
@@ -2634,13 +2763,40 @@ describe('the mark colours in the stylesheet', () => {
     }
   }
 
-  it('sets the row buttons in the smaller interface size (ACC-NOTES-165)', () => {
+  it('sets the row buttons at a readable size (ACC-NOTES-165)', () => {
+    // The text buttons take the size the note text is set in, and the header
+    // keeps the smaller one, where there is no room for more.
     expect(declaration('.jp-AdvancedMd-notesButton', 'font-size')).toBe(
+      'var(--jp-ui-font-size1)'
+    );
+    expect(declaration('.jp-AdvancedMd-notesShowClosed', 'font-size')).toBe(
       'var(--jp-ui-font-size0)'
     );
     expect(declaration('.jp-AdvancedMd-notesStamp', 'font-size')).toBe(
       'var(--jp-ui-font-size0)'
     );
+    // Every icon control of a row is a 24 px target holding a 16 px icon.
+    expect(declaration('.jp-AdvancedMd-notesEntryIcon', 'width')).toBe('24px');
+    expect(declaration('.jp-AdvancedMd-notesEntryIcon', 'height')).toBe('24px');
+    expect(declaration('.jp-AdvancedMd-notesButton', 'min-height')).toBe(
+      '24px'
+    );
+    expect(declaration('.jp-AdvancedMd-notesRemove', 'min-width')).toBe('24px');
+    expect(declaration('.jp-AdvancedMd-notesCloseMark', 'min-width')).toBe(
+      '24px'
+    );
+    // The swatch button, the colours it rolls down and the row's icons are
+    // sized by rules the two of them share.
+    expect(
+      /\.jp-AdvancedMd-notesSwatchButton,\s*\.jp-AdvancedMd-notesColourOption \{[^}]*width: 24px;[^}]*height: 24px;/.test(
+        readCss()
+      )
+    ).toBe(true);
+    expect(
+      /\.jp-AdvancedMd-notesEntryIcon svg \{[^}]*width: 16px;[^}]*height: 16px;/.test(
+        readCss()
+      )
+    ).toBe(true);
   });
 
   it('borders the minimap tick and gives the bordered buttons the 24 px target', () => {

@@ -1,6 +1,7 @@
 /**
- * The README screenshots, taken in the Galaxa Dark Theme - Steel with dates in
- * en-GB, and written to docs/images.
+ * The README screenshots, taken in the Galaxa Dark Theme - Steel in a browser
+ * set to en-GB, and written to docs/images. The note stamps in them read in
+ * the language the lab is set to, not the browser's (ACC-NOTES-175).
  *
  * Every shot is the window below JupyterLab's top bar, which carries the menu
  * and the lab's branding, at 2560 by 1440 pixels: the window is made taller by

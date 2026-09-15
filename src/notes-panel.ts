@@ -60,6 +60,14 @@ export const ROW_CLASS = 'jp-AdvancedMd-notesRow';
 export const SELECTED_CLASS = 'jp-AdvancedMd-notesRow-selected';
 export const HEAD_CLASS = 'jp-AdvancedMd-notesHead';
 export const SWATCH_CLASS = 'jp-AdvancedMd-notesSwatch';
+/**
+ * The swatch as a button, the list of colours it rolls down and each colour
+ * in that list (ACC-NOTES-173).
+ */
+export const COLOUR_CLASS = 'jp-AdvancedMd-notesColour';
+export const SWATCH_BUTTON_CLASS = 'jp-AdvancedMd-notesSwatchButton';
+export const COLOURS_CLASS = 'jp-AdvancedMd-notesColours';
+export const COLOUR_OPTION_CLASS = 'jp-AdvancedMd-notesColourOption';
 export const PASSAGE_CLASS = 'jp-AdvancedMd-notesPassage';
 export const TOGGLE_CLASS = 'jp-AdvancedMd-notesToggle';
 export const STATE_CLASS = 'jp-AdvancedMd-notesState';
@@ -74,7 +82,6 @@ export const STAMP_CLASS = 'jp-AdvancedMd-notesStamp';
 export const TEXT_CLASS = 'jp-AdvancedMd-notesText';
 export const CONTROLS_CLASS = 'jp-AdvancedMd-notesControls';
 export const BUTTON_CLASS = 'jp-AdvancedMd-notesButton';
-export const DOT_CLASS = 'jp-AdvancedMd-notesDot';
 export const FORM_CLASS = 'jp-AdvancedMd-notesForm';
 export const FORM_BUTTONS_CLASS = 'jp-AdvancedMd-notesFormButtons';
 export const TICK_CLASS = 'jp-AdvancedMd-notesTick';
@@ -237,6 +244,12 @@ export interface INotesPanelOptions {
   state: PanelState;
   /** Translates the panel's labels; without one they stay in English. */
   trans?: TranslationBundle;
+  /**
+   * The language the lab is set to, as JupyterLab writes it: `en`, `pl_PL`.
+   * The note stamps are written in it; without one the reader's browser
+   * chooses the language, though never the clock (ACC-NOTES-175).
+   */
+  locale?: string;
 }
 
 /**
@@ -350,6 +363,25 @@ function hint(text: string): HTMLElement {
 }
 
 /**
+ * The lab's language as `Intl` reads it, or nothing when `Intl` cannot.
+ *
+ * JupyterLab writes the code with an underscore, `pl_PL`, where a language tag
+ * is `pl-PL`, and `toLocaleString` throws on a tag it cannot parse rather than
+ * falling back, so a code with no data behind it leaves the language to the
+ * reader's browser (ACC-NOTES-175).
+ */
+export function localeTag(code: string): string | undefined {
+  const tag = code.replace(/_/g, '-');
+  try {
+    return Intl.DateTimeFormat.supportedLocalesOf(tag).length > 0
+      ? tag
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The marks of one document, listed beside its preview.
  */
 export class NotesPanel extends Widget {
@@ -361,6 +393,7 @@ export class NotesPanel extends Widget {
     this._trans =
       options.trans ??
       nullTranslator.load('jupyterlab_advanced_markdown_viewer_extension');
+    this._locale = localeTag(options.locale ?? '');
 
     this._count = document.createElement('span');
     this._count.className = COUNT_CLASS;
@@ -601,6 +634,16 @@ export class NotesPanel extends Widget {
       event.type === 'pointerdown'
         ? event.target
         : (event as FocusEvent).relatedTarget;
+    // An open colour list rolls up once a press or the focus lands anywhere
+    // but the list and its swatch (ACC-NOTES-173).
+    const picker = this._body.querySelector(`.${COLOURS_CLASS}`)?.parentElement;
+    if (
+      this._picking !== null &&
+      inside instanceof Node &&
+      !picker?.contains(inside)
+    ) {
+      this._closeColours();
+    }
     if (
       inside instanceof Node &&
       (this.node.contains(inside) ||
@@ -737,6 +780,12 @@ export class NotesPanel extends Widget {
    * measure the panel again, since its width comes from the state class.
    */
   private _apply(): void {
+    // A state change empties the rows with no press and no focus move, so
+    // the mark stops being picked here and the rebuild does not bring the
+    // list back. The list node itself goes with the body _render empties
+    // below: taking it out here would tear it from under the reader, whose
+    // focus the rescue further down reads (ACC-NOTES-173).
+    this._picking = null;
     this.toggleClass(EXPANDED_CLASS, this._state === 'expanded');
     this.toggleClass(MINIMAP_CLASS, this._state === 'minimap');
     // The hide control names what it hides.
@@ -813,10 +862,16 @@ export class NotesPanel extends Widget {
     );
     const closed = this._items.filter(item => item.mark.closed).length;
     this._showClosedControl.hidden = closed === 0;
-    const showClosed = `${this._showClosed ? 'Hide' : 'Show'} closed (${closed})`;
+    // One set of words in both states; the pressed state says which is on
+    // (ACC-NOTES-174).
+    const showClosed = `Show hidden (${closed})`;
     this._showClosedControl.textContent = showClosed;
     this._showClosedControl.title = showClosed;
     this._showClosedControl.setAttribute('aria-label', showClosed);
+    this._showClosedControl.setAttribute(
+      'aria-pressed',
+      String(this._showClosed)
+    );
     this._count.textContent = countLabel(listed.length);
     // The count, then the action, under the name the menu gives it.
     const title = `${countLabel(listed.length)}: ${PANEL_LABELS.expanded}`;
@@ -865,10 +920,19 @@ export class NotesPanel extends Widget {
       }
     } else if (at !== null) {
       const rows = this._body.querySelectorAll<HTMLElement>(`.${ROW_CLASS}`);
+      const rebuilt = this._body.querySelector<HTMLElement>(
+        `.${ROW_CLASS}[${MARK_ATTRIBUTE}="${at}"]`
+      );
+      // The row whose colours are rolled down hands the focus to its swatch
+      // rather than to the row: the list is rebuilt with the row, and Escape
+      // rolls it up from inside the swatch alone (ACC-NOTES-173).
+      const picked =
+        this._picking === at
+          ? rebuilt?.querySelector<HTMLElement>(`.${SWATCH_BUTTON_CLASS}`)
+          : null;
       const target =
-        this._body.querySelector<HTMLElement>(
-          `.${ROW_CLASS}[${MARK_ATTRIBUTE}="${at}"]`
-        ) ??
+        picked ??
+        rebuilt ??
         rows[Math.min(index, rows.length - 1)] ??
         this._body;
       // A rebuild the reader did not ask for, a change from disk, must not
@@ -949,7 +1013,7 @@ export class NotesPanel extends Widget {
       // The swatch is the only place the row shows its colour.
       swatch.setAttribute('role', 'img');
       swatch.setAttribute('aria-label', mark.colour);
-      head.appendChild(swatch);
+      head.appendChild(known(mark) ? this._colour(mark, swatch) : swatch);
       passage.textContent = shorten(item.passage);
     }
     head.appendChild(passage);
@@ -1014,7 +1078,7 @@ export class NotesPanel extends Widget {
               remove: () => this._handlers.removeNote(mark.id, note)
             }
           : null;
-      const element = entryRow(note, index > 0, actions);
+      const element = entryRow(note, index > 0, actions, this._locale);
       // A note is part of its row, so a click on it selects the row as a
       // click on the head does; a click that ends a selection of the note's
       // text is the reader copying it, and is left alone.
@@ -1038,10 +1102,10 @@ export class NotesPanel extends Widget {
   }
 
   /**
-   * The controls of an open row: the six colours, Comment or Reply, Close or
-   * Reopen, and a removal. Comment follows the colours, so the colours stay
-   * in place when it leaves the row, and the second click of a double click
-   * lands on no control.
+   * The controls of an open row: Comment or Reply, Close or Reopen, and a
+   * removal at the far right. The colour is chosen from the row's swatch
+   * (ACC-NOTES-173). Comment and the eye leave the row together while its
+   * field is open, so the second click of a double click lands on no control.
    *
    * @param writing - true while the row's note field is open: the field is
    * the entry being written, so Comment (ACC-NOTES-147) and Close
@@ -1050,13 +1114,6 @@ export class NotesPanel extends Widget {
   private _controls(mark: IMark, writing: boolean): HTMLElement {
     const controls = document.createElement('div');
     controls.className = CONTROLS_CLASS;
-    for (const colour of mark.type === DOCUMENT_TYPE ? [] : MARK_COLOURS) {
-      controls.appendChild(
-        button(`${DOT_CLASS} ${colourClass(colour)}`, '', colour, () =>
-          this._handlers.setColour(mark.id, colour)
-        )
-      );
-    }
     if (!writing) {
       // The first entry is the comment on the passage, the rest are replies
       // to it (ACC-NOTES-171).
@@ -1095,6 +1152,98 @@ export class NotesPanel extends Widget {
     REMOVE_ICON.element({ container: remove, tag: 'span' });
     controls.appendChild(remove);
     return controls;
+  }
+
+  /**
+   * The swatch of a mark this version writes, as the button that rolls down
+   * the other colours under it (ACC-NOTES-173). The list is part of the row
+   * while its mark is the one being picked, so a render keeps it open.
+   */
+  private _colour(mark: IMark, swatch: HTMLElement): HTMLElement {
+    const colour = document.createElement('span');
+    colour.className = COLOUR_CLASS;
+    const toggle = button(
+      SWATCH_BUTTON_CLASS,
+      '',
+      `Colour: ${mark.colour}`,
+      () => {
+        if (this._picking === mark.id) {
+          this._closeColours();
+          return;
+        }
+        this._closeColours();
+        this._picking = mark.id;
+        const list = this._colours(mark);
+        colour.appendChild(list);
+        toggle.setAttribute('aria-expanded', 'true');
+        list.scrollIntoView({ block: 'nearest' });
+        list.querySelector('button')?.focus({ preventScroll: true });
+      }
+    );
+    toggle.setAttribute('aria-haspopup', 'true');
+    toggle.setAttribute('aria-expanded', String(this._picking === mark.id));
+    toggle.appendChild(swatch);
+    colour.appendChild(toggle);
+    if (this._picking === mark.id) {
+      colour.appendChild(this._colours(mark));
+    }
+    // The swatch sits inside the head, whose own click selects the row and
+    // scrolls the preview to it; choosing a colour is not selecting.
+    colour.addEventListener('click', event => event.stopPropagation());
+    colour.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && this._picking === mark.id) {
+        event.stopPropagation();
+        this._closeColours();
+        toggle.focus();
+      }
+    });
+    return colour;
+  }
+
+  /**
+   * The colours a mark can take other than its own, each drawn as the swatch
+   * is and named by its colour.
+   */
+  private _colours(mark: IMark): HTMLElement {
+    const list = document.createElement('div');
+    list.className = COLOURS_CLASS;
+    list.setAttribute('role', 'group');
+    list.setAttribute('aria-label', this._trans.__('Colours'));
+    for (const colour of MARK_COLOURS) {
+      if (colour === mark.colour) {
+        continue;
+      }
+      const option = button(COLOUR_OPTION_CLASS, '', colour, () => {
+        // The list the reader stands in goes with the press, so the swatch
+        // it rolled down from takes the focus before the rewrite rebuilds
+        // the rows: the render then finds the reader on a control of the
+        // panel and keeps their row, as every other control of a row does.
+        const toggle = list.previousElementSibling as HTMLElement | null;
+        this._closeColours();
+        toggle?.focus({ preventScroll: true });
+        this._handlers.setColour(mark.id, colour);
+      });
+      const swatch = document.createElement('span');
+      swatch.className = `${SWATCH_CLASS} ${colourClass(colour)}`;
+      option.appendChild(swatch);
+      list.appendChild(option);
+    }
+    return list;
+  }
+
+  /**
+   * Roll up the open colour list. It is taken out of the row in place, with
+   * no render, so the control a pointer press landed on is still there for
+   * the click that follows.
+   */
+  private _closeColours(): void {
+    if (this._picking === null) {
+      return;
+    }
+    this._picking = null;
+    const list = this._body.querySelector(`.${COLOURS_CLASS}`);
+    list?.previousElementSibling?.setAttribute('aria-expanded', 'false');
+    list?.remove();
   }
 
   /**
@@ -1234,6 +1383,7 @@ export class NotesPanel extends Widget {
   private readonly _root: () => HTMLElement | null;
   private readonly _handlers: INotesPanelHandlers;
   private readonly _trans: TranslationBundle;
+  private readonly _locale: string | undefined;
   private readonly _count: HTMLElement;
   private readonly _body: HTMLElement;
   private readonly _closedHint: HTMLElement;
@@ -1246,6 +1396,8 @@ export class NotesPanel extends Widget {
   private _grow: (() => void) | null = null;
   private _showClosed = false;
   private _showClosedControl: HTMLButtonElement;
+  /** The mark whose colour list is rolled down, if any (ACC-NOTES-173). */
+  private _picking: string | null = null;
   private _close: HTMLButtonElement;
   /**
    * Where the reader is to be put when the body is rebuilt: null for wherever
@@ -1279,7 +1431,8 @@ function countLabel(count: number): string {
 function entryRow(
   note: INoteEntry,
   reply: boolean,
-  actions: { edit: () => void; remove: () => void } | null
+  actions: { edit: () => void; remove: () => void } | null,
+  locale: string | undefined
 ): HTMLElement {
   const entry = document.createElement('div');
   entry.className = reply ? `${ENTRY_CLASS} ${ENTRY_REPLY_CLASS}` : ENTRY_CLASS;
@@ -1310,7 +1463,12 @@ function entryRow(
   if (note.stamp) {
     const stamp = document.createElement('span');
     stamp.className = STAMP_CLASS;
-    stamp.textContent = new Date(note.stamp).toLocaleString();
+    // The lab's language decides the words and the order of the date; the
+    // clock is 24-hour whatever the reader's browser would choose
+    // (ACC-NOTES-175).
+    stamp.textContent = new Date(note.stamp).toLocaleString(locale, {
+      hourCycle: 'h23'
+    });
     // The ISO stamp is what the file holds, so it is the one to read back.
     stamp.title = note.stamp;
     entry.appendChild(stamp);
