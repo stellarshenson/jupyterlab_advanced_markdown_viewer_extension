@@ -271,7 +271,10 @@ const panelButton = (page: any, label: string) =>
 const removeButton = (page: any) =>
   page.locator('.jp-AdvancedMd-notes:visible button[title="Remove this mark"]');
 
-/** Open a row so its controls and its whole thread are on screen. */
+/**
+ * Open a closed row so its controls and its whole thread are on screen; the
+ * same click closes an open row (ACC-NOTES-148).
+ */
 async function openRow(page: any, index = 0): Promise<void> {
   await rows(page).nth(index).locator('.jp-AdvancedMd-notesHead').click();
   await expect(
@@ -1710,7 +1713,6 @@ test.describe('marking a passage', () => {
     );
 
     // Reopen: the attribute goes, the paint and the row are as before.
-    await openRow(page);
     await page
       .locator('.jp-AdvancedMd-notes:visible button[title="Reopen this mark"]')
       .click();
@@ -1784,30 +1786,38 @@ test.describe('marking a passage', () => {
     await expect(addNote(first)).toHaveCount(1);
   });
 
-  test('ACC-NOTES-148 opens a row from a click on it and closes it from its triangle', async ({
+  test('ACC-NOTES-148 opens a row from a click on it and closes it from a click on its top line or Enter', async ({
     page
   }) => {
     await mark(page, P1);
     await expect(rows(page)).toHaveCount(1);
     const row = rows(page).first();
-    const triangle = row.locator('.jp-AdvancedMd-notesToggle');
     const controls = row.locator('.jp-AdvancedMd-notesControls');
-    // A closed row opens from a click on it, so it carries no triangle.
     await expect(controls).toHaveCount(0);
-    await expect(triangle).toHaveCount(0);
 
     await row.locator('.jp-AdvancedMd-notesHead').click();
     await expect(controls).toBeVisible();
-    await expect(triangle).toHaveAttribute('title', 'Collapse');
+    await expect(panel(page).locator('button[title="Collapse"]')).toHaveCount(
+      0
+    );
 
-    await triangle.click();
+    // The swatch on the top line acts for itself and leaves the row open.
+    await row.locator('.jp-AdvancedMd-notesSwatchButton').click();
+    await expect(row.locator('.jp-AdvancedMd-notesColours')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(row.locator('.jp-AdvancedMd-notesColours')).toHaveCount(0);
+    await expect(controls).toBeVisible();
+
+    // A click on the passage text of the top line closes the open row.
+    await row.locator('.jp-AdvancedMd-notesPassage').click();
     await expect(controls).toHaveCount(0);
-    await expect(triangle).toHaveCount(0);
 
-    // Enter on the focused row opens it as the click does.
+    // Enter on the focused row opens it as the click does, and closes it.
     await row.focus();
     await page.keyboard.press('Enter');
     await expect(controls).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect(controls).toHaveCount(0);
   });
 
   test('DEF-NOTES-76 selects a row from a click on its note', async ({
@@ -2517,24 +2527,56 @@ test.describe('a document that already carries marks', () => {
     ).toBeFocused();
   });
 
-  test('ACC-NOTES-132 puts the trash icon at the right, apart from the other controls', async ({
+  test("ACC-NOTES-132 puts the eye and then the trash at the right of the mark's top line, above the thread", async ({
     page
   }) => {
+    const row = rows(page).first();
+    const passage = row.locator('.jp-AdvancedMd-notesPassage');
+    const closed = await passage.boundingBox();
     await openRow(page);
-    const eye = rows(page).first().locator('button[title="Close this mark"]');
-    await expect(eye).toHaveCount(1);
-    const lastControl = await eye.boundingBox();
-    const remove = await removeButton(page).boundingBox();
-    expect(lastControl).not.toBeNull();
-    expect(remove).not.toBeNull();
-    // More than the eye's width of free row between the eye and the icon.
-    expect(remove!.x).toBeGreaterThan(lastControl!.x + 2 * lastControl!.width);
-    const controls = await rows(page)
-      .first()
-      .locator('.jp-AdvancedMd-notesControls')
-      .boundingBox();
-    expect(remove!.x + remove!.width).toBeGreaterThan(
-      controls!.x + controls!.width - 8
+    // The controls are pulled back into the top line, so the passage text
+    // does not move when the row opens.
+    const opened = await passage.boundingBox();
+    expect(opened!.y).toBeCloseTo(closed!.y, 0);
+    await panelButton(page, 'Comment').click();
+    await writeNote(page, 'A comment on the passage.');
+    // The eye is withheld while the field is open (ACC-NOTES-166).
+    await expect(page.locator('.jp-AdvancedMd-notesForm textarea')).toHaveCount(
+      0
+    );
+    await expect(row.locator('.jp-AdvancedMd-notesEntry')).toHaveCount(1);
+    const boxes = await row.evaluate((node: Element) => {
+      const box = (selector: string) => {
+        const rect = node.querySelector(selector)!.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom
+        };
+      };
+      return {
+        head: box('.jp-AdvancedMd-notesHead'),
+        passage: box('.jp-AdvancedMd-notesPassage'),
+        eye: box('.jp-AdvancedMd-notesHead button[title="Close this mark"]'),
+        remove: box(
+          '.jp-AdvancedMd-notesHead button[title="Remove this mark"]'
+        ),
+        entry: box('.jp-AdvancedMd-notesEntry'),
+        controls: box('.jp-AdvancedMd-notesControls')
+      };
+    });
+    // On the top line, right of the passage text, the trash last and at the
+    // line's right end.
+    expect(boxes.eye.left).toBeGreaterThanOrEqual(boxes.passage.right);
+    expect(boxes.remove.left).toBeGreaterThanOrEqual(boxes.eye.right);
+    expect(boxes.remove.right).toBeCloseTo(boxes.head.right, 0);
+    // Above the thread, and the controls row under it holds Reply alone.
+    expect(boxes.remove.bottom).toBeLessThanOrEqual(boxes.entry.top);
+    expect(boxes.eye.bottom).toBeLessThanOrEqual(boxes.entry.top);
+    expect(boxes.controls.top).toBeGreaterThanOrEqual(boxes.entry.bottom);
+    await expect(row.locator('.jp-AdvancedMd-notesControls button')).toHaveText(
+      ['Reply']
     );
   });
 
@@ -2828,8 +2870,8 @@ test.describe('a document that already carries marks', () => {
       rows(page).nth(1).locator('.jp-AdvancedMd-notesControls')
     ).toHaveCount(0);
 
-    // Collapse takes the note off the row again.
-    await row.locator('.jp-AdvancedMd-notesToggle').click();
+    // A click on its top line takes the note off the row again.
+    await row.locator('.jp-AdvancedMd-notesHead').click();
     await expect(entries).toHaveCount(0);
   });
 
@@ -2853,7 +2895,7 @@ test.describe('a document that already carries marks', () => {
     // and no controls.
     await openRow(page);
     await expect(note).toContainText('The intro contradicts this.');
-    await first.locator('.jp-AdvancedMd-notesToggle').click();
+    await first.locator('.jp-AdvancedMd-notesHead').click();
     await expect(note).toHaveCount(0);
     await expect(controls).toHaveCount(0);
 
@@ -3999,8 +4041,8 @@ test.describe('the list a screen reader moves through', () => {
     await mark(page, P1);
     const row = rows(page).first();
 
-    // A closed row carries no control to say that it opens (ACC-NOTES-148),
-    // so its description says how; the text is not shown on the page.
+    // No row carries a control that opens or closes it (ACC-NOTES-148), so
+    // its description says how; the text is not shown on the page.
     await expect(row).toHaveAccessibleDescription(
       'Closed. Press Enter to open.'
     );
@@ -4012,10 +4054,10 @@ test.describe('the list a screen reader moves through', () => {
     await row.focus();
     await page.keyboard.press('Enter');
     await expect(row).toHaveAccessibleDescription(
-      'Open. The Collapse button closes it.'
+      'Open. Press Enter to close.'
     );
 
-    await row.locator('.jp-AdvancedMd-notesToggle').press('Enter');
+    await page.keyboard.press('Enter');
     await expect(row).toHaveAccessibleDescription(
       'Closed. Press Enter to open.'
     );
@@ -4127,8 +4169,8 @@ test.describe('the comment thread of a mark', () => {
     await mark(page, P1);
     await openRow(page);
 
-    // A bare mark offers Comment; a mark with a comment offers Reply, and the
-    // reply is drawn indented under the comment (ACC-NOTES-171).
+    // A bare mark offers Comment; a mark with a comment offers Reply
+    // (ACC-NOTES-171).
     await expect(panelButton(page, 'Reply')).toHaveCount(0);
     await panelButton(page, 'Comment').click();
     await writeNote(page, 'First thought.');
@@ -4140,20 +4182,22 @@ test.describe('the comment thread of a mark', () => {
       holds.includes('Second thought.')
     );
     await expect(entries(page)).toHaveCount(2);
-    await expect(entries(page).nth(0)).not.toHaveClass(
-      /jp-AdvancedMd-notesEntry-reply/
-    );
-    await expect(entries(page).nth(1)).toHaveClass(
-      /jp-AdvancedMd-notesEntry-reply/
-    );
-    const indent = await entries(page)
+    // A reply is drawn as the comment it answers and stands one after it:
+    // no indent, no narrowing and no rule down its side (ACC-NOTES-171).
+    const replyBox = await entries(page)
       .nth(1)
       .evaluate((node: Element) => {
         const reply = node.getBoundingClientRect();
         const comment = node.previousElementSibling!.getBoundingClientRect();
-        return reply.left - comment.left;
+        return {
+          indent: reply.left - comment.left,
+          narrower: comment.width - reply.width,
+          border: getComputedStyle(node).borderLeftWidth
+        };
       });
-    expect(indent).toBeGreaterThan(0);
+    expect(replyBox.indent).toBe(0);
+    expect(replyBox.narrower).toBe(0);
+    expect(replyBox.border).toBe('0px');
 
     // The stamp of an entry reads on a 24-hour clock, never AM or PM, in the
     // language the lab is set to (ACC-NOTES-175).
@@ -4202,6 +4246,7 @@ test.describe('the comment thread of a mark', () => {
 
     // Every entry carries an edit icon and an x in its top right corner.
     const first = entries(page).nth(0);
+    const last = entries(page).nth(1);
     const edit = first.locator('button[title="Edit this note"]');
     const remove = first.locator('button[title="Delete this note"]');
     await expect(edit).toHaveText('');
@@ -4216,6 +4261,27 @@ test.describe('the comment thread of a mark', () => {
     expect(corner.top).toBeLessThan(4);
     expect(corner.right).toBeLessThan(4);
 
+    // The icons of a note are drawn only while the pointer is on that note,
+    // or while one of them holds the focus, so a thread at rest is its text
+    // alone (ACC-NOTES-176).
+    const opacity = (entry: any) =>
+      entry
+        .locator('.jp-AdvancedMd-notesEntryIcons')
+        .evaluate((node: Element) => getComputedStyle(node).opacity);
+    await page.mouse.move(0, 0);
+    expect(await opacity(first)).toBe('0');
+    expect(await opacity(last)).toBe('0');
+    await first.hover();
+    expect(await opacity(first)).toBe('1');
+    // Only that note's own icons: the other note stays at rest.
+    expect(await opacity(last)).toBe('0');
+    // The keyboard never hovers, so the focus shows them too.
+    await page.mouse.move(0, 0);
+    await edit.focus();
+    expect(await opacity(first)).toBe('1');
+    await edit.blur();
+    expect(await opacity(first)).toBe('0');
+
     // Editing the first entry: the field opens in its place, prefilled, and
     // Save rewrites that line with its author and time kept (ACC-NOTES-164).
     const lines = noteLines(written);
@@ -4228,7 +4294,7 @@ test.describe('the comment thread of a mark', () => {
     await expect(
       rows(page)
         .first()
-        .locator('.jp-AdvancedMd-notesForm + .jp-AdvancedMd-notesEntry-reply')
+        .locator('.jp-AdvancedMd-notesForm + .jp-AdvancedMd-notesEntry')
     ).toHaveCount(1);
     await writeNote(page, 'First thought, revised.');
     const edited = await fileWhen(file, holds =>
@@ -4286,11 +4352,14 @@ test.describe('the comment thread of a mark', () => {
     const close = row.locator('button[title="Close this mark"]');
     const reopen = row.locator('button[title="Reopen this mark"]');
 
-    // Close is an icon with no word, after Comment and before the removal.
+    // Close is an icon with no word, on the top line before the removal.
     await expect(close).toHaveText('');
-    await expect(close.locator('svg')).toHaveCount(1);
+    await expect(close.locator('svg')).toHaveAttribute(
+      'data-icon',
+      'jupyterlab_advanced_markdown_viewer_extension:open-eye'
+    );
     await expect(
-      row.locator('.jp-AdvancedMd-notesControls > *:nth-last-child(2)')
+      row.locator('.jp-AdvancedMd-notesHead > *:nth-last-child(2)')
     ).toHaveAttribute('title', 'Close this mark');
 
     // While a comment is being written: no Close, no Comment; the dots and
@@ -4326,15 +4395,18 @@ test.describe('the comment thread of a mark', () => {
     await expect(close).toHaveCount(1);
     await expect(panelButton(page, 'Reply')).toHaveCount(1);
 
-    // The crossed eye closes the mark; the open eye on the closed row reopens
+    // The open eye closes the mark; the crossed eye on the closed row reopens
     // it, and is withheld while a reply is being written (ACC-NOTES-172).
     await close.click();
     await fileWhen(file, holds => holds.includes('status=closed'));
     await expect(rows(page)).toHaveCount(0);
     await panel(page).locator('.jp-AdvancedMd-notesShowClosed').click();
-    await openRow(page);
+    // The row listed again is still open.
     await expect(reopen).toHaveText('');
-    await expect(reopen.locator('svg')).toHaveCount(1);
+    await expect(reopen.locator('svg')).toHaveAttribute(
+      'data-icon',
+      'jupyterlab_advanced_markdown_viewer_extension:crossed-eye'
+    );
     await panelButton(page, 'Reply').click();
     await expect(reopen).toHaveCount(0);
     await panelButton(page, 'Cancel').click();

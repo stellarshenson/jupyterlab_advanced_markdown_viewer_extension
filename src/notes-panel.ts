@@ -20,14 +20,14 @@ import { BoxLayout, BoxPanel, Widget } from '@lumino/widgets';
 
 import {
   ADD_ICON,
-  CLOSE_MARK_ICON,
+  CROSSED_EYE_ICON,
   COLLAPSE_ICON,
   DELETE_NOTE_ICON,
   EXPAND_ICON,
   NOTE_ICON,
   PANEL_ICONS,
   REMOVE_ICON,
-  REOPEN_MARK_ICON
+  OPEN_EYE_ICON
 } from './icons';
 import {
   DOCUMENT_TYPE,
@@ -69,11 +69,8 @@ export const SWATCH_BUTTON_CLASS = 'jp-AdvancedMd-notesSwatchButton';
 export const COLOURS_CLASS = 'jp-AdvancedMd-notesColours';
 export const COLOUR_OPTION_CLASS = 'jp-AdvancedMd-notesColourOption';
 export const PASSAGE_CLASS = 'jp-AdvancedMd-notesPassage';
-export const TOGGLE_CLASS = 'jp-AdvancedMd-notesToggle';
 export const STATE_CLASS = 'jp-AdvancedMd-notesState';
 export const ENTRY_CLASS = 'jp-AdvancedMd-notesEntry';
-/** Class every entry after the first carries: a reply to the comment (ACC-NOTES-171). */
-export const ENTRY_REPLY_CLASS = 'jp-AdvancedMd-notesEntry-reply';
 /** The corner of an entry holding its edit icon and its x, and each icon. */
 export const ENTRY_ICONS_CLASS = 'jp-AdvancedMd-notesEntryIcons';
 export const ENTRY_ICON_CLASS = 'jp-AdvancedMd-notesEntryIcon';
@@ -98,9 +95,8 @@ export const COLLAPSE_CLASS = 'jp-AdvancedMd-notesCollapse';
 export const ADD_CLASS = 'jp-AdvancedMd-notesAdd';
 /** Class of the header control that shows and hides the closed marks. */
 export const SHOW_CLOSED_CLASS = 'jp-AdvancedMd-notesShowClosed';
-/** Class a row of a closed mark carries, and the word its state line shows. */
+/** Class a row of a closed mark carries. */
 export const ROW_CLOSED_CLASS = 'jp-AdvancedMd-notesRow-closed';
-const CLOSED = 'closed';
 
 /** Title of that control, the one route to a document note. */
 const ADD_LABEL = 'Add document note';
@@ -152,12 +148,12 @@ const UNANCHORED = 'unanchored';
 const DOCUMENT_LABEL = 'Document';
 
 /**
- * What a row tells a screen reader after its content, as its description: a
- * closed row carries no control to say that it opens (ACC-NOTES-148), and
+ * What a row tells a screen reader after its content, as its description: no
+ * row carries a control that opens or closes it (ACC-NOTES-148), and
  * aria-expanded is not a state of the listitem role in WAI-ARIA 1.2.
  */
 const CLOSED_HINT = 'Closed. Press Enter to open.';
-const OPEN_HINT = 'Open. The Collapse button closes it.';
+const OPEN_HINT = 'Open. Press Enter to close.';
 
 /** How many hint elements were built, so that each has an id of its own. */
 let hintCount = 0;
@@ -974,13 +970,22 @@ export class NotesPanel extends Widget {
     if (mark.closed) {
       row.classList.add(ROW_CLOSED_CLASS);
     }
+    // An open row closes without being selected (ACC-NOTES-148).
+    const collapse = (): void => {
+      this._open.delete(mark.id);
+      this._render();
+    };
     row.addEventListener('keydown', event => {
       // Every control of the row is a descendant of it, so only an Enter
-      // typed on the row itself selects; the rest belong to the control that
-      // was typed in.
+      // typed on the row itself opens or closes it; the rest belong to the
+      // control that was typed in.
       if (event.key === 'Enter' && event.target === row) {
         event.preventDefault();
-        this.selectMark(mark.id);
+        if (open) {
+          collapse();
+        } else {
+          this.selectMark(mark.id);
+        }
       }
     });
     row.addEventListener('click', event => {
@@ -997,9 +1002,23 @@ export class NotesPanel extends Widget {
       }
     });
 
+    const entry = this._entry?.id === mark.id ? this._entry : null;
     const head = document.createElement('div');
     head.className = HEAD_CLASS;
-    head.addEventListener('click', () => this.selectMark(mark.id));
+    // The top line opens a closed row and closes an open one; the swatch, the
+    // eye and the removal control act for themselves and keep their clicks
+    // from it (ACC-NOTES-148). The second click of a double click lands on the
+    // head the first click rebuilt, and is not a second press (DEF-NOTES-82).
+    head.addEventListener('click', event => {
+      if (event.detail > 1) {
+        return;
+      }
+      if (open) {
+        collapse();
+      } else {
+        this.selectMark(mark.id);
+      }
+    });
     const passage = document.createElement('span');
     passage.className = PASSAGE_CLASS;
     if (wholeDocument) {
@@ -1017,27 +1036,22 @@ export class NotesPanel extends Widget {
       passage.textContent = shorten(item.passage);
     }
     head.appendChild(passage);
-    // A click on a closed row opens it, so only an open row carries the
-    // triangle, which closes it.
-    if (open) {
-      head.appendChild(
-        button(TOGGLE_CLASS, '▾', 'Collapse', event => {
-          // The triangle sits inside the head, whose own click selects the
-          // row, and closing a row is not selecting it.
-          event.stopPropagation();
-          this._open.delete(mark.id);
-          this._render();
-        })
-      );
+    if (open && known(mark)) {
+      for (const control of this._markControls(mark, entry !== null)) {
+        head.appendChild(control);
+      }
     }
     row.appendChild(head);
 
     // A mark of a type this version does not know is listed with its type and
     // offered no control, so nothing this extension cannot read is rewritten.
+    // A closed mark needs no word to say so: the passage text of its row
+    // takes the secondary text colour, the eye of its expanded row is drawn
+    // crossed out (ACC-NOTES-172) and its passage in the preview is painted
+    // muted (ACC-NOTES-155).
     const state = [
       known(mark) ? '' : mark.type,
-      item.anchored ? '' : UNANCHORED,
-      mark.closed ? CLOSED : ''
+      item.anchored ? '' : UNANCHORED
     ]
       .filter(part => part !== '')
       .join(' ');
@@ -1049,7 +1063,6 @@ export class NotesPanel extends Widget {
       row.appendChild(line);
     }
 
-    const entry = this._entry?.id === mark.id ? this._entry : null;
     // Where the entry being edited stands in the thread now; -1 while the
     // field is for a new entry, or the edited one left the marker meanwhile.
     const editingAt = entry?.editing
@@ -1059,11 +1072,7 @@ export class NotesPanel extends Widget {
     for (const [index, note] of open ? mark.notes.entries() : []) {
       // The field stands in the place of the entry it edits (ACC-NOTES-164).
       if (index === editingAt) {
-        const form = this._form(entry!);
-        if (index > 0) {
-          form.classList.add(ENTRY_REPLY_CLASS);
-        }
-        row.appendChild(form);
+        row.appendChild(this._form(entry!));
         continue;
       }
       // A row being written offers no second edit (ACC-NOTES-168), and a
@@ -1078,7 +1087,7 @@ export class NotesPanel extends Widget {
               remove: () => this._handlers.removeNote(mark.id, note)
             }
           : null;
-      const element = entryRow(note, index > 0, actions, this._locale);
+      const element = entryRow(note, actions, this._locale);
       // A note is part of its row, so a click on it selects the row as a
       // click on the head does; a click that ends a selection of the note's
       // text is the reader copying it, and is left alone.
@@ -1091,9 +1100,13 @@ export class NotesPanel extends Widget {
     }
 
     if (open && known(mark)) {
-      row.appendChild(this._controls(mark, entry !== null));
+      // While the row's field is open the field is the entry being written,
+      // so Comment and Reply are left out until it closes (ACC-NOTES-147).
+      if (!entry) {
+        row.appendChild(this._controls(mark));
+      }
       // A field for a new entry, or one whose entry is gone, sits below the
-      // controls, where the reader can still leave it by Cancel.
+      // thread, where the reader can still leave it by Cancel.
       if (entry && editingAt < 0) {
         row.appendChild(this._form(entry));
       }
@@ -1102,46 +1115,54 @@ export class NotesPanel extends Widget {
   }
 
   /**
-   * The controls of an open row: Comment or Reply, Close or Reopen, and a
-   * removal at the far right. The colour is chosen from the row's swatch
-   * (ACC-NOTES-173). Comment and the eye leave the row together while its
-   * field is open, so the second click of a double click lands on no control.
-   *
-   * @param writing - true while the row's note field is open: the field is
-   * the entry being written, so Comment (ACC-NOTES-147) and Close
-   * (ACC-NOTES-166) are left out until the field closes
+   * The controls row under the thread of an open row: Comment on a mark with
+   * no entry, Reply once it holds one (ACC-NOTES-171). The colour is chosen
+   * from the row's swatch (ACC-NOTES-173).
    */
-  private _controls(mark: IMark, writing: boolean): HTMLElement {
+  private _controls(mark: IMark): HTMLElement {
     const controls = document.createElement('div');
     controls.className = CONTROLS_CLASS;
+    const reply = mark.notes.length > 0;
+    controls.appendChild(
+      button(
+        BUTTON_CLASS,
+        reply ? 'Reply' : 'Comment',
+        reply ? 'Reply to this comment' : 'Comment on this mark',
+        () => {
+          this._openEntry(mark.id);
+          this._render();
+        }
+      )
+    );
+    return controls;
+  }
+
+  /**
+   * The controls that act on the whole mark, for the right of its top line:
+   * the eye, then the removal last (ACC-NOTES-132). Both sit inside the head,
+   * whose click closes the row, and a press on either is not closing it.
+   *
+   * @param writing - true while the row's note field is open: closing a mark
+   * whose note is still being written is left out until the field closes
+   * (ACC-NOTES-166), and the removal stays
+   */
+  private _markControls(mark: IMark, writing: boolean): HTMLElement[] {
+    const controls: HTMLElement[] = [];
     if (!writing) {
-      // The first entry is the comment on the passage, the rest are replies
-      // to it (ACC-NOTES-171).
-      const reply = mark.notes.length > 0;
-      controls.appendChild(
-        button(
-          BUTTON_CLASS,
-          reply ? 'Reply' : 'Comment',
-          reply ? 'Reply to this comment' : 'Comment on this mark',
-          () => {
-            this._openEntry(mark.id);
-            this._render();
-          }
-        )
-      );
-      // The eye closes the mark, which hides it, and the crossed eye says
-      // so; on a closed row the open eye reopens it (ACC-NOTES-172).
+      // The eye says what the mark is now and not what the press would do:
+      // open while the mark shows, crossed out while it is hidden. The title
+      // is what carries the action (ACC-NOTES-172).
       const closeMark = button(
         `${BUTTON_CLASS} ${CLOSE_MARK_CLASS}`,
         '',
         mark.closed ? 'Reopen this mark' : 'Close this mark',
         () => this._handlers.setClosed(mark.id, !mark.closed)
       );
-      (mark.closed ? REOPEN_MARK_ICON : CLOSE_MARK_ICON).element({
+      (mark.closed ? CROSSED_EYE_ICON : OPEN_EYE_ICON).element({
         container: closeMark,
         tag: 'span'
       });
-      controls.appendChild(closeMark);
+      controls.push(closeMark);
     }
     const remove = button(
       `${BUTTON_CLASS} ${REMOVE_CLASS}`,
@@ -1150,7 +1171,10 @@ export class NotesPanel extends Widget {
       () => this._handlers.removeMark(mark.id)
     );
     REMOVE_ICON.element({ container: remove, tag: 'span' });
-    controls.appendChild(remove);
+    controls.push(remove);
+    for (const control of controls) {
+      control.addEventListener('click', event => event.stopPropagation());
+    }
     return controls;
   }
 
@@ -1187,8 +1211,8 @@ export class NotesPanel extends Widget {
     if (this._picking === mark.id) {
       colour.appendChild(this._colours(mark));
     }
-    // The swatch sits inside the head, whose own click selects the row and
-    // scrolls the preview to it; choosing a colour is not selecting.
+    // The swatch sits inside the head, whose own click opens or closes the
+    // row; choosing a colour does neither.
     colour.addEventListener('click', event => event.stopPropagation());
     colour.addEventListener('keydown', event => {
       if (event.key === 'Escape' && this._picking === mark.id) {
@@ -1425,17 +1449,16 @@ function countLabel(count: number): string {
  * One note entry: who wrote it, when, and what it says, in full, with its
  * edit icon and its x in the top right corner when the row offers them
  * (ACC-NOTES-164, ACC-NOTES-167). Every entry after the first is a reply to
- * the comment, and is drawn indented under it (ACC-NOTES-171). Only an open
- * row shows its entries (ACC-NOTES-150).
+ * the comment and is drawn as the comment is, one after another
+ * (ACC-NOTES-171). Only an open row shows its entries (ACC-NOTES-150).
  */
 function entryRow(
   note: INoteEntry,
-  reply: boolean,
   actions: { edit: () => void; remove: () => void } | null,
   locale: string | undefined
 ): HTMLElement {
   const entry = document.createElement('div');
-  entry.className = reply ? `${ENTRY_CLASS} ${ENTRY_REPLY_CLASS}` : ENTRY_CLASS;
+  entry.className = ENTRY_CLASS;
   if (actions) {
     const icons = document.createElement('span');
     icons.className = ENTRY_ICONS_CLASS;

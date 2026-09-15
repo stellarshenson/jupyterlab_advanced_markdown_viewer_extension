@@ -26,7 +26,6 @@ import {
   ENTRY_CLASS,
   ENTRY_ICON_CLASS,
   ENTRY_ICONS_CLASS,
-  ENTRY_REPLY_CLASS,
   EXPANDED_CLASS,
   FORM_CLASS,
   FLASH_CLASS,
@@ -52,7 +51,6 @@ import {
   SWATCH_CLASS,
   TEXT_CLASS,
   TICK_CLASS,
-  TOGGLE_CLASS,
   colourClass,
   installNotesPanel,
   localeTag,
@@ -62,9 +60,9 @@ import {
 } from '../notes-panel';
 import { IMark, INoteEntry, MARK_COLOURS, MarkColour } from '../marks';
 import {
-  CLOSE_MARK_ICON,
+  CROSSED_EYE_ICON,
   MARK_ICONS,
-  REOPEN_MARK_ICON,
+  OPEN_EYE_ICON,
   SWATCH_RADIUS,
   SWATCH_SIZE
 } from '../icons';
@@ -155,6 +153,9 @@ function readCss(): string {
     'utf8'
   );
 }
+
+// The stroke the crossed eye carries and the open eye does not.
+const CROSS_STROKE = 'M2.5 13.5l11-11';
 
 /** Every element scrolled into view, in order, and how each was asked. */
 const scrolled: Element[] = [];
@@ -256,8 +257,8 @@ function press(row: Element, label: string): void {
 }
 
 /**
- * Open a row, which is what a click on its head does; a closed row carries no
- * triangle (ACC-NOTES-148).
+ * Open a closed row, which is what a click on its head does; the same click
+ * closes an open row (ACC-NOTES-148).
  */
 function expand(row: Element): void {
   row.querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
@@ -372,9 +373,9 @@ describe('closed marks (ACC-NOTES-155)', () => {
     panel.showClosed = true;
     expect(passages()).toEqual(['first passage', 'second passage']);
     expect(rows()[1].classList.contains(ROW_CLOSED_CLASS)).toBe(true);
-    expect(rows()[1].querySelector(`.${STATE_CLASS}`)!.textContent).toBe(
-      'closed'
-    );
+    // The row carries no word saying it is closed: its passage text takes the
+    // secondary text colour (ACC-NOTES-155).
+    expect(rows()[1].querySelector(`.${STATE_CLASS}`)).toBeNull();
     // One set of words in both states; the pressed state says which is on.
     expect(control().textContent).toBe('Show hidden (1)');
     expect(control().getAttribute('aria-pressed')).toBe('true');
@@ -386,34 +387,37 @@ describe('closed marks (ACC-NOTES-155)', () => {
     expect(asked).toEqual(['show closed true', 'closed b false']);
   });
 
-  it('draws Close as a crossed eye and Reopen as an open eye, titled and without text (ACC-NOTES-172)', () => {
+  it('draws the eye a mark that shows open and the eye of a hidden mark crossed, titled and without text (ACC-NOTES-172)', () => {
     panel.showClosed = true;
     panel.selectMark('a');
     panel.selectMark('b');
     const eyes = rows().map(row =>
       row.querySelector<HTMLButtonElement>(`.${CLOSE_MARK_CLASS}`)!
     );
+    // The title carries the action; the eye carries the state the mark is
+    // in now, so the row that shows takes the open eye and the hidden row
+    // the crossed one.
     expect(eyes.map(eye => eye.title)).toEqual([
       'Close this mark',
       'Reopen this mark'
     ]);
     expect(eyes.map(eye => eye.textContent)).toEqual(['', '']);
-    // The crossed eye carries the stroke across it; the open eye does not.
     expect(eyes.map(eye => eye.querySelector('svg')!.dataset.icon)).toEqual([
-      CLOSE_MARK_ICON.name,
-      REOPEN_MARK_ICON.name
+      OPEN_EYE_ICON.name,
+      CROSSED_EYE_ICON.name
     ]);
-    expect(CLOSE_MARK_ICON.svgstr).not.toBe(REOPEN_MARK_ICON.svgstr);
-    // After Comment, before the removal control.
-    const controls = Array.from(
-      rows()[0].querySelector(`.${CONTROLS_CLASS}`)!.children
+    // The crossed eye carries the stroke across it; the open eye does not.
+    expect(CROSSED_EYE_ICON.svgstr).toContain(CROSS_STROKE);
+    expect(OPEN_EYE_ICON.svgstr).not.toContain(CROSS_STROKE);
+    // On the mark's top line, directly before the removal control
+    // (ACC-NOTES-132).
+    const head = Array.from(
+      rows()[0].querySelector(`.${HEAD_CLASS}`)!.children
     ).map(child => child.className);
-    expect(controls.indexOf(`${BUTTON_CLASS} ${CLOSE_MARK_CLASS}`)).toBe(
-      controls.length - 2
-    );
-    expect(controls[controls.length - 1]).toBe(
+    expect(head.slice(-2)).toEqual([
+      `${BUTTON_CLASS} ${CLOSE_MARK_CLASS}`,
       `${BUTTON_CLASS} ${REMOVE_CLASS}`
-    );
+    ]);
   });
 
   it('offers Close on an open row, which asks the controller to close the mark', () => {
@@ -573,15 +577,17 @@ describe('a row', () => {
     expect(texts(rows()[0])).toEqual(['first line\nsecond line', 'a reply']);
   });
 
-  it('reads the first entry as the comment and the rest as replies, indented (ACC-NOTES-171)', () => {
+  it('reads the first entry as the comment and the rest as replies, drawn alike one after another (ACC-NOTES-171)', () => {
     expand(rows()[0]);
     expand(rows()[1]);
+    // A reply is drawn as the comment it answers: the same class and no
+    // class of its own.
     const entries = (row: Element) =>
-      Array.from(row.querySelectorAll(`.${ENTRY_CLASS}`)).map(entry =>
-        entry.classList.contains(ENTRY_REPLY_CLASS)
+      Array.from(row.querySelectorAll(`.${ENTRY_CLASS}`)).map(
+        entry => entry.className
       );
-    expect(entries(rows()[0])).toEqual([false, true]);
-    expect(entries(rows()[1])).toEqual([false]);
+    expect(entries(rows()[0])).toEqual([ENTRY_CLASS, ENTRY_CLASS]);
+    expect(entries(rows()[1])).toEqual([ENTRY_CLASS]);
     // Reply on a row that holds a comment; Comment on a bare mark.
     expect(press(rows()[0], 'Reply')).toBeUndefined();
     expect(panel.node.querySelector('textarea')).not.toBeNull();
@@ -593,12 +599,6 @@ describe('a row', () => {
     expect(
       Array.from(rows()[0].querySelectorAll('button')).map(b => b.textContent)
     ).not.toContain('Reply');
-    // The indent is drawn by the stylesheet.
-    expect(
-      /\.jp-AdvancedMd-notesEntry-reply \{[^}]*margin-left: 8px;/.test(
-        readCss()
-      )
-    ).toBe(true);
   });
 
   it('carries an edit icon and an x in the corner of every entry, which open the entry for editing and delete it (ACC-NOTES-164, ACC-NOTES-167)', () => {
@@ -642,16 +642,43 @@ describe('a row', () => {
     // drawn as the comment, not indented.
     const form = rows()[0].querySelector(`.${FORM_CLASS}`)!;
     expect(form.nextElementSibling!.classList.contains(ENTRY_CLASS)).toBe(true);
-    expect(form.classList.contains(ENTRY_REPLY_CLASS)).toBe(false);
 
-    // The field of a reply keeps the reply's indent while it is open.
+    // The field of a reply stands in the reply's place, drawn as the
+    // comment's field is.
     press(rows()[0], 'Cancel');
     icons(rows()[0])[2].click();
+    const replyForm = rows()[0].querySelector(`.${FORM_CLASS}`)!;
     expect(
-      rows()[0]
-        .querySelector(`.${FORM_CLASS}`)!
-        .classList.contains(ENTRY_REPLY_CLASS)
+      replyForm.previousElementSibling!.classList.contains(ENTRY_CLASS)
     ).toBe(true);
+    expect(replyForm.className).toBe(form.className);
+  });
+
+  it('draws the icons of an entry only while that note is hovered or holds the focus (ACC-NOTES-176)', () => {
+    expand(rows()[0]);
+    // jsdom lays nothing out and hovers nothing, so the rule is read as
+    // written: the icons of an entry are transparent until the pointer is on
+    // that entry, or one of its own icons takes the focus.
+    const css = readCss();
+    expect(/\.jp-AdvancedMd-notesEntryIcons \{[^}]*opacity: 0;/.test(css)).toBe(
+      true
+    );
+    expect(
+      /\.jp-AdvancedMd-notesEntryIcons:focus-within,\s*\.jp-AdvancedMd-notesEntry:hover \.jp-AdvancedMd-notesEntryIcons \{[^}]*opacity: 1;/.test(
+        css
+      )
+    ).toBe(true);
+    // Transparent, never hidden: visibility or display would take the
+    // buttons out of the tab order, and the keyboard never hovers.
+    expect(
+      /\.jp-AdvancedMd-notesEntryIcons \{[^}]*(visibility: hidden|display: none)/.test(
+        css
+      )
+    ).toBe(false);
+    // The icons are built either way, so the keyboard can still reach them.
+    expect(
+      rows()[0].querySelectorAll(`.${ENTRY_ICON_CLASS}`).length
+    ).toBeGreaterThan(0);
   });
 
   it('saves an edit through editNote, keeping the entry, and drops an empty edit without asking (ACC-NOTES-164)', async () => {
@@ -685,7 +712,7 @@ describe('a row', () => {
     expand(rows()[0]);
     rows()[0].querySelector<HTMLButtonElement>(`.${ENTRY_ICON_CLASS}`)!.click();
     // Another writer rewrote the entry: the field has no place in the
-    // thread and sits below the controls, where Cancel still reaches it.
+    // thread and sits below it, where Cancel still reaches it.
     panel.setMarks([
       item('a', 'first passage', {
         mark: mark('a', {
@@ -694,9 +721,7 @@ describe('a row', () => {
       })
     ]);
     const form = rows()[0].querySelector(`.${FORM_CLASS}`)!;
-    expect(
-      form.previousElementSibling!.classList.contains(CONTROLS_CLASS)
-    ).toBe(true);
+    expect(rows()[0].lastElementChild).toBe(form);
     expect(texts(rows()[0])).toEqual(['rewritten', 'a reply']);
     noteWritten = false;
     press(rows()[0], 'Save');
@@ -785,7 +810,7 @@ describe('a row', () => {
         mark: mark('a', { notes: thread, closed: true })
       })
     ]);
-    expand(rows()[0]);
+    // The row stays open through the rewrite.
     expect(labelled(rows()[0], 'Reopen this mark')).toBe(true);
     press(rows()[0], 'Reply');
     expect(labelled(rows()[0], 'Reopen this mark')).toBe(false);
@@ -795,31 +820,64 @@ describe('a row', () => {
     expand(rows()[0]);
     expect(texts(rows()[0])).toHaveLength(2);
     expect(texts(rows()[1])).toEqual([]);
-    rows()[0].querySelector<HTMLButtonElement>(`.${TOGGLE_CLASS}`)!.click();
+    rows()[0].querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
     expect(texts(rows()[0])).toEqual([]);
   });
 
-  it('shows the triangle on an open row alone, and opens a row from a click or Enter on it', () => {
-    const triangle = (row: Element): HTMLButtonElement | null =>
-      row.querySelector<HTMLButtonElement>(`.${TOGGLE_CLASS}`);
-    // A closed row opens from a click on it, so it carries no triangle.
-    expect(triangle(rows()[0])).toBeNull();
-    rows()[0].querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
-    expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
-    expect(triangle(rows()[0])!.title).toBe('Collapse');
-    expect(triangle(rows()[1])).toBeNull();
+  it('opens a row from a click or Enter on it and closes an open row from a click on its top line or Enter, with no triangle (ACC-NOTES-148)', () => {
+    const open = (row: Element): boolean =>
+      row.querySelector(`.${CONTROLS_CLASS}`) !== null;
+    const head = (row: Element): HTMLElement =>
+      row.querySelector<HTMLElement>(`.${HEAD_CLASS}`)!;
+    const enter = (row: Element): void => {
+      row.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+      );
+    };
+    panel.selectMark('b');
+    head(rows()[0]).click();
+    expect(open(rows()[0])).toBe(true);
+    expect(panel.node.querySelector('button[title="Collapse"]')).toBeNull();
 
-    triangle(rows()[0])!.click();
-    expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).toBeNull();
-    expect(triangle(rows()[0])).toBeNull();
+    // The swatch, the eye and the removal control on the top line act for
+    // themselves and leave the row open.
+    for (const control of [
+      SWATCH_BUTTON_CLASS,
+      CLOSE_MARK_CLASS,
+      REMOVE_CLASS
+    ]) {
+      rows()[0].querySelector<HTMLButtonElement>(`.${control}`)!.click();
+      expect(open(rows()[0])).toBe(true);
+    }
+    expect(asked).toEqual(['closed a true', 'remove a']);
 
-    rows()[1].dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
-    );
-    expect(rows()[1].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
+    // The top line closes the open row without selecting it.
+    expect(panel.selected).toBe('a');
+    panel.selectMark('b');
+    head(rows()[0]).click();
+    expect(open(rows()[0])).toBe(false);
+    expect(panel.selected).toBe('b');
+
+    enter(rows()[1]);
+    expect(open(rows()[1])).toBe(false);
+    enter(rows()[1]);
+    expect(open(rows()[1])).toBe(true);
 
     panel.setMarks([item('c', '', { anchored: false })]);
     rows()[0].querySelector<HTMLElement>(`.${STATE_CLASS}`)!.click();
+    expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
+  });
+
+  it('leaves a row open when the second click of a double click lands on its rebuilt top line', () => {
+    const passage = (): HTMLElement =>
+      rows()[0].querySelector<HTMLElement>(`.${PASSAGE_CLASS}`)!;
+    // The first click opens the row and rebuilds it under the pointer.
+    passage().dispatchEvent(
+      new MouseEvent('click', { bubbles: true, detail: 1 })
+    );
+    passage().dispatchEvent(
+      new MouseEvent('click', { bubbles: true, detail: 2 })
+    );
     expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
   });
 
@@ -957,7 +1015,7 @@ describe('a row', () => {
     ]);
     expect(rows().map(description)).toEqual([
       'Closed. Press Enter to open.',
-      'Open. The Collapse button closes it.'
+      'Open. Press Enter to close.'
     ]);
     // Two previews of one file list the same marks; each panel's hints carry
     // ids of their own, since an id is unique in the page.
@@ -1006,6 +1064,7 @@ describe('a row', () => {
       'task'
     );
     expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).toBeNull();
+    expect(rows()[0].querySelector('button')).toBeNull();
     // Its swatch shows the colour and offers no list (ACC-NOTES-173).
     expect(rows()[0].querySelector(`.${SWATCH_CLASS}`)).not.toBeNull();
     expect(rows()[0].querySelector(`.${SWATCH_BUTTON_CLASS}`)).toBeNull();
@@ -1066,26 +1125,29 @@ describe('selecting a mark', () => {
 
   it('leaves Enter to the control inside the row that was typed in', () => {
     // Every control of a row is a descendant of it, so a row handler that
-    // took every Enter that bubbled up would take the one that closes a row
-    // and the one that ends a line of a note. Only an open row has the
-    // triangle, so the row is opened first and the scroll it made forgotten.
+    // took every Enter that bubbled up would take the one that presses the
+    // eye and the one that ends a line of a note. Only an open row has the
+    // eye, so the row is opened first and the scroll it made forgotten.
     rows()[1].querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
     scrolled.length = 0;
-    const toggle = rows()[1].querySelector<HTMLElement>(`.${TOGGLE_CLASS}`)!;
-    toggle.dispatchEvent(
+    const eye = rows()[1].querySelector<HTMLElement>(`.${CLOSE_MARK_CLASS}`)!;
+    eye.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
     );
     expect(scrolled).toEqual([]);
+    expect(rows()[1].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
   });
 
   it('selects nothing from a click on the controls row or the note field of an open row', () => {
     rows()[1].querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
     panel.selectMark('a');
     scrolled.length = 0;
-    // The first click of a double click on Add note takes Add note out of the
-    // row (DEF-NOTES-77), so the second lands on the controls row itself.
-    press(rows()[1], 'Comment');
     rows()[1].querySelector<HTMLElement>(`.${CONTROLS_CLASS}`)!.click();
+    // The first click of a double click on Comment takes the controls row
+    // out of the row (DEF-NOTES-77), so the second lands on the field that
+    // takes its place.
+    press(rows()[1], 'Comment');
+    rows()[1].querySelector<HTMLElement>(`.${FORM_CLASS}`)!.click();
     rows()[1].querySelector('textarea')!.click();
     expect(panel.selected).toBe('a');
     // The field is scrolled into the panel's view (ACC-NOTES-169), nothing
@@ -1663,7 +1725,7 @@ describe('writing a note', () => {
     panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
     press(rows()[0], 'Comment');
     type('half a thought');
-    (rows()[0].querySelector(`.${TOGGLE_CLASS}`) as HTMLButtonElement).click();
+    rows()[0].querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
     expect(panel.node.querySelector('textarea')).toBeNull();
     panel.selectMark('b');
     press(rows()[1], 'Comment');
@@ -2200,8 +2262,8 @@ describe('writing a note', () => {
     panel.setMarks([item('a', 'first passage')]);
     const after = panel.node.querySelector('textarea')!;
     expect(after.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('a');
-    // The row is open, which is what its controls being drawn says.
-    expect(rows()[0].querySelector(`.${CONTROLS_CLASS}`)).not.toBeNull();
+    // The row is open, which is what its removal control being drawn says.
+    expect(rows()[0].querySelector(`.${REMOVE_CLASS}`)).not.toBeNull();
     expect(after.value).toBe('half a thought');
     // The text without the focus would leave the reader looking at their own
     // draft with their typing landing nowhere. The panel remembers that the
@@ -2421,14 +2483,26 @@ describe('the controls of a row', () => {
     expand(rows()[0]);
   });
 
-  it('puts the removal control last, pushed to the right of the dots', () => {
-    const controls = rows()[0].querySelector(`.${CONTROLS_CLASS}`)!;
-    const remove = controls.querySelector(`.${REMOVE_CLASS}`)!;
-    expect(controls.lastElementChild).toBe(remove);
-    // jsdom lays nothing out, so the rule that pushes it is read as written.
-    expect(
-      /\.jp-AdvancedMd-notesRemove \{[^}]*margin-left: auto;/.test(readCss())
-    ).toBe(true);
+  it('puts the eye and then the removal control last on the top line, above the thread, and leaves Reply alone under it (ACC-NOTES-132)', () => {
+    panel.setMarks([
+      item('a', 'first passage', {
+        mark: mark('a', {
+          notes: [note('kj', '2026-09-06T16:00:00Z', 'a comment')]
+        })
+      })
+    ]);
+    const row = rows()[0];
+    const head = row.querySelector(`.${HEAD_CLASS}`)!;
+    expect(row.firstElementChild).toBe(head);
+    expect(Array.from(head.children).slice(-2)).toEqual([
+      head.querySelector(`.${CLOSE_MARK_CLASS}`),
+      head.querySelector(`.${REMOVE_CLASS}`)
+    ]);
+    const controls = row.querySelector(`.${CONTROLS_CLASS}`)!;
+    expect(row.lastElementChild).toBe(controls);
+    expect(Array.from(controls.children).map(c => c.textContent)).toEqual([
+      'Reply'
+    ]);
   });
 
   it('rolls the other colours down from the swatch and asks for the one pressed (ACC-NOTES-173)', () => {
@@ -2560,10 +2634,10 @@ describe('the controls of a row', () => {
       addNote,
       ...Array.from(panel.node.querySelectorAll('button'))
     ];
-    // The expand, collapse, Show hidden, add and close controls, the toggle,
-    // Comment, the swatch, Remove, Save and Cancel; Close is withheld while
-    // the field is open (ACC-NOTES-166).
-    expect(buttons).toHaveLength(11);
+    // The expand, collapse, Show hidden, add and close controls, Comment,
+    // the swatch, Remove, Save and Cancel; Close is withheld while the field
+    // is open (ACC-NOTES-166).
+    expect(buttons).toHaveLength(10);
     for (const button of buttons) {
       expect(button.getAttribute('aria-label')).toBe(button.title);
       // A button with a worded label is spoken and voice-driven by that

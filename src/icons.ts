@@ -91,8 +91,9 @@ export const REMOVE_ICON: LabIcon = deleteIcon;
 
 /**
  * An eye in the 16 by 16 box of a menu icon, drawn in the current colour so
- * it follows the button it sits in; crossed out, it is the eye that closes
- * a mark, which hides it (ACC-NOTES-172).
+ * it follows the button it sits in. The eye says what the mark is now and
+ * not what a press would do: open while the mark shows, crossed out while
+ * it is hidden (ACC-NOTES-172).
  */
 function eye(crossed: boolean): string {
   const stroke = 'fill="none" stroke="currentColor" stroke-width="1.5"';
@@ -105,16 +106,16 @@ function eye(crossed: boolean): string {
   );
 }
 
-/** The control of an open row that closes the mark: a crossed eye. */
-export const CLOSE_MARK_ICON = new LabIcon({
-  name: 'jupyterlab_advanced_markdown_viewer_extension:close-mark',
-  svgstr: eye(true)
+/** The eye a row carries while its mark shows: open. */
+export const OPEN_EYE_ICON = new LabIcon({
+  name: 'jupyterlab_advanced_markdown_viewer_extension:open-eye',
+  svgstr: eye(false)
 });
 
-/** The control of a closed row that reopens the mark: an open eye. */
-export const REOPEN_MARK_ICON = new LabIcon({
-  name: 'jupyterlab_advanced_markdown_viewer_extension:reopen-mark',
-  svgstr: eye(false)
+/** The eye a row carries while its mark is hidden, which is closed: crossed. */
+export const CROSSED_EYE_ICON = new LabIcon({
+  name: 'jupyterlab_advanced_markdown_viewer_extension:crossed-eye',
+  svgstr: eye(true)
 });
 
 /**

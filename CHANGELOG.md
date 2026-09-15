@@ -2,6 +2,19 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.15] - 2026-09-15
+
+A row in the notes panel shows the state of its mark, and a thread at rest shows only its text.
+
+### Changed
+
+- The eye and the trash of an open row sit at the right of the row's top line, beside the passage, because both act on the whole mark; Comment and Reply stay under the thread
+- The triangle that closed an open row is gone: a click on the row's top line, or Enter on the row, closes it
+- The eye on a row shows whether the mark is visible: an open eye while the mark is shown and a crossed eye while it is hidden, and pressing it still closes or reopens the mark
+- Replies are listed one after another under the comment, without an indent
+- A closed row no longer carries the word closed; its passage text is drawn in the secondary text colour
+- The edit icon and the x of a note are drawn only while the pointer is on that note or one of the two icons holds the keyboard focus
+
 ## [1.0.14] - 2026-09-15
 
 The controls of a row in the notes panel are readable and easier to hit, the colour of a mark is chosen from the row's own swatch, and the time on a note follows JupyterLab rather than the browser.

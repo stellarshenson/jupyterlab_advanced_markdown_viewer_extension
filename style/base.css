@@ -438,13 +438,6 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   justify-content: center;
   min-width: 24px;
   min-height: 24px;
-}
-
-.jp-AdvancedMd-notesClose,
-.jp-AdvancedMd-notesAdd,
-.jp-AdvancedMd-notesCollapse,
-.jp-AdvancedMd-notesExpand,
-.jp-AdvancedMd-notesToggle {
   padding: 0 4px;
   color: inherit;
   cursor: pointer;
@@ -502,17 +495,12 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   border-radius: 2px;
 }
 
-/*
- | The removal control sits at the far right of the controls row, the free
- | width of the row between it and the colour dots, so it is never read as one
- | more colour.
- */
+/* The removal control that takes the whole mark. */
 .jp-AdvancedMd-notesRemove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 24px;
-  margin-left: auto;
   padding: 1px 4px;
 }
 
@@ -615,23 +603,26 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   margin-top: 4px;
 }
 
-/* A reply sits indented under the comment it answers (ACC-NOTES-171). */
-.jp-AdvancedMd-notesEntry-reply {
-  padding-left: 8px;
-  margin-left: 8px;
-  border-left: 2px solid var(--jp-border-color2);
-}
-
 /*
  | The edit icon and the x sit at the right of the entry's first line
  | (ACC-NOTES-164), floated so the note text below them keeps the full width
- | of the entry (ACC-NOTES-165).
+ | of the entry (ACC-NOTES-165). They are drawn only while the pointer is on
+ | the note they belong to, or while one of them holds the focus, so a thread
+ | at rest is its text alone (ACC-NOTES-176). Transparent and not hidden:
+ | visibility or display would take the buttons out of the tab order and put
+ | them beyond the keyboard, which never hovers.
  */
 .jp-AdvancedMd-notesEntryIcons {
   float: right;
   display: flex;
   gap: 2px;
   margin-left: 4px;
+  opacity: 0;
+}
+
+.jp-AdvancedMd-notesEntryIcons:focus-within,
+.jp-AdvancedMd-notesEntry:hover .jp-AdvancedMd-notesEntryIcons {
+  opacity: 1;
 }
 
 .jp-AdvancedMd-notesEntryIcon {
@@ -701,6 +692,17 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 }
 
 .jp-AdvancedMd-notesSwatchButton {
+  margin: -3px 0;
+}
+
+/*
+ | The eye and the removal control stand at the right of the top line
+ | (ACC-NOTES-132), 24 px targets pulled back into the line as the swatch is,
+ | so the line of an open row keeps the height of a closed row's and its
+ | passage text does not move as the row opens.
+ */
+.jp-AdvancedMd-notesHead .jp-AdvancedMd-notesButton {
+  align-self: center;
   margin: -3px 0;
 }
 
