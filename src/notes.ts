@@ -56,6 +56,7 @@ import {
   IMark,
   IMarkAttribute,
   IMarkContent,
+  INoteEntry,
   ISpan,
   known,
   MarkColour,
@@ -64,6 +65,7 @@ import {
   PanelState,
   parseMarks,
   parseSettings,
+  sameNote,
   serialiseClosing,
   serialiseOpening,
   serialiseSettings
@@ -732,6 +734,44 @@ export class NotesController implements IDisposable {
       ...mark,
       notes: [...mark.notes, { author: this.author(), stamp, text: body }]
     }));
+  }
+
+  /**
+   * Replace the text of one entry of a mark, keeping its author and stamp
+   * (ACC-NOTES-164). The entry is found by what the reader saw of it, in the
+   * marker as it stands at the moment of writing.
+   *
+   * @returns whether the entry was rewritten, which it is not when the mark's
+   * markers are no longer in the document or the entry is no longer in the
+   * marker as the reader saw it
+   */
+  async editNote(id: string, note: INoteEntry, text: string): Promise<boolean> {
+    const body = text.trim();
+    if (!body) {
+      return false;
+    }
+    return this._rewrite(id, mark => {
+      const at = mark.notes.findIndex(each => sameNote(each, note));
+      if (at < 0) {
+        return null;
+      }
+      const notes = [...mark.notes];
+      notes[at] = { ...notes[at], text: body };
+      return { ...mark, notes };
+    });
+  }
+
+  /**
+   * Drop one entry of a mark; the last one dropped leaves a bare mark
+   * (ACC-NOTES-167).
+   */
+  async removeNote(id: string, note: INoteEntry): Promise<void> {
+    await this._rewrite(id, mark => {
+      const at = mark.notes.findIndex(each => sameNote(each, note));
+      return at < 0
+        ? null
+        : { ...mark, notes: mark.notes.filter((_, i) => i !== at) };
+    });
   }
 
   /**
@@ -1483,13 +1523,14 @@ export class NotesController implements IDisposable {
    *
    * The mark is read out of the document again rather than taken from the
    * last read, because the refresh may just have applied a change from disk.
-   * A mark of a type this version does not write is left exactly as it is.
+   * A mark of a type this version does not write is left exactly as it is,
+   * and so is one the change answers null for: nothing of it changes.
    *
    * @returns whether the marker was found and rewritten
    */
   private async _rewrite(
     id: string,
-    change: (mark: IMark) => IMarkContent
+    change: (mark: IMark) => IMarkContent | null
   ): Promise<boolean> {
     await this._refresh();
     if (this._disposed) {
@@ -1502,14 +1543,15 @@ export class NotesController implements IDisposable {
       if (!mark || !mark.open || !known(mark)) {
         return [];
       }
+      const changed = change(mark);
+      if (!changed) {
+        return [];
+      }
       return [
         {
           start: mark.open.start,
           end: mark.open.end,
-          text: serialiseOpening(
-            change(mark),
-            inTableRow(source, mark.open.start)
-          )
+          text: serialiseOpening(changed, inTableRow(source, mark.open.start))
         }
       ];
     });

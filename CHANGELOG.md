@@ -2,6 +2,23 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.13] - 2026-09-15
+
+Each mark in the notes panel holds a comment thread whose entries can be edited and deleted, and the address of a link in the preview can be copied.
+
+### Added
+
+- **Copy link address** in the context menu of a link in the preview puts the address the link opens on the clipboard: a link to another file gives that file's address on the server without the session token, and the paragraph mark beside a heading gives the address of that heading
+- Every entry of a mark carries an edit icon and an x in its top right corner: the edit icon opens the entry's text for editing and keeps its author and time, and the x deletes the entry at once; deleting the last entry leaves the mark in place
+- An opened note field is scrolled into the notes panel together with its Save and Cancel buttons, and the preview does not move
+
+### Changed
+
+- The entries of a mark read as a comment and its replies: the first entry is the comment, every later entry is drawn indented as a reply, and the row's button reads Comment on a mark with no entry and Reply once it holds one, in place of Add note
+- Close and Reopen on a row are eye icons: a crossed eye closes the mark and an open eye reopens it
+- While a row's note field is open, the row offers no Close or Reopen and its other entries show no edit icon or x
+- The buttons of a row are set in the smaller interface font size
+
 ## [1.0.12] - 2026-09-14
 
 A note can be added to a heading of one or two words, and a triple-click on a block marks that block alone.

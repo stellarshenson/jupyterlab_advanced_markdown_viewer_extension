@@ -14,6 +14,7 @@ import { BoxLayout, BoxPanel, Widget } from '@lumino/widgets';
 import {
   BUTTON_CLASS,
   CLOSE_CLASS,
+  CLOSE_MARK_CLASS,
   COLLAPSE_CLASS,
   EXPAND_CLASS,
   REMOVE_CLASS,
@@ -21,7 +22,11 @@ import {
   CONTROLS_CLASS,
   DOT_CLASS,
   ENTRY_CLASS,
+  ENTRY_ICON_CLASS,
+  ENTRY_ICONS_CLASS,
+  ENTRY_REPLY_CLASS,
   EXPANDED_CLASS,
+  FORM_CLASS,
   FLASH_CLASS,
   FLASH_MS,
   HEAD_CLASS,
@@ -52,7 +57,13 @@ import {
   ADD_CLASS
 } from '../notes-panel';
 import { IMark, INoteEntry, MARK_COLOURS, MarkColour } from '../marks';
-import { MARK_ICONS, SWATCH_RADIUS, SWATCH_SIZE } from '../icons';
+import {
+  CLOSE_MARK_ICON,
+  MARK_ICONS,
+  REOPEN_MARK_ICON,
+  SWATCH_RADIUS,
+  SWATCH_SIZE
+} from '../icons';
 
 // Type-only, so the module is never loaded: it ships JavaScript jest cannot
 // parse, and only its type is needed here.
@@ -141,8 +152,9 @@ function readCss(): string {
   );
 }
 
-/** Every element scrolled into view, in order. */
+/** Every element scrolled into view, in order, and how each was asked. */
 const scrolled: Element[] = [];
+const scrolledWith: (ScrollIntoViewOptions | boolean | undefined)[] = [];
 
 /** What the panel asked the controller to do, in order. */
 let asked: string[] = [];
@@ -155,6 +167,11 @@ const handlers: INotesPanelHandlers = {
     asked.push(`note ${id} ${text}`);
     return noteWritten;
   },
+  editNote: async (id, note, text) => {
+    asked.push(`edit ${id} ${note.text} -> ${text}`);
+    return noteWritten;
+  },
+  removeNote: (id, note) => asked.push(`remove note ${id} ${note.text}`),
   setColour: (id, colour) => asked.push(`colour ${id} ${colour}`),
   setClosed: (id, closed) => asked.push(`closed ${id} ${closed}`),
   setShowClosed: on => asked.push(`show closed ${on}`),
@@ -244,14 +261,19 @@ function expand(row: Element): void {
 
 beforeAll(() => {
   // jsdom lays nothing out, so it implements no scrolling.
-  Element.prototype.scrollIntoView = function (this: Element) {
+  Element.prototype.scrollIntoView = function (
+    this: Element,
+    how?: ScrollIntoViewOptions | boolean
+  ) {
     scrolled.push(this);
+    scrolledWith.push(how);
   };
 });
 
 beforeEach(() => {
   jest.useFakeTimers();
   scrolled.length = 0;
+  scrolledWith.length = 0;
   asked = [];
   noteWritten = true;
   root = document.createElement('div');
@@ -353,29 +375,50 @@ describe('closed marks (ACC-NOTES-155)', () => {
     expect(ticks()).toHaveLength(2);
     panel.state = 'expanded';
     panel.selectMark('b');
-    press(rows()[1], 'Reopen');
+    press(rows()[1], 'Reopen this mark');
     expect(asked).toEqual(['show closed true', 'closed b false']);
   });
 
-  it('names the Close control without promising to hide a mark the panel keeps listed', () => {
+  it('draws Close as a crossed eye and Reopen as an open eye, titled and without text (ACC-NOTES-172)', () => {
     panel.showClosed = true;
     panel.selectMark('a');
-    const close = Array.from(
-      rows()[0].querySelectorAll<HTMLButtonElement>(`.${BUTTON_CLASS}`)
-    ).find(button => button.textContent === 'Close')!;
-    expect(close.title).toBe('Close this mark');
+    panel.selectMark('b');
+    const eyes = rows().map(row =>
+      row.querySelector<HTMLButtonElement>(`.${CLOSE_MARK_CLASS}`)!
+    );
+    expect(eyes.map(eye => eye.title)).toEqual([
+      'Close this mark',
+      'Reopen this mark'
+    ]);
+    expect(eyes.map(eye => eye.textContent)).toEqual(['', '']);
+    // The crossed eye carries the stroke across it; the open eye does not.
+    expect(eyes.map(eye => eye.querySelector('svg')!.dataset.icon)).toEqual([
+      CLOSE_MARK_ICON.name,
+      REOPEN_MARK_ICON.name
+    ]);
+    expect(CLOSE_MARK_ICON.svgstr).not.toBe(REOPEN_MARK_ICON.svgstr);
+    // After Comment, before the removal control.
+    const controls = Array.from(
+      rows()[0].querySelector(`.${CONTROLS_CLASS}`)!.children
+    ).map(child => child.className);
+    expect(controls.indexOf(`${BUTTON_CLASS} ${CLOSE_MARK_CLASS}`)).toBe(
+      controls.length - 2
+    );
+    expect(controls[controls.length - 1]).toBe(
+      `${BUTTON_CLASS} ${REMOVE_CLASS}`
+    );
   });
 
   it('offers Close on an open row, which asks the controller to close the mark', () => {
     panel.selectMark('a');
-    press(rows()[0], 'Close');
+    press(rows()[0], 'Close this mark');
     expect(asked).toEqual(['closed a true']);
   });
 
   it('releases a draft held on a row that was closed and hidden', () => {
     panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
     panel.selectMark('a');
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     const draft = panel.node.querySelector('textarea')!;
     draft.value = 'a draft on a';
     draft.dispatchEvent(new Event('input'));
@@ -385,7 +428,7 @@ describe('closed marks (ACC-NOTES-155)', () => {
       item('b', 'second passage')
     ]);
     panel.selectMark('b');
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     const fields = panel.node.querySelectorAll('textarea');
     expect(fields).toHaveLength(1);
     expect(rows()[0].contains(fields[0])).toBe(true);
@@ -521,6 +564,224 @@ describe('a row', () => {
   it('shows every entry in full once it is open', () => {
     expand(rows()[0]);
     expect(texts(rows()[0])).toEqual(['first line\nsecond line', 'a reply']);
+  });
+
+  it('reads the first entry as the comment and the rest as replies, indented (ACC-NOTES-171)', () => {
+    expand(rows()[0]);
+    expand(rows()[1]);
+    const entries = (row: Element) =>
+      Array.from(row.querySelectorAll(`.${ENTRY_CLASS}`)).map(entry =>
+        entry.classList.contains(ENTRY_REPLY_CLASS)
+      );
+    expect(entries(rows()[0])).toEqual([false, true]);
+    expect(entries(rows()[1])).toEqual([false]);
+    // Reply on a row that holds a comment; Comment on a bare mark.
+    expect(press(rows()[0], 'Reply')).toBeUndefined();
+    expect(panel.node.querySelector('textarea')).not.toBeNull();
+    panel.setMarks([item('c', 'bare')]);
+    expand(rows()[0]);
+    expect(
+      Array.from(rows()[0].querySelectorAll('button')).map(b => b.textContent)
+    ).toContain('Comment');
+    expect(
+      Array.from(rows()[0].querySelectorAll('button')).map(b => b.textContent)
+    ).not.toContain('Reply');
+    // The indent is drawn by the stylesheet.
+    expect(
+      /\.jp-AdvancedMd-notesEntry-reply \{[^}]*margin-left: 8px;/.test(
+        readCss()
+      )
+    ).toBe(true);
+  });
+
+  it('carries an edit icon and an x in the corner of every entry, which open the entry for editing and delete it (ACC-NOTES-164, ACC-NOTES-167)', () => {
+    expand(rows()[0]);
+    const icons = (row: Element) =>
+      Array.from(
+        row.querySelectorAll<HTMLButtonElement>(`.${ENTRY_ICON_CLASS}`)
+      );
+    expect(icons(rows()[0]).map(icon => icon.title)).toEqual([
+      'Edit this note',
+      'Delete this note',
+      'Edit this note',
+      'Delete this note'
+    ]);
+    expect(icons(rows()[0]).map(icon => icon.textContent)).toEqual([
+      '',
+      '',
+      '',
+      ''
+    ]);
+    // The corner container is the entry's first child, positioned by the
+    // stylesheet at its top right.
+    expect(
+      rows()[0].querySelector(`.${ENTRY_CLASS}`)!.firstElementChild!.className
+    ).toBe(ENTRY_ICONS_CLASS);
+    expect(
+      /\.jp-AdvancedMd-notesEntryIcons \{[^}]*position: absolute;[^}]*top: 0;[^}]*right: 0;/.test(
+        readCss()
+      )
+    ).toBe(true);
+
+    // The x deletes at once, no confirmation, and asks nothing else.
+    icons(rows()[0])[3].click();
+    expect(asked).toEqual(['remove note a a reply']);
+
+    // The edit icon opens the field in the entry's place, prefilled whole.
+    icons(rows()[0])[0].click();
+    const field = rows()[0].querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(field.value).toBe('first line\nsecond line');
+    expect(document.activeElement).toBe(field);
+    expect(texts(rows()[0])).toEqual(['a reply']);
+    // The form stands where the first entry stood: before the reply, and
+    // drawn as the comment, not indented.
+    const form = rows()[0].querySelector(`.${FORM_CLASS}`)!;
+    expect(form.nextElementSibling!.classList.contains(ENTRY_CLASS)).toBe(true);
+    expect(form.classList.contains(ENTRY_REPLY_CLASS)).toBe(false);
+
+    // The field of a reply keeps the reply's indent while it is open.
+    press(rows()[0], 'Cancel');
+    icons(rows()[0])[2].click();
+    expect(
+      rows()[0]
+        .querySelector(`.${FORM_CLASS}`)!
+        .classList.contains(ENTRY_REPLY_CLASS)
+    ).toBe(true);
+  });
+
+  it('saves an edit through editNote, keeping the entry, and drops an empty edit without asking (ACC-NOTES-164)', async () => {
+    expand(rows()[0]);
+    const edit = () =>
+      rows()[0].querySelector<HTMLButtonElement>(`.${ENTRY_ICON_CLASS}`)!;
+    edit().click();
+    const field = rows()[0].querySelector<HTMLTextAreaElement>('textarea')!;
+    field.value = 'first line, revised\nsecond line';
+    field.dispatchEvent(new Event('input'));
+    press(rows()[0], 'Save');
+    expect(asked).toEqual([
+      'edit a first line\nsecond line -> first line, revised\nsecond line'
+    ]);
+    await Promise.resolve();
+    expect(panel.node.querySelector('textarea')).toBeNull();
+
+    // Cleared and saved: nothing is asked and the field goes.
+    asked = [];
+    edit().click();
+    const again = rows()[0].querySelector<HTMLTextAreaElement>('textarea')!;
+    again.value = '   ';
+    again.dispatchEvent(new Event('input'));
+    press(rows()[0], 'Save');
+    expect(asked).toEqual([]);
+    expect(panel.node.querySelector('textarea')).toBeNull();
+    expect(texts(rows()[0])).toEqual(['first line\nsecond line', 'a reply']);
+  });
+
+  it('closes an edit whose entry left the marker meanwhile (ACC-NOTES-164)', async () => {
+    expand(rows()[0]);
+    rows()[0].querySelector<HTMLButtonElement>(`.${ENTRY_ICON_CLASS}`)!.click();
+    // Another writer rewrote the entry: the field has no place in the
+    // thread and sits below the controls, where Cancel still reaches it.
+    panel.setMarks([
+      item('a', 'first passage', {
+        mark: mark('a', {
+          notes: [note('kj', '2026-09-06T16:00:00Z', 'rewritten'), thread[1]]
+        })
+      })
+    ]);
+    const form = rows()[0].querySelector(`.${FORM_CLASS}`)!;
+    expect(
+      form.previousElementSibling!.classList.contains(CONTROLS_CLASS)
+    ).toBe(true);
+    expect(texts(rows()[0])).toEqual(['rewritten', 'a reply']);
+    noteWritten = false;
+    press(rows()[0], 'Save');
+    expect(asked).toEqual([
+      'edit a first line\nsecond line -> first line\nsecond line'
+    ]);
+    await Promise.resolve();
+    expect(panel.node.querySelector('textarea')).toBeNull();
+  });
+
+  it('leaves the marker of a document note alone when an edit of its last entry is left after the entry vanished (ACC-NOTES-164)', async () => {
+    const noted = () =>
+      item('d', '', {
+        mark: mark('d', {
+          type: 'document',
+          close: null,
+          passage: null,
+          notes: [note('kj', '2026-09-06T16:00:00Z', 'the only entry')]
+        })
+      });
+    const edit = () => {
+      const icon = () =>
+        rows()[0].querySelector<HTMLButtonElement>(`.${ENTRY_ICON_CLASS}`);
+      if (!icon()) {
+        expand(rows()[0]);
+      }
+      icon()!.click();
+    };
+    panel.setMarks([noted()]);
+    edit();
+    // An external rewrite dropped the entry: the mark is bare and open.
+    panel.setMarks([documentItem('d')]);
+    press(rows()[0], 'Cancel');
+    expect(asked).toEqual([]);
+    expect(panel.node.querySelector('textarea')).toBeNull();
+
+    // The same through an empty Save.
+    panel.setMarks([noted()]);
+    edit();
+    panel.setMarks([documentItem('d')]);
+    const field = rows()[0].querySelector<HTMLTextAreaElement>('textarea')!;
+    field.value = '';
+    field.dispatchEvent(new Event('input'));
+    press(rows()[0], 'Save');
+    expect(asked).toEqual([]);
+    expect(panel.node.querySelector('textarea')).toBeNull();
+  });
+
+  it('withholds the icons of the other entries, Comment and Close while the row is being written (ACC-NOTES-166, ACC-NOTES-168)', () => {
+    expand(rows()[0]);
+    expand(rows()[1]);
+    const icons = (row: Element) =>
+      row.querySelectorAll(`.${ENTRY_ICON_CLASS}`).length;
+    const labelled = (row: Element, title: string) =>
+      row.querySelector(`button[title="${title}"]`) !== null;
+    expect(icons(rows()[0])).toBe(4);
+    expect(labelled(rows()[0], 'Close this mark')).toBe(true);
+
+    // Editing the first entry: the reply offers no icon, the row no Reply
+    // and no Close; the dots and the removal stay; the other row is as it was.
+    rows()[0].querySelector<HTMLButtonElement>(`.${ENTRY_ICON_CLASS}`)!.click();
+    expect(icons(rows()[0])).toBe(0);
+    expect(labelled(rows()[0], 'Reply to this comment')).toBe(false);
+    expect(labelled(rows()[0], 'Close this mark')).toBe(false);
+    expect(rows()[0].querySelectorAll(`.${DOT_CLASS}`)).toHaveLength(6);
+    expect(labelled(rows()[0], 'Remove this mark')).toBe(true);
+    expect(icons(rows()[1])).toBe(2);
+    expect(labelled(rows()[1], 'Close this mark')).toBe(true);
+
+    // Cancel: everything is back.
+    press(rows()[0], 'Cancel');
+    expect(icons(rows()[0])).toBe(4);
+    expect(labelled(rows()[0], 'Reply to this comment')).toBe(true);
+    expect(labelled(rows()[0], 'Close this mark')).toBe(true);
+
+    // A new reply withholds the same; a closed row withholds Reopen.
+    press(rows()[0], 'Reply');
+    expect(icons(rows()[0])).toBe(0);
+    expect(labelled(rows()[0], 'Close this mark')).toBe(false);
+    press(rows()[0], 'Cancel');
+    panel.showClosed = true;
+    panel.setMarks([
+      item('a', 'first passage', {
+        mark: mark('a', { notes: thread, closed: true })
+      })
+    ]);
+    expand(rows()[0]);
+    expect(labelled(rows()[0], 'Reopen this mark')).toBe(true);
+    press(rows()[0], 'Reply');
+    expect(labelled(rows()[0], 'Reopen this mark')).toBe(false);
   });
 
   it('opens and closes independently of the other rows', () => {
@@ -767,11 +1028,13 @@ describe('selecting a mark', () => {
     scrolled.length = 0;
     // The first click of a double click on Add note takes Add note out of the
     // row (DEF-NOTES-77), so the second lands on the controls row itself.
-    press(rows()[1], 'Add note');
+    press(rows()[1], 'Comment');
     rows()[1].querySelector<HTMLElement>(`.${CONTROLS_CLASS}`)!.click();
     rows()[1].querySelector('textarea')!.click();
     expect(panel.selected).toBe('a');
-    expect(scrolled).toEqual([]);
+    // The field is scrolled into the panel's view (ACC-NOTES-169), nothing
+    // in the preview is.
+    expect(scrolled).toEqual([panel.node.querySelector(`.${FORM_CLASS}`)]);
   });
 
   it('leaves an unanchored mark alone, having nothing to scroll to', () => {
@@ -796,9 +1059,10 @@ describe('selecting a mark', () => {
 
   it('leaves the reader at the passage when the entry is opened from it', () => {
     // The entry is opened by a click on the passage or by Add note over a
-    // selection there: the reader is at the passage, so nothing scrolls.
+    // selection there: the reader is at the passage, so nothing in the
+    // preview scrolls; the field is brought into the panel's own view.
     panel.selectMark('a', true);
-    expect(scrolled).toEqual([]);
+    expect(scrolled).toEqual([panel.node.querySelector(`.${FORM_CLASS}`)]);
   });
 
   it('brings the passage back into the view when the panel opened over it', () => {
@@ -811,7 +1075,10 @@ describe('selecting a mark', () => {
     root.getBoundingClientRect = () => ({ top: 0, bottom: 500 }) as DOMRect;
     span.getBoundingClientRect = () => ({ top: 600, bottom: 620 }) as DOMRect;
     panel.selectMark('a', true);
-    expect(scrolled).toEqual([span]);
+    expect(scrolled).toEqual([
+      panel.node.querySelector(`.${FORM_CLASS}`),
+      span
+    ]);
   });
 
   it('asks for the expanded state when the entry is opened from the minimap', () => {
@@ -832,7 +1099,7 @@ describe('selecting a mark', () => {
     ]);
     panel.openFromPassage('a');
     // The row is open with its note and takes the focus, which is what
-    // brings it into the list's view; no field is on screen and Add note is
+    // brings it into the list's view; no field is on screen and Reply is
     // offered; the passage, where the reader was, is not scrolled to.
     expect(panel.selected).toBe('a');
     expect(rows()[0].textContent).toContain('already said');
@@ -840,12 +1107,29 @@ describe('selecting a mark', () => {
     expect(panel.node.querySelector('textarea')).toBeNull();
     expect(
       Array.from(rows()[0].querySelectorAll('button')).map(b => b.textContent)
-    ).toContain('Add note');
+    ).toContain('Reply');
     expect(scrolled).toEqual([]);
   });
 
   it('opens the note entry from a click on a bare mark (ACC-NOTES-153)', () => {
     panel.openFromPassage('a');
+    expect(panel.node.querySelector('textarea')).not.toBeNull();
+    expect(scrolled).toEqual([panel.node.querySelector(`.${FORM_CLASS}`)]);
+  });
+
+  it('scrolls the field it opened into the panel by the least distance, focused, and a rebuild it was not asked for by nothing (ACC-NOTES-169)', () => {
+    rows()[1].querySelector<HTMLElement>(`.${HEAD_CLASS}`)!.click();
+    scrolled.length = 0;
+    scrolledWith.length = 0;
+    press(rows()[1], 'Comment');
+    const form = panel.node.querySelector(`.${FORM_CLASS}`)!;
+    expect(scrolled).toEqual([form]);
+    expect(scrolledWith).toEqual([{ block: 'nearest' }]);
+    expect(document.activeElement).toBe(form.querySelector('textarea'));
+    // A change from disk rebuilds the rows with the field kept: the reader
+    // is in it already, and the panel moves by nothing.
+    scrolled.length = 0;
+    panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
     expect(panel.node.querySelector('textarea')).not.toBeNull();
     expect(scrolled).toEqual([]);
   });
@@ -959,20 +1243,20 @@ describe('writing a note', () => {
   };
 
   it('names the note field for assistive technology', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     expect(
       panel.node.querySelector('textarea')!.getAttribute('aria-label')
     ).toBe('Note');
   });
 
   it('keeps the browser menu inside the note field (ACC-NOTES-157)', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     const field = panel.node.querySelector('textarea')!;
     expect(field.closest('[data-jp-suppress-context-menu]')).not.toBeNull();
   });
 
   it('lays the entry out as a wide box with its two buttons in a row below', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     const form = panel.node.querySelector('.jp-AdvancedMd-notesForm')!;
     const box = form.querySelector('textarea')!;
     // Several lines are visible, and the buttons sit in their own row after
@@ -1009,7 +1293,7 @@ describe('writing a note', () => {
   };
 
   it('grows the box to what its content needs as the note is typed (ACC-NOTES-152)', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     const box = panel.node.querySelector('textarea')!;
     const heights: string[] = [];
     // The inline height is cleared before the measurement, so the rows set
@@ -1030,7 +1314,7 @@ describe('writing a note', () => {
   });
 
   it('opens a restored draft at the height its lines need (ACC-NOTES-152)', async () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('a draft\nof\nfive\nlines\nhere');
     // The rows become ticks and rows again: the form is built anew with the
     // draft, off the document, and measured once it is in it.
@@ -1044,7 +1328,7 @@ describe('writing a note', () => {
   });
 
   it('leaves a box that is not laid out alone and measures it when the panel is shown (ACC-NOTES-152)', async () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('a draft\nof\nfive\nlines\nhere');
     panel.state = 'minimap';
     panel.state = 'expanded';
@@ -1059,7 +1343,7 @@ describe('writing a note', () => {
   });
 
   it('writes what was typed', async () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('needs a number');
     press(rows()[0], 'Save');
     expect(asked).toEqual(['note a needs a number']);
@@ -1069,7 +1353,7 @@ describe('writing a note', () => {
 
   it('keeps the draft when the note could not be written', async () => {
     noteWritten = false;
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('written too late');
     press(rows()[0], 'Save');
     await Promise.resolve();
@@ -1155,7 +1439,7 @@ describe('writing a note', () => {
     viewer.tabIndex = 0;
     document.body.appendChild(viewer);
     viewer.appendChild(root);
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     panel.node.querySelector('textarea')!.focus();
     panel.state = 'hidden';
@@ -1164,7 +1448,7 @@ describe('writing a note', () => {
   });
 
   it('moves the focus to the panel body when the rows become ticks while a note is typed', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     panel.node.querySelector('textarea')!.focus();
     panel.state = 'minimap';
@@ -1177,7 +1461,7 @@ describe('writing a note', () => {
     // The chain used to end on Hide, whose activation key is Space, so a
     // reader who simply kept typing hid the whole panel within a word or two
     // and was told nothing. The body is a plain div with no activation key.
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     panel.node.querySelector('textarea')!.focus();
     panel.setMarks([]);
@@ -1215,7 +1499,7 @@ describe('writing a note', () => {
     expect(row.querySelector(`.${REMOVE_CLASS}`)).not.toBeNull();
     expect(
       Array.from(row.querySelectorAll('button')).some(
-        control => control.textContent === 'Add note'
+        control => control.textContent === 'Comment'
       )
     ).toBe(true);
   });
@@ -1283,7 +1567,7 @@ describe('writing a note', () => {
     // The plus beside a half-written note must not discard it: the document
     // row opens and is selected, the draft stays in its own row's field.
     panel.setMarks([documentItem('d'), item('a', 'first passage')]);
-    press(rows()[1], 'Add note');
+    press(rows()[1], 'Comment');
     type('half a thought');
     documentId = 'd';
     panel.node.querySelector<HTMLButtonElement>(`.${ADD_CLASS}`)!.click();
@@ -1296,7 +1580,7 @@ describe('writing a note', () => {
     expect(rows()[0].classList.contains(SELECTED_CLASS)).toBe(true);
     expect(
       Array.from(rows()[0].querySelectorAll('button')).some(
-        control => control.textContent === 'Add note'
+        control => control.textContent === 'Comment'
       )
     ).toBe(true);
   });
@@ -1306,12 +1590,12 @@ describe('writing a note', () => {
     // Add note elsewhere neither discards it nor does nothing: the draft's
     // row opens and its field takes the focus.
     panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     (rows()[0].querySelector(`.${TOGGLE_CLASS}`) as HTMLButtonElement).click();
     expect(panel.node.querySelector('textarea')).toBeNull();
     panel.selectMark('b');
-    press(rows()[1], 'Add note');
+    press(rows()[1], 'Comment');
 
     const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
     expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('a');
@@ -1323,10 +1607,10 @@ describe('writing a note', () => {
     // Save reads a whitespace-only field as nothing; a press on Add note
     // elsewhere reads it the same way, so the field opens on the asked row.
     panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('\n  ');
     panel.selectMark('b');
-    press(rows()[1], 'Add note');
+    press(rows()[1], 'Comment');
 
     const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
     expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('b');
@@ -1336,10 +1620,10 @@ describe('writing a note', () => {
 
   it('keeps a draft on one row when Add note is pressed on another', () => {
     panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     panel.selectMark('b');
-    press(rows()[1], 'Add note');
+    press(rows()[1], 'Comment');
 
     const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
     expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('a');
@@ -1360,7 +1644,7 @@ describe('writing a note', () => {
     });
 
     it('cancels the entry when the reader leaves the panel, the mark left as it is', async () => {
-      press(rows()[0], 'Add note');
+      press(rows()[0], 'Comment');
       expect(document.activeElement).toBe(panel.node.querySelector('textarea'));
 
       away.focus();
@@ -1373,7 +1657,7 @@ describe('writing a note', () => {
       expect(passages()).toEqual(['first passage']);
       expect(
         Array.from(rows()[0].querySelectorAll('button')).some(
-          control => control.textContent === 'Add note'
+          control => control.textContent === 'Comment'
         )
       ).toBe(true);
     });
@@ -1382,7 +1666,7 @@ describe('writing a note', () => {
       // The colour dots sit above the field, so a colour picked with the field
       // open leaves the focus on the row rather than in the field; the click
       // away that follows is still the reader leaving the entry.
-      press(rows()[0], 'Add note');
+      press(rows()[0], 'Comment');
       rows()[0].querySelector<HTMLButtonElement>(`.${DOT_CLASS}`)!.focus();
       expect(panel.node.querySelector('textarea')).not.toBeNull();
 
@@ -1392,7 +1676,7 @@ describe('writing a note', () => {
       expect(panel.node.querySelector('textarea')).toBeNull();
       expect(
         Array.from(rows()[0].querySelectorAll('button')).some(
-          control => control.textContent === 'Add note'
+          control => control.textContent === 'Comment'
         )
       ).toBe(true);
       expect(asked).toEqual([]);
@@ -1402,7 +1686,7 @@ describe('writing a note', () => {
       // A click on text of the preview takes no focus: the browser moves it
       // to the page body and reports no target, so the pointer is what says
       // the reader left.
-      press(rows()[0], 'Add note');
+      press(rows()[0], 'Comment');
 
       away.dispatchEvent(new Event('pointerdown', { bubbles: true }));
       panel.node.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
@@ -1415,7 +1699,7 @@ describe('writing a note', () => {
     it('keeps the entry when the click lands on a part of the panel that takes no focus', async () => {
       // The head of a row, the strip of controls and the gaps between rows
       // take no focus either, and a click there is not the reader leaving.
-      press(rows()[0], 'Add note');
+      press(rows()[0], 'Comment');
 
       rows()[0]
         .querySelector(`.${HEAD_CLASS}`)!
@@ -1430,7 +1714,7 @@ describe('writing a note', () => {
       // A menu opened from a row is an overlay the reader opened there, not
       // somewhere they went: rows rebuilt under it would take with them the
       // row Copy mark ID reads the identifier from.
-      press(rows()[0], 'Add note');
+      press(rows()[0], 'Comment');
       const menu = document.createElement('div');
       menu.className = 'lm-Menu';
       document.body.appendChild(menu);
@@ -1446,7 +1730,7 @@ describe('writing a note', () => {
     });
 
     it('keeps a draft when the reader leaves the panel', async () => {
-      press(rows()[0], 'Add note');
+      press(rows()[0], 'Comment');
       type('half a thought');
 
       away.focus();
@@ -1460,7 +1744,7 @@ describe('writing a note', () => {
     it('keeps an empty entry while the focus stays inside the panel', async () => {
       // A click inside the panel must finish on the control it was aimed at,
       // and rows rebuilt under it would take the click with them.
-      press(rows()[0], 'Add note');
+      press(rows()[0], 'Comment');
 
       rows()[0].focus();
       await settle();
@@ -1470,7 +1754,7 @@ describe('writing a note', () => {
 
     it('cancels an empty entry when another mark is selected', () => {
       panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
-      press(rows()[0], 'Add note');
+      press(rows()[0], 'Comment');
 
       panel.selectMark('b');
 
@@ -1479,7 +1763,7 @@ describe('writing a note', () => {
 
     it('keeps a draft when another mark is selected', () => {
       panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
-      press(rows()[0], 'Add note');
+      press(rows()[0], 'Comment');
       type('half a thought');
 
       panel.selectMark('b');
@@ -1496,7 +1780,7 @@ describe('writing a note', () => {
       // again with their place in it; the browser reports that removal as a
       // focus leaving the panel, and it is the panel's own doing, not the
       // reader's.
-      press(rows()[0], 'Add note');
+      press(rows()[0], 'Comment');
       panel.setMarks([item('a', 'first passage')]);
 
       panel.node.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
@@ -1619,7 +1903,7 @@ describe('writing a note', () => {
     plus.click();
     await settle();
     panel.selectMark('a');
-    press(rows()[1], 'Add note');
+    press(rows()[1], 'Comment');
 
     expect(asked).toEqual(['document', 'empty document d']);
     const field = panel.node.querySelector<HTMLTextAreaElement>('textarea')!;
@@ -1643,7 +1927,7 @@ describe('writing a note', () => {
     await settle();
     press(rows()[0], 'Cancel');
     panel.selectMark('a');
-    press(rows()[1], 'Add note');
+    press(rows()[1], 'Comment');
     press(rows()[1], 'Cancel');
 
     expect(asked).toEqual(['document']);
@@ -1737,7 +2021,7 @@ describe('writing a note', () => {
   });
 
   it('writes a note once when Save is double-clicked (DEF-NOTES-83)', async () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('once');
     const save = Array.from(
       rows()[0].querySelectorAll<HTMLButtonElement>('button')
@@ -1753,7 +2037,7 @@ describe('writing a note', () => {
   });
 
   it('writes nothing for an empty note, leaving a bare mark', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('   ');
     press(rows()[0], 'Save');
     expect(asked).toEqual([]);
@@ -1761,7 +2045,7 @@ describe('writing a note', () => {
   });
 
   it('writes nothing when the entry is cancelled', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('never mind');
     press(rows()[0], 'Cancel');
     expect(asked).toEqual([]);
@@ -1769,7 +2053,7 @@ describe('writing a note', () => {
   });
 
   it('keeps the focus in the row after Cancel destroyed the pressed button', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('never mind');
     const cancel = Array.from(
       rows()[0].querySelectorAll<HTMLButtonElement>(`.${BUTTON_CLASS}`)
@@ -1782,7 +2066,7 @@ describe('writing a note', () => {
   });
 
   it('keeps the focus in the row after Save', async () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('a thought');
     const save = Array.from(
       rows()[0].querySelectorAll<HTMLButtonElement>(`.${BUTTON_CLASS}`)
@@ -1795,14 +2079,14 @@ describe('writing a note', () => {
   });
 
   it('keeps a half-written note through a change of the document', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     panel.setMarks([item('a', 'first passage rewritten')]);
     expect(panel.node.querySelector('textarea')!.value).toBe('half a thought');
   });
 
   it('keeps the caret where it was through a change of the document', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('hello world');
     const before = panel.node.querySelector('textarea')!;
     before.focus();
@@ -1818,7 +2102,7 @@ describe('writing a note', () => {
   });
 
   it('keeps the entry when the reader cuts the marked passage and pastes it back', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     // The document holds no marker for a moment, so the mark is absent from
     // that parse; the file on disk held both markers throughout, so the panel
@@ -1834,7 +2118,7 @@ describe('writing a note', () => {
     // An agent rewrites the file in pieces and the first chunk stops before
     // the marked passage, so one parse holds no mark and the next holds it
     // whole. ACC-NOTES-144 promises a note being written is not taken away.
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
 
     panel.setMarks([]);
@@ -1858,7 +2142,7 @@ describe('writing a note', () => {
     // where the focus sits says nothing about where the reader was: the panel
     // has to remember that it took the focus off a field.
     panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     expect(document.activeElement).toBe(panel.node.querySelector('textarea'));
 
@@ -1882,7 +2166,7 @@ describe('writing a note', () => {
     // other and the panel is handed the marks of each. Left on the body, the
     // reader's typing goes nowhere and the Enter they meant as a newline is
     // read by whatever holds the focus.
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
 
     panel.setMarks([]);
@@ -1900,7 +2184,7 @@ describe('writing a note', () => {
     // field must not take the focus off the control they chose.
     const elsewhere = document.createElement('button');
     document.body.appendChild(elsewhere);
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
 
     panel.setMarks([]);
@@ -1913,7 +2197,7 @@ describe('writing a note', () => {
   });
 
   it('leaves a reader who was on a row out of the field when the rows return', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     // The reader moved off the field onto the row itself and stopped typing.
     rows()[0].focus();
@@ -1934,7 +2218,7 @@ describe('writing a note', () => {
     // The parking has to survive every rebuild of a streamed rewrite, not one
     // or two: it names the element the last rebuild left the focus on, and
     // each rebuild that finds the reader still there names it again.
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
 
     panel.setMarks([]);
@@ -1960,7 +2244,7 @@ describe('writing a note', () => {
     document.body.appendChild(viewer);
     viewer.appendChild(root);
     document.body.appendChild(panel.badge);
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     panel.setMarks([]);
 
@@ -1984,7 +2268,7 @@ describe('writing a note', () => {
     // The body is never destroyed by a change of state, so a parking made on
     // it outlives the collapse; what ends it is the reader being moved off it,
     // which pressing a header control does.
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     panel.setMarks([]);
 
@@ -2010,7 +2294,7 @@ describe('writing a note', () => {
   });
 
   it('leaves a reader who parked and moved to a control of the panel on that control', () => {
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
     panel.setMarks([]);
     const hide = panel.node.querySelector<HTMLElement>(`.${CLOSE_CLASS}`)!;
@@ -2026,7 +2310,7 @@ describe('writing a note', () => {
 
   it('opens an entry elsewhere once the draft mark has gone for good', () => {
     panel.setMarks([item('a', 'first passage'), item('b', 'second passage')]);
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
 
     // This rewrite really did take the markers, so the mark never comes back.
@@ -2034,7 +2318,7 @@ describe('writing a note', () => {
     // rest of the session.
     panel.setMarks([item('b', 'second passage')]);
     expand(rows()[0]);
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
 
     const field = panel.node.querySelector('textarea')!;
     expect(field.closest<HTMLElement>(`.${ROW_CLASS}`)!.dataset.mark).toBe('b');
@@ -2044,7 +2328,7 @@ describe('writing a note', () => {
   it('drops the selection when its mark leaves, and keeps the draft', () => {
     renderMarks('a');
     panel.selectMark('a');
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     type('half a thought');
 
     panel.setMarks([]);
@@ -2091,10 +2375,10 @@ describe('the controls of a row', () => {
     expand(rows()[1]);
     const offersNote = (row: Element): boolean =>
       Array.from(row.querySelectorAll('button')).some(
-        control => control.textContent === 'Add note'
+        control => control.textContent === 'Comment'
       );
 
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     expect(rows()[0].querySelector('textarea')).not.toBeNull();
     expect(offersNote(rows()[0])).toBe(false);
     expect(rows()[0].querySelectorAll(`.${DOT_CLASS}`)).toHaveLength(
@@ -2106,7 +2390,7 @@ describe('the controls of a row', () => {
     press(rows()[0], 'Cancel');
     expect(offersNote(rows()[0])).toBe(true);
 
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     const field = rows()[0].querySelector('textarea')!;
     field.value = 'a thought';
     field.dispatchEvent(new Event('input'));
@@ -2126,7 +2410,7 @@ describe('the controls of a row', () => {
         .filter(index => index >= 0);
     const before = places();
     expect(before).toHaveLength(MARK_COLOURS.length);
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     expect(rows()[0].querySelector('textarea')).not.toBeNull();
     expect(places()).toEqual(before);
   });
@@ -2140,16 +2424,17 @@ describe('the controls of a row', () => {
     // Add note is left out once its field is open (ACC-NOTES-147), so it is
     // taken before the press.
     const addNote = Array.from(rows()[0].querySelectorAll('button')).find(
-      control => control.textContent === 'Add note'
+      control => control.textContent === 'Comment'
     )!;
-    press(rows()[0], 'Add note');
+    press(rows()[0], 'Comment');
     const buttons = [
       addNote,
       ...Array.from(panel.node.querySelectorAll('button'))
     ];
     // The expand, collapse, Show closed, add and close controls, the toggle,
-    // Add note, the six dots, Close, Remove, Save and Cancel.
-    expect(buttons).toHaveLength(17);
+    // Comment, the six dots, Remove, Save and Cancel; Close is withheld
+    // while the field is open (ACC-NOTES-166).
+    expect(buttons).toHaveLength(16);
     for (const button of buttons) {
       expect(button.getAttribute('aria-label')).toBe(button.title);
       // A button with a worded label is spoken and voice-driven by that
@@ -2348,6 +2633,15 @@ describe('the mark colours in the stylesheet', () => {
       });
     }
   }
+
+  it('sets the row buttons in the smaller interface size (ACC-NOTES-165)', () => {
+    expect(declaration('.jp-AdvancedMd-notesButton', 'font-size')).toBe(
+      'var(--jp-ui-font-size0)'
+    );
+    expect(declaration('.jp-AdvancedMd-notesStamp', 'font-size')).toBe(
+      'var(--jp-ui-font-size0)'
+    );
+  });
 
   it('borders the minimap tick and gives the bordered buttons the 24 px target', () => {
     // The tick is the mark's faint wash; its border is what the eye finds on

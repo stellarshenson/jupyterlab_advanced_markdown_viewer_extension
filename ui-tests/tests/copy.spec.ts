@@ -2,6 +2,8 @@ import { expect, test } from '@jupyterlab/galata';
 
 import {
   choose,
+  closeMenus,
+  entry,
   FILE,
   labFixtures,
   mark,
@@ -199,4 +201,68 @@ test('ACC-COPY-160 keeps the tag that names a selected list or table', async ({
   expect(table).toContain('left');
   expect(table).toContain('two');
   expect(table).not.toContain('apples and pears');
+});
+
+/** A document with a link of each kind whose address is copied. */
+const LINKS = [
+  '# Links',
+  '',
+  'Plain words, then [the site](https://example.com/a) and [the notes](./notes.md#setup).',
+  '',
+  '### Hard criteria',
+  '',
+  'The heading above carries the paragraph mark link.',
+  ''
+].join('\n');
+
+test('ACC-COPY-163 copies the address a link opens, without the session token', async ({
+  page,
+  tmpPath
+}) => {
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  const target = `${tmpPath}/${FILE}`;
+  await page.contents.uploadContent(LINKS, 'text', target);
+  await openPreview(page, target, 'Hard criteria');
+  const root = page.locator('.jp-RenderedMarkdown:visible');
+  const origin = new URL(page.url()).origin;
+
+  /** Open the menu on a link, choose the entry and read the clipboard. */
+  const copyAddressOf = async (link: any): Promise<string> => {
+    const box = await link.boundingBox();
+    await openMenu(page, {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2
+    });
+    await expect(
+      entry(page, 'Copy link address').locator('.lm-Menu-itemIcon svg')
+    ).toHaveCount(1);
+    await choose(page, 'Copy link address');
+    return page.evaluate(() => navigator.clipboard.readText());
+  };
+
+  expect(
+    await copyAddressOf(root.getByRole('link', { name: 'the site' }))
+  ).toBe('https://example.com/a');
+
+  // JupyterLab writes the session token into a link to a file.
+  const notes = root.getByRole('link', { name: 'the notes' });
+  expect(await notes.getAttribute('href')).toContain('_xsrf=');
+  expect(await copyAddressOf(notes)).toBe(
+    `${origin}/files/${tmpPath}/notes.md#setup`
+  );
+
+  // The paragraph mark on a heading shows while the heading is hovered.
+  const heading = root.locator('h3', { hasText: 'Hard criteria' });
+  await heading.hover();
+  expect(await copyAddressOf(heading.locator('a.jp-InternalAnchorLink'))).toBe(
+    `${origin}/lab/tree/${tmpPath}/${FILE}#Hard-criteria`
+  );
+
+  // Off a link the entry is not offered.
+  const words = await root
+    .locator('p', { hasText: 'Plain words' })
+    .boundingBox();
+  await openMenu(page, { x: words.x + 5, y: words.y + words.height / 2 });
+  await expect(entry(page, 'Copy link address')).toHaveCount(0);
+  await closeMenus(page);
 });

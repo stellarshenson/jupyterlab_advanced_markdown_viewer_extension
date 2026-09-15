@@ -379,6 +379,12 @@ const markedHtml = (id = ONE, attributes = 'colour=yellow') =>
   `<p>Alpha <!-- mark:${id} note ${attributes} -->beta gamma<!-- /mark:${id} --> delta.</p>`;
 
 describe('NotesController', () => {
+  beforeAll(() => {
+    // jsdom lays nothing out, so it implements no scrolling; the panel
+    // scrolls the field it opened into view (ACC-NOTES-169).
+    Element.prototype.scrollIntoView = () => undefined;
+  });
+
   let harnesses: IHarness[] = [];
 
   const open = (source: string): IHarness => {
@@ -1072,6 +1078,73 @@ describe('NotesController', () => {
       expect(h.source()).toBe(source);
     });
 
+    it('rewrites the text of one entry, keeping its author, its stamp and the rest of the thread (ACC-NOTES-164)', async () => {
+      const h = open(marked());
+      await ready();
+      await h.controller.addNote(ONE, 'first');
+      await h.controller.addNote(ONE, 'second');
+      const [before] = parseMarks(h.source());
+      const first = before.notes[0];
+
+      expect(
+        await h.controller.editNote(ONE, first, ' first, said again\nand more ')
+      ).toBe(true);
+
+      const [mark] = parseMarks(h.source());
+      expect(mark.notes).toEqual([
+        { ...first, text: 'first, said again\nand more' },
+        before.notes[1]
+      ]);
+      expect(h.source()).toContain('-->beta gamma<!-- /mark:');
+      expect(h.transactions).toHaveLength(3);
+    });
+
+    it('rewrites nothing for an empty edit or for an entry no longer in the marker (ACC-NOTES-164)', async () => {
+      const h = open(marked());
+      await ready();
+      await h.controller.addNote(ONE, 'first');
+      const [before] = parseMarks(h.source());
+      const source = h.source();
+
+      expect(await h.controller.editNote(ONE, before.notes[0], '  ')).toBe(
+        false
+      );
+      expect(h.source()).toBe(source);
+      // Another writer changed the entry meanwhile: the reader's edit of what
+      // they saw lands on nothing.
+      expect(
+        await h.controller.editNote(
+          ONE,
+          { ...before.notes[0], text: 'what they saw' },
+          'replaced'
+        )
+      ).toBe(false);
+      expect(h.source()).toBe(source);
+      expect(h.transactions).toHaveLength(1);
+    });
+
+    it('drops one entry and leaves a bare mark after the last one (ACC-NOTES-167)', async () => {
+      const h = open(marked());
+      await ready();
+      await h.controller.addNote(ONE, 'first');
+      await h.controller.addNote(ONE, 'second');
+      const [before] = parseMarks(h.source());
+
+      await h.controller.removeNote(ONE, before.notes[0]);
+      let [mark] = parseMarks(h.source());
+      expect(mark.notes).toEqual([before.notes[1]]);
+
+      // An entry already gone writes nothing.
+      await h.controller.removeNote(ONE, before.notes[0]);
+      expect(parseMarks(h.source())[0].notes).toEqual([before.notes[1]]);
+      expect(h.transactions).toHaveLength(3);
+
+      await h.controller.removeNote(ONE, before.notes[1]);
+      [mark] = parseMarks(h.source());
+      expect(mark.notes).toEqual([]);
+      expect(h.source()).toBe(marked());
+    });
+
     it('closes and reopens a mark through its status attribute, keeping colour and notes (ACC-NOTES-155)', async () => {
       const h = open(marked());
       await ready();
@@ -1414,6 +1487,8 @@ describe('NotesController', () => {
         root: () => h.root,
         handlers: {
           addNote: async () => true,
+          editNote: async () => true,
+          removeNote: () => undefined,
           setColour: () => undefined,
           setClosed: () => undefined,
           setShowClosed: () => undefined,

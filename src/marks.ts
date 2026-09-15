@@ -108,6 +108,15 @@ export interface INoteEntry {
 }
 
 /**
+ * Whether two note entries are the same entry: an entry is edited or removed
+ * by what the reader saw of it, so one another writer changed meanwhile is
+ * left alone.
+ */
+export function sameNote(a: INoteEntry, b: INoteEntry): boolean {
+  return a.author === b.author && a.stamp === b.stamp && a.text === b.text;
+}
+
+/**
  * What an opening marker spells out, which is all a marker needs to be written.
  */
 export interface IMarkContent {

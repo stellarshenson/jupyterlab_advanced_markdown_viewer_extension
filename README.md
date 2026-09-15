@@ -20,6 +20,7 @@ See the changes an AI agent, or any other program, makes to a Markdown file as i
 - **Mark and note while the agent writes** - six colours, notes on a passage or on the whole document, all listed beside the preview
 - **Notes are stored in the file** - as HTML comments that other Markdown renderers do not show; a note line an agent adds appears in the thread
 - **Copy the document, or one passage of it, for an email** - **Copy Content** in the preview's context menu puts the selected passage on the clipboard as basic HTML, or the whole rendered document when nothing is selected, without the theme's colours, the marks' paint or any styling
+- **Copy the address of a link** - **Copy link address** in the context menu of a link puts the address the link opens on the clipboard
 
 ## Screenshots
 
@@ -38,8 +39,9 @@ Notes beside the preview: a note on the whole document, then three marked passag
 - Right-click a Markdown file in the file browser and choose **Open With**, then **Markdown Preview**. From then on a change arriving from disk is highlighted, and the tab shows an icon until you look
 - Select a passage in the preview, right-click and pick a colour under **Mark**; or select with caret browsing (F7) and press Ctrl Shift M (Cmd Shift M on macOS). Choose **Add note** to mark and write a note in one step
 - Press the plus in the notes panel header for a note on the document as a whole; the panel is shown from the badge at the top right of the preview or from Show notes in the context menu. The context menu and the palette offer no entry for the document note itself
-- Click a row in the panel to reveal its passage and open its notes, colours and removal control; the caret at the header's left edge collapses the panel to a strip of ticks, the cross hides it. With the panel hidden, the notes badge at the top right of the preview brings it back
+- Click a row in the panel to reveal its passage and open its thread, colours, eye and removal control. The first entry is the comment, every entry after it a reply; each carries an edit icon and an x in its corner. The eye closes the mark and hides it until the panel shows closed marks. The caret at the header's left edge collapses the panel to a strip of ticks, the cross hides it. With the panel hidden, the notes badge at the top right of the preview brings it back
 - Right-click the preview and choose **Copy Content** to put the selected passage on the clipboard as basic HTML, or the whole rendered document when nothing is selected: headings, lists, tables, links and code, with no colours or styling, ready to paste into an email. A selected table row keeps the table its cells sit in, and a selected fenced block keeps the line breaks of its program. The same entry is in the command palette
+- Right-click a link in the preview and choose **Copy link address**. A link to another file gives that file's address on the server, and the paragraph mark beside a hovered heading gives the address of that heading
 
 ## Limitations
 

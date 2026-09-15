@@ -448,6 +448,7 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 .jp-AdvancedMd-notesClose svg,
 .jp-AdvancedMd-notesAdd svg,
 .jp-AdvancedMd-notesRemove svg,
+.jp-AdvancedMd-notesCloseMark svg,
 .jp-AdvancedMd-notesBadge svg {
   width: 14px;
   height: 14px;
@@ -477,6 +478,9 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   min-height: 24px;
   padding: 1px 6px;
   color: inherit;
+
+  /* The size the author and time lines use (ACC-NOTES-165). */
+  font-size: var(--jp-ui-font-size0);
   cursor: pointer;
   background: none;
   border: 1px solid var(--jp-border-color2);
@@ -492,6 +496,13 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   display: inline-flex;
   align-items: center;
   margin-left: auto;
+  padding: 1px 4px;
+}
+
+/* The eye that closes or reopens the mark, drawn as the removal is. */
+.jp-AdvancedMd-notesCloseMark {
+  display: inline-flex;
+  align-items: center;
   padding: 1px 4px;
 }
 
@@ -580,7 +591,44 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 }
 
 .jp-AdvancedMd-notesEntry {
+  position: relative;
+
+  /* Room in the corner for the edit icon and the x (ACC-NOTES-164). */
+  padding-right: 36px;
   margin-top: 4px;
+}
+
+/* A reply sits indented under the comment it answers (ACC-NOTES-171). */
+.jp-AdvancedMd-notesEntry-reply {
+  padding-left: 8px;
+  margin-left: 8px;
+  border-left: 2px solid var(--jp-border-color2);
+}
+
+.jp-AdvancedMd-notesEntryIcons {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 2px;
+}
+
+.jp-AdvancedMd-notesEntryIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: var(--jp-ui-font-color2);
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.jp-AdvancedMd-notesEntryIcon svg {
+  width: 12px;
+  height: 12px;
 }
 
 .jp-AdvancedMd-notesAuthor {

@@ -198,6 +198,7 @@ class Document extends Widget {
     this.context = {
       ready: Promise.resolve(),
       path: 'live.md',
+      localPath: 'live.md',
       model,
       contentsModel: { hash: 'h0' },
       save: async () => {
@@ -851,7 +852,7 @@ describe('the plugin', () => {
   });
 
   describe('the context menu', () => {
-    it('offers a Mark submenu of the six colours, the note, the copy and the three states', async () => {
+    it('offers a Mark submenu of the six colours, the note, the two copies and the three states', async () => {
       const lab = await start(SOURCE);
       expect(
         lab.menu.map(item => [
@@ -863,6 +864,7 @@ describe('the plugin', () => {
         ['submenu', undefined, undefined],
         ['command', COMMANDS.addNote, undefined],
         ['command', COMMANDS.copyContent, undefined],
+        ['command', COMMANDS.copyLinkAddress, undefined],
         ['command', COMMANDS.panel, 'expanded'],
         ['command', COMMANDS.panel, 'minimap'],
         ['command', COMMANDS.panel, 'hidden'],
@@ -891,8 +893,13 @@ describe('the plugin', () => {
       expect(lab.menu[0].selector).toBe(
         '.jp-AdvancedMd-selecting .jp-MarkdownViewer .jp-RenderedMarkdown'
       );
+      // The address of a link is offered on a link inside it alone.
       for (const item of lab.menu.slice(1, -1)) {
-        expect(item.selector).toBe('.jp-MarkdownViewer .jp-RenderedMarkdown');
+        expect(item.selector).toBe(
+          item.command === COMMANDS.copyLinkAddress
+            ? '.jp-MarkdownViewer .jp-RenderedMarkdown a[href]'
+            : '.jp-MarkdownViewer .jp-RenderedMarkdown'
+        );
       }
       // The identifier is offered on a row of the panel alone.
       expect(lab.menu[lab.menu.length - 1].selector).toBe(
@@ -920,6 +927,50 @@ describe('the plugin', () => {
       expect(lab.commands.isVisible(COMMANDS.copyMarkId)).toBe(false);
       await lab.commands.execute(COMMANDS.copyMarkId);
       expect(copied).toHaveBeenCalledTimes(1);
+    });
+
+    it('copies the address of the link the menu was opened on (ACC-COPY-163)', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render(
+        '<p>See <a href="https://example.com/a"><em>the site</em></a> and <a href="">nothing</a>.</p>'
+      );
+      const copied = Clipboard.copyToSystem as jest.Mock;
+      copied.mockClear();
+      const [site, empty] = Array.from(
+        lab.widget.rendered.querySelectorAll('a')
+      );
+      // Emphasised words inside a link are still on the link.
+      lab.openedOver(site.querySelector('em'));
+      expect(lab.commands.isVisible(COMMANDS.copyLinkAddress)).toBe(true);
+      await lab.commands.execute(COMMANDS.copyLinkAddress);
+      expect(copied).toHaveBeenCalledWith('https://example.com/a');
+      // A link JupyterLab could not resolve is left with an empty address, and
+      // neither it nor the words around the links offer anything.
+      for (const node of [empty, lab.widget.rendered.querySelector('p')]) {
+        lab.openedOver(node as HTMLElement);
+        expect(lab.commands.isVisible(COMMANDS.copyLinkAddress)).toBe(false);
+        await lab.commands.execute(COMMANDS.copyLinkAddress);
+      }
+      expect(copied).toHaveBeenCalledTimes(1);
+    });
+
+    it('still copies the link when the paint the menu was opened over is unwrapped (ACC-COPY-163)', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render(
+        '<p><a href="https://example.com/a"><span class="jp-AdvancedMd-added">the site</span></a></p>'
+      );
+      const copied = Clipboard.copyToSystem as jest.Mock;
+      copied.mockClear();
+      const paint = lab.widget.rendered.querySelector('span') as HTMLElement;
+      lab.openedOver(paint);
+      expect(lab.commands.isVisible(COMMANDS.copyLinkAddress)).toBe(true);
+      // The fade replaces the paint with its text, as undecorate does, and the
+      // menu still holds the detached span as what it was opened over.
+      paint.replaceWith(document.createTextNode('the site'));
+      expect(paint.isConnected).toBe(false);
+      expect(lab.commands.isVisible(COMMANDS.copyLinkAddress)).toBe(true);
+      await lab.commands.execute(COMMANDS.copyLinkAddress);
+      expect(copied).toHaveBeenCalledWith('https://example.com/a');
     });
 
     it('copies the rendered document as basic HTML and as text (ACC-COPY-160)', async () => {

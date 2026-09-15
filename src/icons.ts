@@ -19,6 +19,7 @@ import {
   deleteIcon,
   editIcon,
   LabIcon,
+  linkIcon,
   listIcon,
   paletteIcon,
   tableRowsIcon
@@ -89,6 +90,34 @@ export const MARK_MENU_ICON: LabIcon = paletteIcon;
 export const REMOVE_ICON: LabIcon = deleteIcon;
 
 /**
+ * An eye in the 16 by 16 box of a menu icon, drawn in the current colour so
+ * it follows the button it sits in; crossed out, it is the eye that closes
+ * a mark, which hides it (ACC-NOTES-172).
+ */
+function eye(crossed: boolean): string {
+  const stroke = 'fill="none" stroke="currentColor" stroke-width="1.5"';
+  return (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">' +
+    `<path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8z" ${stroke}/>` +
+    `<circle cx="8" cy="8" r="2" ${stroke}/>` +
+    (crossed ? `<path d="M2.5 13.5l11-11" ${stroke}/>` : '') +
+    '</svg>'
+  );
+}
+
+/** The control of an open row that closes the mark: a crossed eye. */
+export const CLOSE_MARK_ICON = new LabIcon({
+  name: 'jupyterlab_advanced_markdown_viewer_extension:close-mark',
+  svgstr: eye(true)
+});
+
+/** The control of a closed row that reopens the mark: an open eye. */
+export const REOPEN_MARK_ICON = new LabIcon({
+  name: 'jupyterlab_advanced_markdown_viewer_extension:reopen-mark',
+  svgstr: eye(false)
+});
+
+/**
  * The control on the minimap strip that expands the panel: a caret pointing
  * the way the panel grows, into the preview on its left.
  */
@@ -100,14 +129,20 @@ export const EXPAND_ICON: LabIcon = caretLeftIcon;
  */
 export const COLLAPSE_ICON: LabIcon = caretRightIcon;
 
-/** The icon of the entry that writes a note. */
+/** The icon of the entry that writes a note, and of the edit icon an entry carries. */
 export const NOTE_ICON: LabIcon = editIcon;
+
+/** The x an entry carries, which deletes it. */
+export const DELETE_NOTE_ICON: LabIcon = closeIcon;
 
 /** The icon of the panel control that adds a note on the document as a whole. */
 export const ADD_ICON: LabIcon = addIcon;
 
 /** Copying the rendered document, in JupyterLab's own copy icon. */
 export const COPY_ICON: LabIcon = copyIcon;
+
+/** Copying the address of a link, in JupyterLab's own link icon. */
+export const LINK_ICON: LabIcon = linkIcon;
 
 /** The icon of the entry that puts the panel in each state. */
 export const PANEL_ICONS: Record<PanelState, LabIcon> = {

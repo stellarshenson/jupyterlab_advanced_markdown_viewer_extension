@@ -36,9 +36,11 @@ import { Menu } from '@lumino/widgets';
 
 import { ChangeChannel } from './channel';
 import { contentOfRange, copiedContent, selectedContent } from './content';
+import { linkAddress } from './link';
 import { renderedToDomRange } from './anchor';
 import {
   COPY_ICON,
+  LINK_ICON,
   MARK_ICONS,
   MARK_MENU_ICON,
   NOTE_ICON,
@@ -90,7 +92,9 @@ export const COMMANDS = {
   /** Copy the identifier of the mark whose panel row the menu was opened on. */
   copyMarkId: 'advanced-markdown-viewer:copy-mark-id',
   /** Copy the rendered document as basic HTML, for a mail client. */
-  copyContent: 'advanced-markdown-viewer:copy-content'
+  copyContent: 'advanced-markdown-viewer:copy-content',
+  /** Copy the address of the link the context menu was opened on. */
+  copyLinkAddress: 'advanced-markdown-viewer:copy-link-address'
 };
 
 /**
@@ -114,6 +118,9 @@ const MARKING_SELECTOR = `.${SELECTING_CLASS} ${CONTEXT_SELECTOR}`;
 
 /** A row of the notes panel, where the identifier of its mark is offered. */
 const ROW_SELECTOR = `.${PANEL_CLASS} .${ROW_CLASS}`;
+
+/** A link in the rendered Markdown of a preview, where its address is offered. */
+const LINK_SELECTOR = `${CONTEXT_SELECTOR} a[href]`;
 
 /**
  * The order the context menu offers the three states in.
@@ -266,6 +273,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
         root,
         handlers: {
           addNote: (id, text) => notes.addNote(id, text),
+          editNote: (id, note, text) => notes.editNote(id, note, text),
+          removeNote: (id, note) => void notes.removeNote(id, note),
           setColour: (id, colour) => void notes.setColour(id, colour),
           setClosed: (id, closed) => void notes.setClosed(id, closed),
           setShowClosed: on => notes.setShowClosed(on),
@@ -466,6 +475,52 @@ const plugin: JupyterFrontEndPlugin<void> = {
       }
     });
 
+    // The lab's context menu takes the place of the browser's, and with it the
+    // browser's own Copy link address (ACC-COPY-163).
+    //
+    // The node the menu was opened over can leave the document before the
+    // choice: a fade unwraps the paint on added text, and a mark's paint or a
+    // typing run goes the same way (highlight.ts undecorate). The walk up from
+    // a detached node reaches no link, so the link found while that node was
+    // in the document answers for as long as the same node is out of it.
+    let heldLink: { over: HTMLElement; link: HTMLAnchorElement | null } | null =
+      null;
+    const linkUnderMenu = (): HTMLAnchorElement | null => {
+      // The walk hands the callback the node the menu was opened over first.
+      const walked: HTMLElement[] = [];
+      const found =
+        (app.contextMenuHitTest(node => {
+          walked.push(node);
+          return (
+            node instanceof HTMLAnchorElement && !!node.getAttribute('href')
+          );
+        }) as HTMLAnchorElement | undefined) ?? null;
+      const over = walked[0];
+      if (!over) {
+        return null;
+      }
+      if (!over.isConnected && heldLink?.over === over) {
+        return heldLink.link;
+      }
+      heldLink = { over, link: found };
+      return found;
+    };
+    app.commands.addCommand(COMMANDS.copyLinkAddress, {
+      label: trans.__('Copy link address'),
+      icon: LINK_ICON,
+      describedBy: { args: { type: 'object', properties: {} } },
+      isVisible: () => linkUnderMenu() !== null,
+      execute: () => {
+        const link = linkUnderMenu();
+        const attachment = preview();
+        if (link && attachment) {
+          Clipboard.copyToSystem(
+            linkAddress(link, attachment.widget.context.localPath)
+          );
+        }
+      }
+    });
+
     app.commands.addCommand(COMMANDS.panel, {
       label: args => {
         const state = args.state as PanelState;
@@ -533,6 +588,11 @@ const plugin: JupyterFrontEndPlugin<void> = {
       command: COMMANDS.copyContent,
       selector: CONTEXT_SELECTOR,
       rank: 25
+    });
+    app.contextMenu.addItem({
+      command: COMMANDS.copyLinkAddress,
+      selector: LINK_SELECTOR,
+      rank: 26
     });
     PANEL_ORDER.forEach((state, index) => {
       app.contextMenu.addItem({

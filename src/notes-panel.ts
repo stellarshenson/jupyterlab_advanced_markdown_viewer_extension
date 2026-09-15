@@ -20,10 +20,14 @@ import { BoxLayout, BoxPanel, Widget } from '@lumino/widgets';
 
 import {
   ADD_ICON,
+  CLOSE_MARK_ICON,
   COLLAPSE_ICON,
+  DELETE_NOTE_ICON,
   EXPAND_ICON,
+  NOTE_ICON,
   PANEL_ICONS,
-  REMOVE_ICON
+  REMOVE_ICON,
+  REOPEN_MARK_ICON
 } from './icons';
 import {
   DOCUMENT_TYPE,
@@ -34,7 +38,8 @@ import {
   known,
   MarkColour,
   PANEL_LABELS,
-  PanelState
+  PanelState,
+  sameNote
 } from './marks';
 
 /** Class on the panel's own node. */
@@ -59,6 +64,11 @@ export const PASSAGE_CLASS = 'jp-AdvancedMd-notesPassage';
 export const TOGGLE_CLASS = 'jp-AdvancedMd-notesToggle';
 export const STATE_CLASS = 'jp-AdvancedMd-notesState';
 export const ENTRY_CLASS = 'jp-AdvancedMd-notesEntry';
+/** Class every entry after the first carries: a reply to the comment (ACC-NOTES-171). */
+export const ENTRY_REPLY_CLASS = 'jp-AdvancedMd-notesEntry-reply';
+/** The corner of an entry holding its edit icon and its x, and each icon. */
+export const ENTRY_ICONS_CLASS = 'jp-AdvancedMd-notesEntryIcons';
+export const ENTRY_ICON_CLASS = 'jp-AdvancedMd-notesEntryIcon';
 export const AUTHOR_CLASS = 'jp-AdvancedMd-notesAuthor';
 export const STAMP_CLASS = 'jp-AdvancedMd-notesStamp';
 export const TEXT_CLASS = 'jp-AdvancedMd-notesText';
@@ -90,6 +100,8 @@ const ADD_LABEL = 'Add document note';
 
 /** The removal control of an open row. */
 export const REMOVE_CLASS = 'jp-AdvancedMd-notesRemove';
+/** The eye that closes an open mark or reopens a closed one (ACC-NOTES-172). */
+export const CLOSE_MARK_CLASS = 'jp-AdvancedMd-notesCloseMark';
 
 /** Class on the word a document note's row shows in place of a passage. */
 export const DOCUMENT_CLASS = 'jp-AdvancedMd-notesDocument';
@@ -169,6 +181,13 @@ export interface INotesPanelHandlers {
    * markers are no longer in the document.
    */
   addNote(id: string, text: string): Promise<boolean>;
+  /**
+   * Replace the text of one entry, named by what the reader saw of it. Called
+   * only with text that is not blank. Answers whether it was rewritten.
+   */
+  editNote(id: string, note: INoteEntry, text: string): Promise<boolean>;
+  /** Drop one entry, named by what the reader saw of it. */
+  removeNote(id: string, note: INoteEntry): void;
   /** Give a mark another colour. */
   setColour(id: string, colour: MarkColour): void;
   /** Close a mark, or reopen it. */
@@ -200,6 +219,8 @@ interface IEntry {
   id: string;
   text: string;
   wholeDocument: boolean;
+  /** The entry being edited, as it stood when the field opened; null for a new one. */
+  editing: INoteEntry | null;
 }
 
 /**
@@ -624,7 +645,7 @@ export class NotesPanel extends Widget {
    * so a draft the reader collapsed out of sight never blocks in silence.
    * A field holding only whitespace is no draft, as Save reads it.
    */
-  private _openEntry(id: string): void {
+  private _openEntry(id: string, editing: INoteEntry | null = null): void {
     const held = this._entry?.text.trim() ? this._entry : null;
     // The hold lasts only while the draft's own mark is still listed. setMarks
     // keeps a draft through its mark's absence, so a mark that never came back
@@ -639,13 +660,14 @@ export class NotesPanel extends Widget {
         ? held
         : {
             id,
-            text: '',
+            text: editing?.text ?? '',
             // What the entry stands on is read here and not at its close:
             // a parse that does not list the mark must not change what
             // leaving the entry does (DEF-NOTES-97).
             wholeDocument:
               this._items.find(item => item.mark.id === id)?.mark.type ===
-              DOCUMENT_TYPE
+              DOCUMENT_TYPE,
+            editing
           };
     // A field left empty for another row's field is closed as Cancel closes
     // it.
@@ -666,12 +688,13 @@ export class NotesPanel extends Widget {
    * marker for the note the reader has now left, and a document marker holds
    * nothing else. A passage mark stays, since its colour still marks the
    * passage, and so does a document mark the reader closed, since closing it
-   * is them keeping it (DEF-NOTES-97).
+   * is them keeping it (DEF-NOTES-97). An edit field never wrote the marker,
+   * so leaving it never removes the marker either.
    */
   private _closeEntry(): void {
     const entry = this._entry;
     this._entry = null;
-    if (!entry?.wholeDocument) {
+    if (!entry?.wholeDocument || entry.editing) {
       return;
     }
     const mark = this._items.find(item => item.mark.id === entry.id)?.mark;
@@ -769,10 +792,9 @@ export class NotesPanel extends Widget {
     // into the rebuilt field would be the panel moving them. An ask is read
     // without that test, because it arrives with the focus outside the panel
     // whenever a click on the marked passage opened the entry.
+    const asked = this._focus === 'asked';
     const keepFocus =
-      typing ||
-      this._focus === 'asked' ||
-      (this._focus !== null && this._focus === active);
+      typing || asked || (this._focus !== null && this._focus === active);
     const caret = typing ? [active.selectionStart, active.selectionEnd] : null;
     // The body is rebuilt whole, so a control the reader had focused is
     // destroyed with it; its row is what they were at, and the row built in
@@ -827,7 +849,17 @@ export class NotesPanel extends Widget {
     // chain below finds the reader a place.
     const text = keepFocus ? this._body.querySelector('textarea') : null;
     if (text) {
-      text.focus();
+      // A field the reader asked for is brought whole into the panel's view,
+      // its Save and Cancel with it, by the least distance. The focus itself
+      // would scroll the box alone into view; the box has no scroll parent
+      // outside the panel, so the preview is not moved (ACC-NOTES-169).
+      text.focus({ preventScroll: asked });
+      if (asked) {
+        // A prefilled field is measured before it is brought into view, so
+        // the buttons below a long entry come with it.
+        this._grow?.();
+        text.parentElement?.scrollIntoView({ block: 'nearest' });
+      }
       if (caret) {
         text.setSelectionRange(caret[0], caret[1]);
       }
@@ -953,24 +985,52 @@ export class NotesPanel extends Widget {
       row.appendChild(line);
     }
 
+    const entry = this._entry?.id === mark.id ? this._entry : null;
+    // Where the entry being edited stands in the thread now; -1 while the
+    // field is for a new entry, or the edited one left the marker meanwhile.
+    const editingAt = entry?.editing
+      ? mark.notes.findIndex(note => sameNote(note, entry.editing!))
+      : -1;
     // A closed row shows no note (ACC-NOTES-150).
-    for (const note of open ? mark.notes : []) {
-      const entry = entryRow(note);
+    for (const [index, note] of open ? mark.notes.entries() : []) {
+      // The field stands in the place of the entry it edits (ACC-NOTES-164).
+      if (index === editingAt) {
+        const form = this._form(entry!);
+        if (index > 0) {
+          form.classList.add(ENTRY_REPLY_CLASS);
+        }
+        row.appendChild(form);
+        continue;
+      }
+      // A row being written offers no second edit (ACC-NOTES-168), and a
+      // mark this version does not write is not rewritten.
+      const actions =
+        entry === null && known(mark)
+          ? {
+              edit: () => {
+                this._openEntry(mark.id, note);
+                this._render();
+              },
+              remove: () => this._handlers.removeNote(mark.id, note)
+            }
+          : null;
+      const element = entryRow(note, index > 0, actions);
       // A note is part of its row, so a click on it selects the row as a
       // click on the head does; a click that ends a selection of the note's
       // text is the reader copying it, and is left alone.
-      entry.addEventListener('click', () => {
+      element.addEventListener('click', () => {
         if (window.getSelection()?.isCollapsed ?? true) {
           this.selectMark(mark.id);
         }
       });
-      row.appendChild(entry);
+      row.appendChild(element);
     }
 
     if (open && known(mark)) {
-      const entry = this._entry?.id === mark.id ? this._entry : null;
-      row.appendChild(this._controls(mark, entry === null));
-      if (entry) {
+      row.appendChild(this._controls(mark, entry !== null));
+      // A field for a new entry, or one whose entry is gone, sits below the
+      // controls, where the reader can still leave it by Cancel.
+      if (entry && editingAt < 0) {
         row.appendChild(this._form(entry));
       }
     }
@@ -978,14 +1038,16 @@ export class NotesPanel extends Widget {
   }
 
   /**
-   * The controls of an open row: the six colours, a note, and a removal.
-   * Add note follows the colours, so the colours stay in place when it leaves
-   * the row, and the second click of a double click lands on no control.
+   * The controls of an open row: the six colours, Comment or Reply, Close or
+   * Reopen, and a removal. Comment follows the colours, so the colours stay
+   * in place when it leaves the row, and the second click of a double click
+   * lands on no control.
    *
-   * @param offerNote - false while the row's note field is open: the field is
-   * the note being added, so Add note is left out until the field closes
+   * @param writing - true while the row's note field is open: the field is
+   * the entry being written, so Comment (ACC-NOTES-147) and Close
+   * (ACC-NOTES-166) are left out until the field closes
    */
-  private _controls(mark: IMark, offerNote: boolean): HTMLElement {
+  private _controls(mark: IMark, writing: boolean): HTMLElement {
     const controls = document.createElement('div');
     controls.className = CONTROLS_CLASS;
     for (const colour of mark.type === DOCUMENT_TYPE ? [] : MARK_COLOURS) {
@@ -995,22 +1057,35 @@ export class NotesPanel extends Widget {
         )
       );
     }
-    if (offerNote) {
+    if (!writing) {
+      // The first entry is the comment on the passage, the rest are replies
+      // to it (ACC-NOTES-171).
+      const reply = mark.notes.length > 0;
       controls.appendChild(
-        button(BUTTON_CLASS, 'Add note', 'Add note to this mark', () => {
-          this._openEntry(mark.id);
-          this._render();
-        })
+        button(
+          BUTTON_CLASS,
+          reply ? 'Reply' : 'Comment',
+          reply ? 'Reply to this comment' : 'Comment on this mark',
+          () => {
+            this._openEntry(mark.id);
+            this._render();
+          }
+        )
       );
-    }
-    controls.appendChild(
-      button(
-        BUTTON_CLASS,
-        mark.closed ? 'Reopen' : 'Close',
+      // The eye closes the mark, which hides it, and the crossed eye says
+      // so; on a closed row the open eye reopens it (ACC-NOTES-172).
+      const closeMark = button(
+        `${BUTTON_CLASS} ${CLOSE_MARK_CLASS}`,
+        '',
         mark.closed ? 'Reopen this mark' : 'Close this mark',
         () => this._handlers.setClosed(mark.id, !mark.closed)
-      )
-    );
+      );
+      (mark.closed ? REOPEN_MARK_ICON : CLOSE_MARK_ICON).element({
+        container: closeMark,
+        tag: 'span'
+      });
+      controls.appendChild(closeMark);
+    }
     const remove = button(
       `${BUTTON_CLASS} ${REMOVE_CLASS}`,
       '',
@@ -1084,8 +1159,13 @@ export class NotesPanel extends Widget {
           this._render();
           return;
         }
-        void this._handlers.addNote(entry.id, written).then(saved => {
-          if (saved && this._entry?.id === entry.id) {
+        const write = entry.editing
+          ? this._handlers.editNote(entry.id, entry.editing, written)
+          : this._handlers.addNote(entry.id, written);
+        void write.then(saved => {
+          // An edit that found no entry to rewrite has nothing left to edit;
+          // a new entry the mark could not take stays in its field.
+          if ((saved || entry.editing) && this._entry?.id === entry.id) {
             this._entry = null;
           }
           this._render();
@@ -1190,12 +1270,37 @@ function countLabel(count: number): string {
 }
 
 /**
- * One note entry: who wrote it, when, and what it says, in full. Only an
- * open row shows its entries (ACC-NOTES-150).
+ * One note entry: who wrote it, when, and what it says, in full, with its
+ * edit icon and its x in the top right corner when the row offers them
+ * (ACC-NOTES-164, ACC-NOTES-167). Every entry after the first is a reply to
+ * the comment, and is drawn indented under it (ACC-NOTES-171). Only an open
+ * row shows its entries (ACC-NOTES-150).
  */
-function entryRow(note: INoteEntry): HTMLElement {
+function entryRow(
+  note: INoteEntry,
+  reply: boolean,
+  actions: { edit: () => void; remove: () => void } | null
+): HTMLElement {
   const entry = document.createElement('div');
-  entry.className = ENTRY_CLASS;
+  entry.className = reply ? `${ENTRY_CLASS} ${ENTRY_REPLY_CLASS}` : ENTRY_CLASS;
+  if (actions) {
+    const icons = document.createElement('span');
+    icons.className = ENTRY_ICONS_CLASS;
+    for (const [icon, title, act] of [
+      [NOTE_ICON, 'Edit this note', actions.edit],
+      [DELETE_NOTE_ICON, 'Delete this note', actions.remove]
+    ] as const) {
+      // The icons act on the entry alone: the click does not reach the entry,
+      // whose own click selects the row and scrolls the preview to it.
+      const control = button(ENTRY_ICON_CLASS, '', title, event => {
+        event.stopPropagation();
+        act();
+      });
+      icon.element({ container: control, tag: 'span' });
+      icons.appendChild(control);
+    }
+    entry.appendChild(icons);
+  }
   if (note.author) {
     const author = document.createElement('span');
     author.className = AUTHOR_CLASS;

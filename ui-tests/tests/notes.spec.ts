@@ -663,7 +663,7 @@ test.describe('marking a passage', () => {
       rows(page).first().locator('.jp-AdvancedMd-notesPassage')
     ).toHaveText('Document');
 
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Reply').click();
     await writeNote(page, 'A second thought');
     const twice = await fileWhen(path, holds =>
       holds.includes('A second thought')
@@ -708,9 +708,7 @@ test.describe('marking a passage', () => {
     );
     // The entry left the row open: a note and a removal, no colour dots.
     await expect(first.locator('.jp-AdvancedMd-notesDot')).toHaveCount(0);
-    await expect(first.locator('button', { hasText: 'Add note' })).toHaveCount(
-      1
-    );
+    await expect(first.locator('button', { hasText: 'Reply' })).toHaveCount(1);
 
     await openMenuOnPreview(page);
     await choose(page, 'Show notes minimap');
@@ -1209,7 +1207,7 @@ test.describe('marking a passage', () => {
   }) => {
     await mark(page, P1);
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     const form = page.locator('.jp-AdvancedMd-notesForm');
     const box = form.locator('textarea');
     await expect(box).toBeVisible();
@@ -1236,11 +1234,11 @@ test.describe('marking a passage', () => {
   }) => {
     await mark(page, P1);
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     await writeNote(page, 'The note the field is measured against.');
     const shown = rows(page).first().locator('.jp-AdvancedMd-notesText');
     await expect(shown).toHaveText('The note the field is measured against.');
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Reply').click();
     const field = page.locator('.jp-AdvancedMd-notesForm textarea');
     await expect(field).toBeVisible();
     const fonts = await field.evaluate((node: Element) => {
@@ -1267,7 +1265,7 @@ test.describe('marking a passage', () => {
   }) => {
     await mark(page, P1);
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     const field = page.locator('.jp-AdvancedMd-notesForm textarea');
     await expect(field).toBeFocused();
     await expect(field).toHaveAttribute('placeholder', 'Write a note');
@@ -1327,8 +1325,8 @@ test.describe('marking a passage', () => {
     // Add note is offered only while no field is open (ACC-NOTES-147), so
     // its look is read between a Cancel and a second Add note.
     await panelButton(page, 'Cancel').click();
-    const addNote = await panelButton(page, 'Add note').evaluate(look);
-    await panelButton(page, 'Add note').click();
+    const addNote = await panelButton(page, 'Comment').evaluate(look);
+    await panelButton(page, 'Comment').click();
     await expect(field).toBeFocused();
     const save = buttons.last();
     expect(await save.evaluate(look)).toBe(addNote);
@@ -1353,7 +1351,7 @@ test.describe('marking a passage', () => {
   }) => {
     await mark(page, P1);
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     const field = page.locator('.jp-AdvancedMd-notesForm textarea');
     await expect(field).toBeFocused();
     const size = () =>
@@ -1399,7 +1397,7 @@ test.describe('marking a passage', () => {
   }) => {
     await mark(page, P1);
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     await writeNote(page, 'Say which orchard.');
     await fileWhen(`${tmpPath}/${FILE}`, holds =>
       holds.includes('Say which orchard.')
@@ -1419,7 +1417,7 @@ test.describe('marking a passage', () => {
     await expect(page.locator('.jp-AdvancedMd-notesForm textarea')).toHaveCount(
       0
     );
-    await expect(panelButton(page, 'Add note')).toBeVisible();
+    await expect(panelButton(page, 'Reply')).toBeVisible();
 
     // A second mark inside the first is still written.
     await mark(page, 'and pears', undefined, 'blue');
@@ -1448,7 +1446,7 @@ test.describe('marking a passage', () => {
     await expect(form).toHaveCount(0);
     await expect(painted(page)).toHaveCount(2);
     await expect(rows(page)).toHaveCount(2);
-    await expect(panelButton(page, 'Add note')).toBeVisible();
+    await expect(panelButton(page, 'Comment')).toBeVisible();
     const text = fileText(`${tmpPath}/${FILE}`);
     // The whole marker on one line is what says it carries no note.
     expect(text).toContain(
@@ -1550,7 +1548,7 @@ test.describe('marking a passage', () => {
     // A mark on words of a cell, and a note of two lines with a pipe in it.
     await mark(page, 'and pears');
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     await writeNote(page, 'first line\nwith a | pipe');
     const text = await fileWhen(path, holds => holds.includes('first line'));
 
@@ -1600,13 +1598,13 @@ test.describe('marking a passage', () => {
     // with no blank between, and the one inside the quote.
     await mark(page, 'and pears');
     await openRow(page);
-    await rows(page).nth(0).locator('button', { hasText: 'Add note' }).click();
+    await rows(page).nth(0).locator('button', { hasText: 'Comment' }).click();
     await writeNote(page, 'first line\nsecond line');
     await fileWhen(path, holds => holds.includes('first line'));
     await mark(page, 'and figs');
     await expect(rows(page)).toHaveCount(2);
     await openRow(page, 1);
-    await rows(page).nth(1).locator('button', { hasText: 'Add note' }).click();
+    await rows(page).nth(1).locator('button', { hasText: 'Comment' }).click();
     await writeNote(page, 'third line\nfourth line');
     const text = await fileWhen(path, holds => holds.includes('third line'));
 
@@ -1667,7 +1665,7 @@ test.describe('marking a passage', () => {
     const file = `${tmpPath}/${FILE}`;
     await mark(page, P1);
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     await writeNote(page, 'Settled.');
     await fileWhen(file, holds => holds.includes('Settled.'));
     await expect(painted(page)).toHaveCount(1);
@@ -1675,7 +1673,7 @@ test.describe('marking a passage', () => {
     // Close: the paint and the row go; the file keeps the note and gains the
     // status attribute; the header offers the one closed mark.
     // By row: the header's Show closed control matches a search for Close.
-    await rows(page).first().locator('button', { hasText: 'Close' }).click();
+    await rows(page).first().locator('button[title="Close this mark"]').click();
     const closed = await fileWhen(file, holds =>
       holds.includes('status=closed')
     );
@@ -1711,7 +1709,9 @@ test.describe('marking a passage', () => {
 
     // Reopen: the attribute goes, the paint and the row are as before.
     await openRow(page);
-    await panelButton(page, 'Reopen').click();
+    await page
+      .locator('.jp-AdvancedMd-notes:visible button[title="Reopen this mark"]')
+      .click();
     const reopened = await fileWhen(
       file,
       holds => !holds.includes('status=closed')
@@ -1756,8 +1756,9 @@ test.describe('marking a passage', () => {
     await openRow(page, 0);
     await openRow(page, 1);
     const first = rows(page).nth(0);
+    // Comment on the bare mark, Reply once it holds one (ACC-NOTES-171).
     const addNote = (row: any) =>
-      row.locator('button', { hasText: 'Add note' });
+      row.locator('button', { hasText: /^(Comment|Reply)$/ });
 
     await addNote(first).click();
     await expect(first.locator('textarea')).toBeVisible();
@@ -1810,7 +1811,7 @@ test.describe('marking a passage', () => {
   }) => {
     await mark(page, P1);
     await openRow(page, 0);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     await writeNote(page, 'Selects the row from here.');
     await expect(rows(page).first()).toContainText(
       'Selects the row from here.'
@@ -1842,7 +1843,7 @@ test.describe('marking a passage', () => {
     // take it and write a new colour.
     await rows(page)
       .first()
-      .locator('button', { hasText: 'Add note' })
+      .locator('button', { hasText: 'Comment' })
       .dblclick();
     await expect(
       page.locator('.jp-AdvancedMd-notesForm textarea')
@@ -1918,7 +1919,7 @@ test.describe('marking a passage', () => {
     );
 
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     await expect(
       page.locator('.jp-AdvancedMd-notesForm textarea')
     ).toBeVisible();
@@ -2697,7 +2698,7 @@ test.describe('a document that already carries marks', () => {
 
     // A change to another mark leaves the unknown marker byte for byte.
     await openRow(page, 0);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     await writeNote(page, 'A note on the first mark.');
     const text = await fileWhen(target, holds =>
       holds.includes('A note on the first mark.')
@@ -2723,7 +2724,7 @@ test.describe('a document that already carries marks', () => {
     ).toHaveCount(1);
 
     await openRow(page, 1);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     await writeNote(page, 'Answering the agent.');
 
     const text = await fileWhen(target, holds =>
@@ -3303,7 +3304,7 @@ test.describe('a lab that names its user', () => {
     await openPreview(page, target, FIRST);
 
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Reply').click();
     await writeNote(page, 'Agreed.');
     const text = await fileWhen(target, holds => holds.includes('Agreed.'));
 
@@ -3533,7 +3534,7 @@ test.describe('typing a note into a row', () => {
     await expect(rows(page).first()).not.toHaveClass(
       /jp-AdvancedMd-notesRow-selected/
     );
-    await rows(page).first().locator('button', { hasText: 'Add note' }).click();
+    await rows(page).first().locator('button', { hasText: 'Comment' }).click();
     const box = page.locator('.jp-AdvancedMd-notesForm textarea');
     await expect(box).toBeVisible();
     await box.click();
@@ -3560,7 +3561,7 @@ test.describe('typing a note into a row', () => {
     await openPreview(page, target, FIRST);
 
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     const box = page.locator('.jp-AdvancedMd-notesForm textarea');
     await expect(box).toBeVisible();
     await box.click();
@@ -3593,7 +3594,7 @@ test.describe('typing a note into a row', () => {
     await openPreview(page, target, FIRST);
 
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     const box = page.locator('.jp-AdvancedMd-notesForm textarea');
     await expect(box).toBeVisible();
     // The reader selected a passage before turning to the note, so the
@@ -3891,7 +3892,7 @@ test.describe('a note being written when the mark vanished', () => {
     await page.contents.uploadContent(MARKED, 'text', target);
     await openPreview(page, target, FIRST);
     await openRow(page);
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     const box = page.locator('.jp-AdvancedMd-notesForm textarea');
     await expect(box).toBeVisible();
     await box.fill('Written into a mark that is gone.');
@@ -3991,12 +3992,12 @@ test.describe('the list a screen reader moves through', () => {
     await openRow(page);
 
     // The accessible name starts with the visible label (WCAG 2.5.3), so a
-    // reader who says "Add note" or "Cancel" reaches the button.
-    await expect(panelButton(page, 'Add note')).toHaveAttribute(
+    // reader who says "Comment" or "Cancel" reaches the button.
+    await expect(panelButton(page, 'Comment')).toHaveAttribute(
       'title',
-      'Add note to this mark'
+      'Comment on this mark'
     );
-    await panelButton(page, 'Add note').click();
+    await panelButton(page, 'Comment').click();
     await expect(panelButton(page, 'Cancel')).toHaveAttribute(
       'title',
       'Cancel this note'
@@ -4041,6 +4042,310 @@ test.describe('marking with live updates off', () => {
     expect(writes.filter(entry => entry.includes('/write '))).toEqual([]);
     expect(writes.filter(entry => entry.startsWith('PUT '))).toHaveLength(1);
     await savedCleanly(page);
+  });
+});
+
+test.describe('the comment thread of a mark', () => {
+  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+
+  test.beforeEach(async ({ page, tmpPath }) => {
+    await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`, FIRST);
+  });
+
+  /** The entries of the first row, in order. */
+  const entries = (page: any) =>
+    rows(page).first().locator('.jp-AdvancedMd-notesEntry');
+
+  /** The note lines of the file: every line that starts with an author. */
+  const noteLines = (text: string): string[] =>
+    text.split('\n').filter(line => line.startsWith('@'));
+
+  test('ACC-NOTES-171, ACC-NOTES-164, ACC-NOTES-167 and ACC-NOTES-165 read the thread as a comment and its replies, edit and delete any entry, in the smaller font', async ({
+    page,
+    tmpPath
+  }) => {
+    const file = `${tmpPath}/${FILE}`;
+    await mark(page, P1);
+    await openRow(page);
+
+    // A bare mark offers Comment; a mark with a comment offers Reply, and the
+    // reply is drawn indented under the comment (ACC-NOTES-171).
+    await expect(panelButton(page, 'Reply')).toHaveCount(0);
+    await panelButton(page, 'Comment').click();
+    await writeNote(page, 'First thought.');
+    await fileWhen(file, holds => holds.includes('First thought.'));
+    await expect(panelButton(page, 'Comment')).toHaveCount(0);
+    await panelButton(page, 'Reply').click();
+    await writeNote(page, 'Second thought.');
+    const written = await fileWhen(file, holds =>
+      holds.includes('Second thought.')
+    );
+    await expect(entries(page)).toHaveCount(2);
+    await expect(entries(page).nth(0)).not.toHaveClass(
+      /jp-AdvancedMd-notesEntry-reply/
+    );
+    await expect(entries(page).nth(1)).toHaveClass(
+      /jp-AdvancedMd-notesEntry-reply/
+    );
+    const indent = await entries(page)
+      .nth(1)
+      .evaluate((node: Element) => {
+        const reply = node.getBoundingClientRect();
+        const comment = node.previousElementSibling!.getBoundingClientRect();
+        return reply.left - comment.left;
+      });
+    expect(indent).toBeGreaterThan(0);
+
+    // The row's buttons are set in the smaller interface size, the size of
+    // the stamp, not the size of the note text (ACC-NOTES-165).
+    const sizes = await rows(page)
+      .first()
+      .evaluate((row: Element) => {
+        const px = (selector: string) =>
+          parseFloat(getComputedStyle(row.querySelector(selector)!).fontSize);
+        return {
+          button: px('.jp-AdvancedMd-notesButton'),
+          stamp: px('.jp-AdvancedMd-notesStamp'),
+          text: px('.jp-AdvancedMd-notesText')
+        };
+      });
+    expect(sizes.button).toBe(sizes.stamp);
+    expect(sizes.button).toBeLessThan(sizes.text);
+
+    // Every entry carries an edit icon and an x in its top right corner.
+    const first = entries(page).nth(0);
+    const edit = first.locator('button[title="Edit this note"]');
+    const remove = first.locator('button[title="Delete this note"]');
+    await expect(edit).toHaveText('');
+    await expect(remove).toHaveText('');
+    const corner = await first.evaluate((node: Element) => {
+      const entry = node.getBoundingClientRect();
+      const icons = node
+        .querySelector('.jp-AdvancedMd-notesEntryIcons')!
+        .getBoundingClientRect();
+      return { top: icons.top - entry.top, right: entry.right - icons.right };
+    });
+    expect(corner.top).toBeLessThan(4);
+    expect(corner.right).toBeLessThan(4);
+
+    // Editing the first entry: the field opens in its place, prefilled, and
+    // Save rewrites that line with its author and time kept (ACC-NOTES-164).
+    const lines = noteLines(written);
+    expect(lines).toHaveLength(2);
+    await edit.click();
+    const field = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(field).toHaveValue('First thought.');
+    await expect(field).toBeFocused();
+    // The form stands where the entry stood: before the reply.
+    await expect(
+      rows(page)
+        .first()
+        .locator('.jp-AdvancedMd-notesForm + .jp-AdvancedMd-notesEntry-reply')
+    ).toHaveCount(1);
+    await writeNote(page, 'First thought, revised.');
+    const edited = await fileWhen(file, holds =>
+      holds.includes('First thought, revised.')
+    );
+    expect(noteLines(edited)).toEqual([
+      lines[0].replace('First thought.', 'First thought, revised.'),
+      lines[1]
+    ]);
+    expect(edited).not.toContain('First thought.\n');
+    await expect(entries(page).nth(0)).toContainText('First thought, revised.');
+
+    // An empty Save changes nothing and closes the field.
+    await edit.click();
+    await expect(field).toHaveValue('First thought, revised.');
+    await field.fill('   ');
+    await panelButton(page, 'Save').click();
+    await expect(field).toHaveCount(0);
+    await page.waitForTimeout(500);
+    expect(noteLines(fileText(file))).toEqual(noteLines(edited));
+
+    // The x deletes the entry at once, no confirmation, and the other stays;
+    // the last deletion leaves a bare mark, still listed (ACC-NOTES-167).
+    await remove.click();
+    const one = await fileWhen(
+      file,
+      holds => !holds.includes('First thought, revised.')
+    );
+    expect(noteLines(one)).toEqual([lines[1]]);
+    await expect(page.locator('.jp-Dialog')).toHaveCount(0);
+    await expect(entries(page)).toHaveCount(1);
+    await entries(page)
+      .first()
+      .locator('button[title="Delete this note"]')
+      .click();
+    const bare = await fileWhen(
+      file,
+      holds => !holds.includes('Second thought.')
+    );
+    expect(noteLines(bare)).toEqual([]);
+    expect(openingIds(bare)).toHaveLength(1);
+    expect(closingIds(bare)).toHaveLength(1);
+    await expect(rows(page)).toHaveCount(1);
+    await expect(panelButton(page, 'Comment')).toBeVisible();
+  });
+
+  test('ACC-NOTES-172, ACC-NOTES-166 and ACC-NOTES-168 draw Close and Reopen as eyes and withhold them, and the entry icons, while the row is being written', async ({
+    page,
+    tmpPath
+  }) => {
+    const file = `${tmpPath}/${FILE}`;
+    await mark(page, P1);
+    await openRow(page);
+    const row = rows(page).first();
+    const close = row.locator('button[title="Close this mark"]');
+    const reopen = row.locator('button[title="Reopen this mark"]');
+
+    // Close is an icon with no word, after Comment and before the removal.
+    await expect(close).toHaveText('');
+    await expect(close.locator('svg')).toHaveCount(1);
+    await expect(
+      row.locator('.jp-AdvancedMd-notesControls > *:nth-last-child(2)')
+    ).toHaveAttribute('title', 'Close this mark');
+
+    // While a comment is being written: no Close, no Comment; the dots and
+    // the removal stay (ACC-NOTES-166).
+    await panelButton(page, 'Comment').click();
+    await expect(close).toHaveCount(0);
+    await expect(panelButton(page, 'Comment')).toHaveCount(0);
+    await expect(row.locator('.jp-AdvancedMd-notesDot')).toHaveCount(6);
+    await expect(removeButton(page)).toHaveCount(1);
+    await panelButton(page, 'Cancel').click();
+    await expect(close).toHaveCount(1);
+
+    // Two entries; editing one takes the icons off the other (ACC-NOTES-168).
+    await panelButton(page, 'Comment').click();
+    await writeNote(page, 'One.');
+    await fileWhen(file, holds => holds.includes('One.'));
+    await panelButton(page, 'Reply').click();
+    await writeNote(page, 'Two.');
+    await fileWhen(file, holds => holds.includes('Two.'));
+    const icons = row.locator('.jp-AdvancedMd-notesEntryIcon');
+    await expect(icons).toHaveCount(4);
+    await row.locator('button[title="Edit this note"]').first().click();
+    await expect(page.locator('.jp-AdvancedMd-notesForm textarea')).toHaveValue(
+      'One.'
+    );
+    await expect(icons).toHaveCount(0);
+    await expect(close).toHaveCount(0);
+    await expect(panelButton(page, 'Reply')).toHaveCount(0);
+    await panelButton(page, 'Cancel').click();
+    await expect(icons).toHaveCount(4);
+    await expect(close).toHaveCount(1);
+    await expect(panelButton(page, 'Reply')).toHaveCount(1);
+
+    // The crossed eye closes the mark; the open eye on the closed row reopens
+    // it, and is withheld while a reply is being written (ACC-NOTES-172).
+    await close.click();
+    await fileWhen(file, holds => holds.includes('status=closed'));
+    await expect(rows(page)).toHaveCount(0);
+    await panel(page).locator('.jp-AdvancedMd-notesShowClosed').click();
+    await openRow(page);
+    await expect(reopen).toHaveText('');
+    await expect(reopen.locator('svg')).toHaveCount(1);
+    await panelButton(page, 'Reply').click();
+    await expect(reopen).toHaveCount(0);
+    await panelButton(page, 'Cancel').click();
+    await expect(reopen).toHaveCount(1);
+    await reopen.click();
+    const reopened = await fileWhen(
+      file,
+      holds => !holds.includes('status=closed')
+    );
+    expect(reopened).toContain('One.');
+    expect(reopened).toContain('Two.');
+  });
+
+  test('ACC-NOTES-169 scrolls the panel so the opened field and its buttons are in view, focused, and leaves the preview where it was', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    // A short window, so the twenty rows overflow the list.
+    await page.setViewportSize({ width: 1280, height: 480 });
+    await page.contents.uploadContent(MANY_MARKS, 'text', target);
+    await openPreview(page, target, 'Paragraph 1 of the long report');
+    await expect(rows(page)).toHaveCount(MANY);
+
+    // The list scrolls: the last row is out of its view while it is at the
+    // top. Open the last row through the panel's own scroll, then put the
+    // list back at the top, so its field opens out of view. The boxes are
+    // read in the page, since Playwright's own measuring and clicking scroll
+    // an element into view first, which is the very thing under test.
+    const list = panel(page).locator('.jp-AdvancedMd-notesList');
+    await rows(page).last().scrollIntoViewIfNeeded();
+    await openRow(page, MANY - 1);
+    await list.evaluate((node: Element) => {
+      node.scrollTop = 0;
+    });
+    const before = await scrollTop(page);
+    const box = (locator: any) =>
+      locator.evaluate((node: Element) => {
+        const rect = node.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom };
+      });
+    const view = await box(list);
+    expect((await box(rows(page).last())).top).toBeGreaterThan(view.bottom);
+
+    await rows(page)
+      .last()
+      .locator('button', { hasText: 'Comment' })
+      .evaluate((button: HTMLButtonElement) => button.click());
+    const field = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(field).toBeFocused();
+    const form = await box(page.locator('.jp-AdvancedMd-notesForm'));
+    const save = await box(panelButton(page, 'Save'));
+    expect(form.top).toBeGreaterThanOrEqual(view.top - 1);
+    expect(save.bottom).toBeLessThanOrEqual(view.bottom + 1);
+    expect(Math.abs((await scrollTop(page)) - before)).toBeLessThan(2);
+  });
+
+  test('ACC-NOTES-169 brings the grown edit field of a long entry into view with its buttons', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.setViewportSize({ width: 1280, height: 480 });
+    // The last mark holds an entry of eight lines, so its edit field is
+    // taller than an empty one once it has grown to the text.
+    const last = manyId(MANY - 1);
+    const lines = Array.from({ length: 8 }, (_, i) => `line ${i + 1}`);
+    const long = MANY_MARKS.replace(
+      opening(last),
+      `<!-- mark:${last} note colour=yellow\n@kj 2026-09-06T16:00:00Z: ${lines.join('\n')}\n-->`
+    );
+    await page.contents.uploadContent(long, 'text', target);
+    await openPreview(page, target, 'Paragraph 1 of the long report');
+    await expect(rows(page)).toHaveCount(MANY);
+
+    const list = panel(page).locator('.jp-AdvancedMd-notesList');
+    await rows(page).last().scrollIntoViewIfNeeded();
+    await openRow(page, MANY - 1);
+    await list.evaluate((node: Element) => {
+      node.scrollTop = 0;
+    });
+    const box = (locator: any) =>
+      locator.evaluate((node: Element) => {
+        const rect = node.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom };
+      });
+    const view = await box(list);
+    expect((await box(rows(page).last())).top).toBeGreaterThan(view.bottom);
+
+    await rows(page)
+      .last()
+      .locator('button[title="Edit this note"]')
+      .evaluate((button: HTMLButtonElement) => button.click());
+    const field = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue(lines.join('\n'));
+    const form = await box(page.locator('.jp-AdvancedMd-notesForm'));
+    const save = await box(panelButton(page, 'Save'));
+    expect(form.top).toBeGreaterThanOrEqual(view.top - 1);
+    expect(save.bottom).toBeLessThanOrEqual(view.bottom + 1);
   });
 });
 
