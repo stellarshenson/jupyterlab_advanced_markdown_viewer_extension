@@ -213,6 +213,28 @@ const AFTER_MARKER = /^[ \t]*\r?\n?$/;
 const HANDLE = /[^A-Za-z0-9_.-]+/g;
 
 /**
+ * The range of a selection that holds text, or null when nothing is selected.
+ *
+ * The range is what says so, and not `isCollapsed`: macOS Safari reports a
+ * selection made by a drag as collapsed while its range holds the words
+ * (DEF-NOTES-111), and a range that holds no text is collapsed whatever the
+ * flag says.
+ */
+function selectedRange(selection: Selection): Range | null {
+  const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  return range && range.toString().trim() !== '' ? range : null;
+}
+
+/**
+ * Whether a Lumino menu holds the focus, which it does from the right click
+ * until the moment it runs the command.
+ */
+function menuHoldsFocus(): boolean {
+  const active = document.activeElement;
+  return active instanceof Element && active.closest('.lm-Menu') !== null;
+}
+
+/**
  * Where a document marker goes: after a leading YAML front matter block, which
  * a site generator reads only as the first bytes of the file, else at the top.
  */
@@ -499,10 +521,14 @@ export class NotesController implements IDisposable {
    * carried onto each. The window is read once more on the ask, because
    * Chromium fires selectionchange a frame or more after the selection
    * moved, and the keybinding and the palette ask before it has; the context
-   * menu is served ahead of that by the contextmenu listener.
+   * menu is served ahead of that by the contextmenu listener. The ask picks
+   * up a selection made since the last event and lets none go on a collapse:
+   * the menu runs its command after it has closed, when macOS Safari's drop
+   * of the live selection stands with no menu holding the focus
+   * (DEF-NOTES-111). An event lets go.
    */
   get selection(): IRenderedRange | null {
-    this._onSelectionChange();
+    this._readSelection(false);
     return this._selection;
   }
 
@@ -936,7 +962,10 @@ export class NotesController implements IDisposable {
     // A click that ends a drag over the passage is the reader selecting text
     // inside the mark, not asking for its row: an activation would move the
     // focus into the note field and take the selection away (DEF-NOTES-91).
-    if (id && (window.getSelection()?.isCollapsed ?? true)) {
+    // The range's text says so, as the window may still call the selection
+    // collapsed (DEF-NOTES-111).
+    const selection = window.getSelection();
+    if (id && !(selection && selectedRange(selection))) {
       this._activated.emit(id);
     }
   };
@@ -1014,31 +1043,50 @@ export class NotesController implements IDisposable {
   /**
    * The reader's selection changed: record where it sits in the rendered
    * text, or forget it.
-   *
-   * A selection collapsed onto an element is what focusing a control leaves,
-   * the palette input or the panel textarea among them, and the reader still
-   * means the words they selected, so the record is kept. A caret in text is
-   * a click in the text, which is a deselection. A render collapses the
-   * selection without reporting a change, so no rule for that is needed here.
    */
   private _onSelectionChange = (): void => {
+    this._readSelection(true);
+  };
+
+  /**
+   * Read the window's selection into the record.
+   *
+   * @param reported - whether the browser is reporting a change, which may
+   * let the record go, rather than a command asking, which lets none go on
+   * a collapse
+   */
+  private _readSelection(reported: boolean): void {
     const root = this._root;
     const selection = window.getSelection();
     if (!root || !selection) {
       this._setSelection(null);
       return;
     }
-    if (selection.isCollapsed || selection.rangeCount === 0) {
-      if (!(selection.anchorNode instanceof Element)) {
+    const range = selectedRange(selection);
+    if (!range) {
+      // Nothing is selected. A live range over no text, as a drag across a
+      // rule leaves, is a deselection. So is a caret placed in text, which is
+      // the reader's click there, and a selection gone altogether, which is
+      // their click on the selection; a collapse onto an element is a focus
+      // move, which keeps the record. The exception is a selection gone while
+      // a menu holds the focus: macOS Safari drops the selection for the menu
+      // it opened, and the reader still means the words (DEF-NOTES-111).
+      const live = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      if (live?.collapsed === false) {
         this._setSelection(null);
+        return;
       }
+      if (!reported) {
+        return;
+      }
+      const anchor = selection.anchorNode;
+      if (anchor instanceof Element || (!anchor && menuHoldsFocus())) {
+        return;
+      }
+      this._setSelection(null);
       return;
     }
-    const range = selection.getRangeAt(0);
-    if (
-      !root.contains(range.commonAncestorContainer) ||
-      range.toString().trim() === ''
-    ) {
+    if (!root.contains(range.commonAncestorContainer)) {
       this._setSelection(null);
       return;
     }
@@ -1058,7 +1106,7 @@ export class NotesController implements IDisposable {
       return;
     }
     this._setSelection(offsets ? { ...offsets, text } : null);
-  };
+  }
 
   /**
    * Record the selection, and say on the document widget whether one is
@@ -1125,7 +1173,7 @@ export class NotesController implements IDisposable {
     if (
       active !== document.body &&
       active !== this._widget.content.node &&
-      !(active instanceof Element && active.closest('.lm-Menu'))
+      !menuHoldsFocus()
     ) {
       return;
     }

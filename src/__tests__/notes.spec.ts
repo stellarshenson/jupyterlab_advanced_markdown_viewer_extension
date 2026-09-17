@@ -325,8 +325,9 @@ function selectRange(
   notify = true
 ): void {
   const range = selectText(root, from, to);
-  // A live range whose nodes a render took out collapses onto their parent,
-  // which is what the browser's selection reports after a render.
+  // A live range whose nodes a render took out collapses onto their parent
+  // and holds no text, which is what the browser's selection reports after a
+  // render.
   const first = range.startContainer;
   stubSelection({
     get isCollapsed() {
@@ -338,8 +339,11 @@ function selectRange(
     },
     getRangeAt: () => ({
       ...range,
+      get collapsed() {
+        return !first.isConnected;
+      },
       commonAncestorContainer: root,
-      toString: () => `${from}..${to}`
+      toString: () => (first.isConnected ? `${from}..${to}` : '')
     }),
     removeAllRanges: jest.fn(),
     collapseToEnd: jest.fn(),
@@ -3095,6 +3099,119 @@ describe('NotesController', () => {
         expect.objectContaining({ start: 6, end: 16 })
       );
     });
+
+    it('records a selection whose range holds text though the window calls it collapsed (DEF-NOTES-111)', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      // macOS Safari reports a selection made by a drag as collapsed while
+      // its range holds the words: the range is what says a selection exists.
+      const range = selectText(h.root, 'beta', 'gamma');
+      stubSelection({
+        isCollapsed: true,
+        rangeCount: 1,
+        anchorNode: range.startContainer,
+        getRangeAt: () => ({
+          ...range,
+          commonAncestorContainer: h.root,
+          toString: () => 'beta gamma'
+        })
+      });
+      document.dispatchEvent(new Event('selectionchange'));
+
+      expect(h.controller.selection).toEqual(
+        expect.objectContaining({ start: 6, end: 16 })
+      );
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
+    });
+
+    it('lets the record go on a caret placed in the text', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      selectRange(h.root, 'beta', 'gamma');
+      // A caret in the text is the reader's click there, a deselection.
+      const caret = textNodes(h.root)[0];
+      stubSelection({
+        isCollapsed: true,
+        rangeCount: 1,
+        anchorNode: caret,
+        getRangeAt: () => ({
+          collapsed: true,
+          commonAncestorContainer: h.root,
+          toString: () => ''
+        })
+      });
+      document.dispatchEvent(new Event('selectionchange'));
+
+      expect(h.controller.selection).toBeNull();
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(false);
+    });
+
+    it('lets the record go on a drag across a rule, a live range holding no text', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      selectRange(h.root, 'beta', 'gamma');
+      // Chromium reports a drag across a horizontal rule as a range that is
+      // not collapsed, holds no text and anchors on the root: the reader
+      // dragged away from the words.
+      stubSelection({
+        isCollapsed: false,
+        rangeCount: 1,
+        anchorNode: h.root,
+        getRangeAt: () => ({
+          collapsed: false,
+          commonAncestorContainer: h.root,
+          toString: () => '\n'
+        })
+      });
+      document.dispatchEvent(new Event('selectionchange'));
+
+      expect(h.controller.selection).toBeNull();
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(false);
+    });
+
+    it('lets the record go when the selection is gone with no menu standing', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      selectRange(h.root, 'beta', 'gamma');
+      // Chromium reports a click on the selection as no range at all: the
+      // reader dismissed the selection.
+      stubSelection({ isCollapsed: true, rangeCount: 0, anchorNode: null });
+      document.dispatchEvent(new Event('selectionchange'));
+
+      expect(h.controller.selection).toBeNull();
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(false);
+    });
+
+    it('keeps the record when the selection goes while the menu stands, and serves it to the command once the menu has closed (DEF-NOTES-111)', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      selectRange(h.root, 'beta', 'gamma');
+      // A Lumino menu holds the focus from the right click until the moment
+      // it runs the command; macOS Safari drops the selection once the menu
+      // is open, which is the browser's doing and not the reader's.
+      const menu = document.createElement('div');
+      menu.className = 'lm-Menu';
+      menu.tabIndex = 0;
+      document.body.appendChild(menu);
+      menu.focus();
+      stubSelection({ isCollapsed: true, rangeCount: 0, anchorNode: null });
+      document.dispatchEvent(new Event('selectionchange'));
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
+
+      // The menu closes before it runs the command, which then asks for the
+      // selection with the drop still standing: the ask lets nothing go.
+      menu.remove();
+      expect(document.activeElement).toBe(document.body);
+      expect(h.controller.selection).toEqual(
+        expect.objectContaining({ start: 6, end: 16 })
+      );
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
+    });
   });
 
   describe('activation', () => {
@@ -3119,8 +3236,33 @@ describe('NotesController', () => {
       const seen: string[] = [];
       h.controller.activated.connect((_, id) => seen.push(id));
       // The mouse came up at the end of a drag over the marked text: the
-      // window holds a selection that is not collapsed.
-      stubSelection({ isCollapsed: false, rangeCount: 1 });
+      // window holds a selection whose range holds text.
+      stubSelection({
+        isCollapsed: false,
+        rangeCount: 1,
+        getRangeAt: () => ({ toString: () => 'apples' })
+      });
+
+      painted(h.root)[0].dispatchEvent(
+        new MouseEvent('click', { bubbles: true })
+      );
+
+      expect(seen).toEqual([]);
+    });
+
+    it('says nothing when the click ends a drag the window still calls collapsed (DEF-NOTES-111)', async () => {
+      const h = open(marked());
+      await ready();
+      h.render(markedHtml());
+      const seen: string[] = [];
+      h.controller.activated.connect((_, id) => seen.push(id));
+      // macOS Safari may still call the selection collapsed at the click;
+      // the range holds the words, so the reader is selecting, not asking.
+      stubSelection({
+        isCollapsed: true,
+        rangeCount: 1,
+        getRangeAt: () => ({ toString: () => 'apples' })
+      });
 
       painted(h.root)[0].dispatchEvent(
         new MouseEvent('click', { bubbles: true })

@@ -375,7 +375,8 @@ function select(root: HTMLElement, from: string, to: string): void {
     endContainer: end.node,
     endOffset: end.offset,
     commonAncestorContainer: start.node === end.node ? start.node : root,
-    toString: () => 'selected',
+    // A live range whose nodes a render took out holds no text.
+    toString: () => (start!.node.isConnected ? 'selected' : ''),
     // The browser's own range is what the copy clones from; jest's DOM has no
     // working Range, so the fake one carries an extraction of its own. What it
     // produces is judged in the browser, by the Galata case for DEF-COPY-99.

@@ -2,6 +2,15 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.17] - 2026-09-17
+
+A drag in the preview offers Add note and Mark on macOS Safari as it does on the other browsers.
+
+### Fixed
+
+- On macOS Safari a drag in the rendered view left Add note and Mark out of the context menu: the selection is now read from the text the range holds rather than the browser's collapsed flag, and a selection the browser drops for the opening menu is kept for the command the menu runs
+- A drag across a horizontal rule, a live selection holding no text, is treated as a deselection
+
 ## [1.0.16] - 2026-09-15
 
 No change from 1.0.15; the same code is published again.
