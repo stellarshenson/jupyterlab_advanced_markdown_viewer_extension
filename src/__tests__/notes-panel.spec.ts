@@ -52,6 +52,7 @@ import {
   TEXT_CLASS,
   TICK_CLASS,
   colourClass,
+  swatchClass,
   installNotesPanel,
   localeTag,
   openingState,
@@ -59,6 +60,7 @@ import {
   ADD_CLASS
 } from '../notes-panel';
 import { IMark, INoteEntry, MARK_COLOURS, MarkColour } from '../marks';
+import { HUE, swatchFallback, swatchProperty } from '../swatch';
 import {
   CROSSED_EYE_ICON,
   MARK_ICONS,
@@ -2525,7 +2527,7 @@ describe('the controls of a row', () => {
     for (const option of options()) {
       expect(
         option.firstElementChild!.classList.contains(
-          colourClass(option.title as MarkColour)
+          swatchClass(option.title as MarkColour)
         )
       ).toBe(true);
     }
@@ -2657,7 +2659,7 @@ describe('the controls of a row', () => {
       item('a', 'first passage', { mark: mark('a', { colour: 'pink' }) })
     ]);
     expect(panel.node.querySelector(`.${SWATCH_CLASS}`)!.className).toContain(
-      colourClass('pink')
+      swatchClass('pink')
     );
   });
 });
@@ -2971,15 +2973,38 @@ describe('the mark colours in the stylesheet', () => {
       expect(attribute('height')).toBe(String(SWATCH_SIZE));
       expect(attribute('rx')).toBe(String(SWATCH_RADIUS));
       expect(rect).not.toContain('stroke');
-      // The light-theme colour of the painted mark, hue and alpha alike.
-      const painted = /^rgb\((\d+) (\d+) (\d+) \/ (\d+)%\)$/.exec(
+      // The menu icon takes the colour the panel swatch takes, from the one
+      // property src/swatch.ts writes, and carries no alpha of its own
+      // (ACC-NOTES-177).
+      expect(attribute('fill')).toBe(
+        `var(${swatchProperty(colour)}, ${swatchFallback(colour)})`
+      );
+      expect(rect).not.toContain('fill-opacity');
+      expect(
+        declaration(`.${swatchClass(colour)}`, 'background-color')
+      ).toContain(`var(${swatchProperty(colour)}`);
+    }
+  });
+
+  it('draws a swatch from the hue of the painted mark, taken to the bar', () => {
+    for (const colour of MARK_COLOURS) {
+      // The hue src/swatch.ts walks is the light-theme mark colour before
+      // its alpha, so a swatch is the mark's own colour and no other.
+      const painted = /^rgb\((\d+) (\d+) (\d+) \/ \d+%\)$/.exec(
         declaration(`.${colourClass(colour)}`, 'background-color')
       )!;
       const hex = [1, 2, 3]
         .map(index => Number(painted[index]).toString(16).padStart(2, '0'))
         .join('');
-      expect(attribute('fill')).toBe(`#${hex}`);
-      expect(Number(attribute('fill-opacity'))).toBe(Number(painted[4]) / 100);
+      expect(HUE[colour]).toBe(`#${hex}`);
+      // The fallback the rule carries is what shows where the properties
+      // are not on the page. It is the walk's own answer for the light
+      // theme, so a retuned hue cannot leave a fallback of another colour
+      // behind: the bar alone would not catch that.
+      const fallback = /,\s*(#[0-9a-f]{6})\)$/.exec(
+        declaration(`.${swatchClass(colour)}`, 'background-color')
+      )!;
+      expect(fallback[1]).toBe(swatchFallback(colour));
     }
   });
 

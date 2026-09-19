@@ -37,7 +37,7 @@ Notes beside the preview: a note on the whole document, then three marked passag
 ## Usage
 
 - Right-click a Markdown file in the file browser and choose **Open With**, then **Markdown Preview**. From then on a change arriving from disk is highlighted, and the tab shows an icon until you look
-- Select a passage in the preview, right-click and pick a colour under **Mark**; or select with caret browsing (F7) and press Ctrl Shift M (Cmd Shift M on macOS). Choose **Add note** to mark and write a note in one step
+- Select a passage in the preview, right-click and pick a colour under **Mark**; or select with caret browsing (F7) and press Ctrl Shift M (Cmd Shift M on macOS). Choose **Add note** to mark and write a note in one step. The first note you write asks for the initials your notes are signed with, and **Set note handle** in the command palette changes them afterwards
 - Press the plus in the notes panel header for a note on the document as a whole; the panel is shown from the badge at the top right of the preview or from Show notes in the context menu. The context menu and the palette offer no entry for the document note itself
 - Click a row in the panel to reveal its passage and open its thread; click the row's top line, or press Enter on the row, to close it again. The eye and the trash at the right of the top line act on the whole mark: the eye shows whether the mark is visible or hidden, and pressing it closes the mark, which hides it until the panel's Show hidden control lists it. The first entry is the comment, every entry after it a reply, listed one after another; each carries an edit icon and an x that deletes it, both shown while the pointer is on the note. The colour swatch at the left of a row rolls the other colours down: pick one to recolour the mark. The caret at the header's left edge collapses the panel to a strip of ticks, the cross hides it. With the panel hidden, the notes badge at the top right of the preview brings it back
 - Right-click the preview and choose **Copy Content** to put the selected passage on the clipboard as basic HTML, or the whole rendered document when nothing is selected: headings, lists, tables, links and code, with no colours or styling, ready to paste into an email. A selected table row keeps the table its cells sit in, and a selected fenced block keeps the line breaks of its program. The same entry is in the command palette
@@ -66,7 +66,7 @@ All settings live under Settings, Advanced Settings Editor, Advanced Markdown Vi
 - `animationJitter` - how far each character's time may stray from the even time at that speed, as a share of that time, from 0 to 1, 0.25 by default; 0 types evenly
 - `tabCue` - the markers on the document tab
 - `notes` - on by default; off, the panel, the marks and the marking entries are hidden and the markers in the file are left alone
-- `author` - the handle a note line opens with, without the leading @; empty writes `@author`
+- `author` - the handle a note line opens with, without the leading @; empty writes `@user`, and the first note you write asks you for one
 
 ## Requirements
 

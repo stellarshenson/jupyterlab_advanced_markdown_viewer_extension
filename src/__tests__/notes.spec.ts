@@ -914,7 +914,7 @@ describe('NotesController', () => {
       const [mark] = parseMarks(h.source());
       expect(mark.notes).toEqual([
         {
-          author: 'author',
+          author: 'user',
           stamp: expect.stringMatching(
             /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
           ),
@@ -1009,7 +1009,7 @@ describe('NotesController', () => {
       expect(parseMarks(h.source()).map(mark => mark.notes)).toEqual([
         [
           {
-            author: 'author',
+            author: 'user',
             stamp: expect.stringMatching(
               /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
             ),
@@ -1031,11 +1031,11 @@ describe('NotesController', () => {
       expect(span()?.hasAttribute('title')).toBe(false);
 
       await h.controller.addNote(ONE, 'This needs a rewrite.');
-      expect(span()?.title).toBe('author: This needs a rewrite.');
+      expect(span()?.title).toBe('user: This needs a rewrite.');
 
       await h.controller.addNote(ONE, 'And a number.');
       expect(span()?.title).toBe(
-        'author: This needs a rewrite.\nauthor: And a number.'
+        'user: This needs a rewrite.\nuser: And a number.'
       );
 
       // A note that continues on a second line is still one line of the
@@ -1043,7 +1043,7 @@ describe('NotesController', () => {
       await h.controller.addNote(ONE, 'Two lines,\nsecond one here.');
       expect(span()?.title.split('\n')).toHaveLength(3);
       expect(span()?.title.split('\n')[2]).toBe(
-        'author: Two lines, second one here.'
+        'user: Two lines, second one here.'
       );
     });
 
@@ -1236,7 +1236,27 @@ describe('NotesController', () => {
     // identity for an empty setting to fall back to: the default handle is
     // the only thing an empty setting can write.
     it('writes the default handle when the setting is empty', async () => {
-      expect(await noteAuthor('')).toBe('author');
+      expect(await noteAuthor('')).toBe('user');
+    });
+
+    it('drops a leading @, which is how every handle is shown', async () => {
+      // The panel writes every author as @kj, so a reader answering the
+      // dialog types back what they see; without this they are signed @-kj.
+      expect(await noteAuthor('@kj')).toBe('kj');
+      expect(await noteAuthor('@')).toBe('user');
+    });
+
+    it('takes a name the grammar cannot carry as no handle', async () => {
+      // The note head is @([A-Za-z0-9_.-]+), so a name in another script
+      // comes through as nothing but hyphens. Signing a reader @- would be
+      // worse than the default, and they could never correct it.
+      for (const name of [
+        '\u7530\u4e2d',
+        '\u041a\u043e\u0432\u0430\u0447',
+        '!!!'
+      ]) {
+        expect(await noteAuthor(name)).toBe('user');
+      }
     });
 
     it('replaces what a handle cannot carry with a hyphen', async () => {
@@ -1257,7 +1277,7 @@ describe('NotesController', () => {
       expect(h.source()).toContain(`\n${written}\n`);
       expect(parseMarks(h.source())[0].notes.map(note => note.author)).toEqual([
         'claude',
-        'author'
+        'user'
       ]);
     });
   });

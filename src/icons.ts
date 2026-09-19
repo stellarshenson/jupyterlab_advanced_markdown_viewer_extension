@@ -4,8 +4,8 @@
  *
  * Each mark colour has a swatch in that colour, so a reader picking a colour
  * from the context menu sees it before choosing; the swatch is the one the
- * panel shows on a row, drawn to the same geometry from the hue the painted
- * mark has in the light theme, at the mark's own alpha. The note and
+ * panel shows on a row, drawn to the same geometry and filled from the same
+ * property, which src/swatch.ts holds to a contrast bar. The note and
  * panel entries carry JupyterLab's own icons for editing, listing and
  * closing, so they read like the rest of the menu.
  */
@@ -27,33 +27,7 @@ import {
 
 import { MARK_COLOURS, MarkColour, PanelState } from './marks';
 
-/**
- * The hue of each mark colour, as the painted mark has it before its alpha:
- * the light-theme rgb values of style/base.css, so the swatch and the
- * highlight are one colour.
- */
-const HUE: Record<MarkColour, string> = {
-  yellow: '#f0d40f',
-  blue: '#0f70f0',
-  pink: '#f631b1',
-  orange: '#f19422',
-  red: '#e61e46',
-  green: '#1ed232'
-};
-
-/**
- * The alpha the painted mark lays its hue down with in the light theme, from
- * style/base.css, so the swatch is the highlight as the reader sees it on the
- * page and not the hue at full strength.
- */
-const TINT: Record<MarkColour, number> = {
-  yellow: 0.2,
-  blue: 0.11,
-  pink: 0.14,
-  orange: 0.17,
-  red: 0.18,
-  green: 0.17
-};
+import { swatchFallback, swatchProperty } from './swatch';
 
 /**
  * The geometry of the panel's row swatch (.jp-AdvancedMd-notesSwatch in
@@ -63,14 +37,19 @@ const TINT: Record<MarkColour, number> = {
 export const SWATCH_SIZE = 10;
 export const SWATCH_RADIUS = 2;
 
-/** The panel's row swatch in one colour, as a menu icon. */
+/**
+ * The panel's row swatch in one colour, as a menu icon. The fallback is the
+ * one the stylesheet gives the panel's own swatch, so the two renderings of
+ * one swatch degrade alike where the properties are not on the page; without
+ * it the rect would inherit the icon grey of whatever menu holds it.
+ */
 function swatch(colour: MarkColour): string {
   const offset = (16 - SWATCH_SIZE) / 2;
   return (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">' +
     `<rect x="${offset}" y="${offset}" width="${SWATCH_SIZE}" ` +
-    `height="${SWATCH_SIZE}" rx="${SWATCH_RADIUS}" fill="${HUE[colour]}" ` +
-    `fill-opacity="${TINT[colour]}"/></svg>`
+    `height="${SWATCH_SIZE}" rx="${SWATCH_RADIUS}" ` +
+    `fill="var(${swatchProperty(colour)}, ${swatchFallback(colour)})"/></svg>`
   );
 }
 

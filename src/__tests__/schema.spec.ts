@@ -21,6 +21,7 @@ import {
   ILiveViewSettings
 } from '../controller';
 import { COMMANDS, MINIMUMS } from '../index';
+import { DEFAULT_AUTHOR } from '../notes';
 
 // src/index.ts is the plugin declaration, so importing the minimums from it
 // also loads the packages the declaration names its tokens from, and one of
@@ -36,6 +37,7 @@ jest.mock('@jupyterlab/settingregistry', () => ({}));
  */
 interface IDeclaration {
   type?: string;
+  description?: string;
   default?: unknown;
   minimum?: number;
   maximum?: number;
@@ -57,6 +59,15 @@ describe('the settings schema', () => {
       defaults[key] = declaration.default;
     }
     expect(defaults).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('names the default handle in the author setting it describes', () => {
+    // The description tells the reader what an empty setting writes, and
+    // the word it names is the one the code writes, so retuning the
+    // constant cannot leave the settings editor saying the old one.
+    expect(schema.properties.author.description).toContain(
+      `@${DEFAULT_AUTHOR}`
+    );
   });
 
   it('declares a type for every setting, agreeing with the code', () => {

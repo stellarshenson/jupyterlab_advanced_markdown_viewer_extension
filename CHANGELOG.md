@@ -2,6 +2,19 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.18] - 2026-09-19
+
+The colour squares in the notes panel are readable against the page they sit on, and your notes are signed with a handle you are asked for once.
+
+### Added
+
+- The first note you write with no handle set asks for the initials your notes are signed with, and **Set note handle** in the command palette changes them afterwards
+
+### Changed
+
+- The colour square on a notes panel row is worked out from the background the page is actually painted with, so it holds at least 3 to 1 against it, and it is worked out again whenever the theme changes
+- A note written with no handle set is signed `@user`, where it was signed `@author` before
+
 ## [1.0.17] - 2026-09-17
 
 A drag in the preview offers Add note and Mark on macOS Safari as it does on the other browsers.

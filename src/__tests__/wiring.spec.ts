@@ -10,7 +10,7 @@
  * composite the test writes.
  */
 
-import { Clipboard } from '@jupyterlab/apputils';
+import { Clipboard, InputDialog } from '@jupyterlab/apputils';
 import { MimeData } from '@lumino/coreutils';
 import { Signal } from '@lumino/signaling';
 import { BoxLayout, Widget } from '@lumino/widgets';
@@ -20,7 +20,10 @@ import { BoxLayout, Widget } from '@lumino/widgets';
 // ship JavaScript jest cannot parse.
 jest.mock('@jupyterlab/application', () => ({}));
 jest.mock('@jupyterlab/apputils', () => ({
-  Clipboard: { copyToSystem: jest.fn() }
+  Clipboard: { copyToSystem: jest.fn() },
+  // The one question the extension puts to the reader (ACC-NOTES-178). Each
+  // case says what the reader answered; the default is a dismissal.
+  InputDialog: { getText: jest.fn() }
 }));
 jest.mock('@jupyterlab/markdownviewer', () => ({}));
 jest.mock('@jupyterlab/settingregistry', () => ({}));
@@ -100,6 +103,10 @@ class Commands {
     this.declared.set(id, options);
     return { dispose: () => undefined };
   }
+  /** What the plugin calls to have the palette repaint an entry. */
+  notifyCommandChanged(id: string): void {
+    this.repainted.push(id);
+  }
   label(id: string, args: any = {}): string {
     const options = this.declared.get(id);
     return typeof options.label === 'function'
@@ -112,6 +119,7 @@ class Commands {
   isEnabled(id: string, args: any = {}): boolean {
     return this.option(id, 'isEnabled', args, true);
   }
+  readonly repainted: string[] = [];
   // The rest of what Lumino's menu renderer reads of a command when the Mark
   // submenu renders, answered as the registry answers them for a command
   // that declares nothing.
@@ -271,7 +279,19 @@ function activate(source: string, composite: Record<string, unknown> = {}) {
   const changed = new Signal<any, void>({});
   const settings: any = {
     composite: { ...composite },
-    changed
+    changed,
+    // A lab that will not keep a value at all, a read-only settings
+    // directory among them.
+    refuses: false,
+    // A write updates the composite and reports the change, as the registry
+    // does when the settings editor or a command writes a value.
+    set: async (key: string, value: unknown): Promise<void> => {
+      if (settings.refuses) {
+        throw new Error('the settings directory is read only');
+      }
+      settings.composite = { ...settings.composite, [key]: value };
+      changed.emit(undefined);
+    }
   };
   const registry: any = { load: async () => settings };
 
@@ -520,8 +540,52 @@ describe('the plugin', () => {
     return activation;
   };
 
+  /**
+   * What the reader answers the handle dialog with: a handle, or null for
+   * the named Skip button.
+   */
+  const answers = (handle: string | null): void => {
+    (InputDialog.getText as jest.Mock).mockResolvedValue({
+      button: { accept: handle !== null, label: 'Skip' },
+      value: handle
+    });
+  };
+
+  /**
+   * The reader answers once with something a handle cannot be made of, then
+   * leaves the dialog that comes back saying so. A mock that answered the
+   * same way every time would never let the question end.
+   */
+  const answersThenLeaves = (handle: string): void => {
+    (InputDialog.getText as jest.Mock)
+      .mockResolvedValueOnce({
+        button: { accept: true, label: 'Save' },
+        value: handle
+      })
+      .mockResolvedValue({
+        button: { accept: false, label: 'Cancel' },
+        value: null
+      });
+  };
+
+  /**
+   * The reader leaves the dialog without pressing a button of it: Escape,
+   * the close cross, or a click on the overlay. JupyterLab answers all
+   * three with a cancel button of its own making.
+   */
+  const dismisses = (): void => {
+    (InputDialog.getText as jest.Mock).mockResolvedValue({
+      button: { accept: false, label: 'Cancel' },
+      value: null
+    });
+  };
+
   beforeEach(() => {
     jest.useFakeTimers();
+    (InputDialog.getText as jest.Mock).mockReset();
+    // Unless a case says otherwise the reader dismisses the question, which
+    // leaves the default handle standing (ACC-NOTES-178).
+    answers(null);
     scrolled = [];
     originalScroll = Element.prototype.scrollIntoView;
     originalSelection = (window as any).getSelection;
@@ -555,13 +619,310 @@ describe('the plugin', () => {
       expect(written[0].text).toBe('This contradicts the intro.');
     });
 
-    it('signs with author when the setting is empty', async () => {
+    it('signs with user when the setting is empty', async () => {
       const lab = await start(MARKED, { author: '' });
       lab.widget.render(MARKED_HTML);
 
       await writeNote(lab, ID, 'A note.');
 
-      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('author');
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('user');
+    });
+
+    it('asks for a handle at the first note, and keeps the answer (ACC-NOTES-178)', async () => {
+      answers('kj');
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+
+      expect(InputDialog.getText).toHaveBeenCalledTimes(1);
+      // The answer goes into the setting, which is the handle's only home,
+      // and the line the reader was writing is signed with it.
+      expect(lab.settings.composite.author).toBe('kj');
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('kj');
+    });
+
+    it('asks nothing of a reader who has a handle already', async () => {
+      const lab = await start(MARKED, { author: 'kj' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+
+      expect(InputDialog.getText).not.toHaveBeenCalled();
+    });
+
+    it('asks once: a dismissal stands until the lab is loaded again', async () => {
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+      await writeNote(lab, ID, 'And another.');
+
+      expect(InputDialog.getText).toHaveBeenCalledTimes(1);
+      const written = parseMarks(lab.widget.text)[0].notes;
+      expect(written.map(note => note.author)).toEqual(['user', 'user']);
+    });
+
+    it('treats an empty answer as a refusal, and keeps it for the session', async () => {
+      answers('   ');
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+      await writeNote(lab, ID, 'And another.');
+
+      // Nothing was stored and the question was not put twice, so a reader
+      // who confirms an empty box is not asked again either.
+      expect(lab.settings.composite.author).toBe('');
+      expect(InputDialog.getText).toHaveBeenCalledTimes(1);
+      expect(
+        parseMarks(lab.widget.text)[0].notes.map(note => note.author)
+      ).toEqual(['user', 'user']);
+    });
+
+    it('opens the question from the palette with the handle in force (ACC-NOTES-179)', async () => {
+      answers('kjx');
+      const lab = await start(MARKED, { author: 'kj' });
+
+      await lab.commands.execute(COMMANDS.setHandle);
+
+      expect((InputDialog.getText as jest.Mock).mock.calls[0][0].text).toBe(
+        'kj'
+      );
+      expect(lab.settings.composite.author).toBe('kjx');
+    });
+
+    it('keeps the note when the store refuses the answer (ACC-NOTES-178)', async () => {
+      answers('kj');
+      const reported = jest.spyOn(console, 'error').mockImplementation();
+      const lab = await start(MARKED, { author: '' });
+      lab.settings.refuses = true;
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+      await writeNote(lab, ID, 'And another.');
+
+      // A lab that will not keep the handle still keeps the note, signed
+      // with the default, and the question is not put at every note after.
+      expect(
+        parseMarks(lab.widget.text)[0].notes.map(note => note.author)
+      ).toEqual(['user', 'user']);
+      expect(InputDialog.getText).toHaveBeenCalledTimes(1);
+      expect(reported).toHaveBeenCalled();
+      reported.mockRestore();
+    });
+
+    it('holds a second note behind the question (ACC-NOTES-178)', async () => {
+      let answer: (value: unknown) => void = () => undefined;
+      (InputDialog.getText as jest.Mock).mockReturnValue(
+        new Promise(resolve => {
+          answer = resolve;
+        })
+      );
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'First.');
+      await writeNote(lab, ID, 'Second.');
+
+      // One question for the two, and neither has gone in: a note that went
+      // ahead would be signed with the handle being replaced, because the
+      // setting is the one place the handle is read from.
+      expect(InputDialog.getText).toHaveBeenCalledTimes(1);
+      expect(parseMarks(lab.widget.text)[0].notes).toHaveLength(0);
+
+      answer({ button: { accept: true }, value: 'kj' });
+      await lab.ready();
+      await lab.ready();
+      // Whatever lands is signed with the answer. A second Save racing the
+      // first still loses one of the two notes, which it did before this
+      // question existed and is not what is held here.
+      const written = parseMarks(lab.widget.text)[0].notes;
+      expect(written.length).toBeGreaterThan(0);
+      expect(written.map(note => note.author)).toEqual(written.map(() => 'kj'));
+    });
+
+    it('leaves the question standing when the dialog is dismissed rather than skipped (ACC-NOTES-178)', async () => {
+      dismisses();
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+      answers('kj');
+      await writeNote(lab, ID, 'And another.');
+
+      // Escape, the cross and a click on the overlay - the second press of
+      // a double click on Save among them - are not the reader choosing to
+      // go unsigned, so the next note puts the question again.
+      expect(InputDialog.getText).toHaveBeenCalledTimes(2);
+      expect(
+        parseMarks(lab.widget.text)[0].notes.map(note => note.author)
+      ).toEqual(['user', 'kj']);
+    });
+
+    it('takes an answer carrying no handle as no answer (ACC-NOTES-178)', async () => {
+      answersThenLeaves('@');
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+
+      // A lone @ is what a reader types back from the panel, which shows
+      // every handle with one. It leaves nothing a note can carry, so the
+      // question comes back saying so rather than the answer being stored
+      // or silently thrown away.
+      expect(InputDialog.getText).toHaveBeenCalledTimes(2);
+      expect(lab.settings.composite.author).toBe('');
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('user');
+    });
+
+    it('leaves a handle standing when the answer cannot be written (ACC-NOTES-179)', async () => {
+      answersThenLeaves('\u041a\u0438\u0440\u0438\u043b\u043b');
+      const lab = await start(MARKED, { author: 'kj' });
+      lab.widget.render(MARKED_HTML);
+
+      await lab.commands.execute(COMMANDS.setHandle);
+      await writeNote(lab, ID, 'A note.');
+
+      // A name the note grammar cannot carry is not the empty box asking
+      // for the default, so the handle the reader had is not wiped; the
+      // question comes back saying so, with what they typed still in it.
+      const asked = (InputDialog.getText as jest.Mock).mock.calls;
+      expect(asked).toHaveLength(2);
+      expect(asked[1][0].text).toBe('\u041a\u0438\u0440\u0438\u043b\u043b');
+      expect(asked[1][0].label).toContain('nothing a handle can carry');
+      expect(lab.settings.composite.author).toBe('kj');
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('kj');
+    });
+
+    it('leaves the question standing when the answer cannot be written (ACC-NOTES-178)', async () => {
+      answersThenLeaves('\u041a\u0438\u0440\u0438\u043b\u043b');
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+      answers('kj');
+      await writeNote(lab, ID, 'And another.');
+
+      // Nothing was recorded, so the next note asks again rather than the
+      // reader being silenced by an answer that was never kept.
+      expect(InputDialog.getText).toHaveBeenCalledTimes(3);
+      expect(
+        parseMarks(lab.widget.text)[0].notes.map(note => note.author)
+      ).toEqual(['user', 'kj']);
+    });
+
+    it('lets the reader skip the question the refusal put again (ACC-NOTES-178)', async () => {
+      (InputDialog.getText as jest.Mock)
+        .mockResolvedValueOnce({
+          button: { accept: true, label: 'Save' },
+          value: '\u041a\u0438\u0440\u0438\u043b\u043b'
+        })
+        .mockResolvedValue({
+          button: { accept: false, label: 'Skip' },
+          value: null
+        });
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+      await writeNote(lab, ID, 'And another.');
+
+      // The dialog the refusal put again carries the same Skip, and
+      // pressing it ends the asking for the session as any Skip does.
+      expect(InputDialog.getText).toHaveBeenCalledTimes(2);
+      expect(
+        parseMarks(lab.widget.text)[0].notes.map(note => note.author)
+      ).toEqual(['user', 'user']);
+    });
+
+    it('asks a reader whose setting holds no usable handle (ACC-NOTES-178)', async () => {
+      answers('kj');
+      const lab = await start(MARKED, { author: '@' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+
+      expect(InputDialog.getText).toHaveBeenCalledTimes(1);
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('kj');
+    });
+
+    it('clears the handle when the box is emptied from the palette (ACC-NOTES-179)', async () => {
+      answers('');
+      const lab = await start(MARKED, { author: 'kj' });
+      lab.widget.render(MARKED_HTML);
+
+      await lab.commands.execute(COMMANDS.setHandle);
+      await writeNote(lab, ID, 'A note.');
+
+      // Emptying the box and confirming asks for the default outright, so
+      // the setting is cleared and the reader is not questioned again.
+      expect(lab.settings.composite.author).toBe('');
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('user');
+      expect(InputDialog.getText).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the first-note question standing when the command is dismissed', async () => {
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await lab.commands.execute(COMMANDS.setHandle);
+      answers('kj');
+      await writeNote(lab, ID, 'A note.');
+
+      // Backing out of a command the reader ran says nothing about how
+      // their notes are signed, so the note still puts the question.
+      expect(InputDialog.getText).toHaveBeenCalledTimes(2);
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('kj');
+    });
+
+    it('holds the note until the question is answered (ACC-NOTES-178)', async () => {
+      let answer: (value: unknown) => void = () => undefined;
+      (InputDialog.getText as jest.Mock).mockReturnValue(
+        new Promise(resolve => {
+          answer = resolve;
+        })
+      );
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+
+      // The note waits on the answer rather than going in beside it, which
+      // would sign it with the handle the reader is in the middle of giving.
+      expect(parseMarks(lab.widget.text)[0].notes).toHaveLength(0);
+      answer({ button: { accept: true }, value: 'kj' });
+      await lab.ready();
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('kj');
+    });
+
+    it('names what leaving each question does', async () => {
+      const lab = await start(MARKED, { author: '' });
+      lab.widget.render(MARKED_HTML);
+
+      await writeNote(lab, ID, 'A note.');
+      await lab.commands.execute(COMMANDS.setHandle);
+
+      const [note, command] = (InputDialog.getText as jest.Mock).mock.calls;
+      // The reader has just pressed Save on a note, so the way out of the
+      // question a note put must not read as cancelling that note; the
+      // command changes nothing, so its way out is a cancel.
+      expect(note[0].cancelLabel).toBe('Skip');
+      expect(note[0].label).toContain('until you set one');
+      expect(command[0].cancelLabel).toBe('Cancel');
+      expect(command[0].label).toContain('Empty it');
+    });
+
+    it('offers the handle command greyed until the settings arrive (ACC-NOTES-179)', async () => {
+      const activation = activate(MARKED, { author: 'kj' });
+      live.push(activation);
+
+      expect(activation.commands.isEnabled(COMMANDS.setHandle)).toBe(false);
+      await activation.ready();
+
+      expect(activation.commands.isEnabled(COMMANDS.setHandle)).toBe(true);
+      // The palette is told, so the entry it already drew is repainted.
+      expect(activation.commands.repainted).toContain(COMMANDS.setHandle);
     });
 
     it('falls back to the declared defaults for a value it cannot use', async () => {
@@ -572,7 +933,7 @@ describe('the plugin', () => {
       // and notes fell back to true, so the marking entries are offered.
       await writeNote(lab, ID, 'A note.');
 
-      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('author');
+      expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('user');
       select(lab.widget.rendered, 'beta', 'gamma');
       expect(lab.commands.isVisible(COMMANDS.addNote)).toBe(true);
     });
@@ -733,7 +1094,8 @@ describe('the plugin', () => {
           command: COMMANDS.panel,
           args: { state: 'expanded' },
           category: 'Markdown Viewer'
-        }
+        },
+        { command: COMMANDS.setHandle, category: 'Markdown Viewer' }
       ]);
     });
 

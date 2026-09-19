@@ -28,7 +28,11 @@ import {
   IMarkdownViewerTracker,
   MarkdownDocument
 } from '@jupyterlab/markdownviewer';
-import { Clipboard, ICommandPalette } from '@jupyterlab/apputils';
+import {
+  Clipboard,
+  ICommandPalette,
+  IThemeManager
+} from '@jupyterlab/apputils';
 import { MimeData } from '@lumino/coreutils';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { ITranslator, nullTranslator } from '@jupyterlab/translation';
@@ -62,6 +66,8 @@ import {
   PanelState
 } from './marks';
 import { NotesController, SELECTING_CLASS } from './notes';
+import { applySwatchColours } from './swatch';
+import { NoteHandle } from './handle';
 import {
   installNotesPanel,
   NotesPanel,
@@ -93,6 +99,8 @@ export const COMMANDS = {
   copyMarkId: 'advanced-markdown-viewer:copy-mark-id',
   /** Copy the rendered document as basic HTML, for a mail client. */
   copyContent: 'advanced-markdown-viewer:copy-content',
+  /** Ask for the handle note lines are signed with. */
+  setHandle: 'advanced-markdown-viewer:set-note-handle',
   /** Copy the address of the link the context menu was opened on. */
   copyLinkAddress: 'advanced-markdown-viewer:copy-link-address'
 };
@@ -232,17 +240,27 @@ const plugin: JupyterFrontEndPlugin<void> = {
     'Keeps an open Markdown preview current with its file, highlighting what an external change added and removed, and holds the reader marks and notes the file itself carries',
   autoStart: true,
   requires: [IMarkdownViewerTracker],
-  optional: [ISettingRegistry, ICommandPalette, ITranslator],
+  optional: [ISettingRegistry, ICommandPalette, ITranslator, IThemeManager],
   activate: (
     app: JupyterFrontEnd,
     tracker: IMarkdownViewerTracker,
     settingRegistry: ISettingRegistry | null,
     palette: ICommandPalette | null,
-    translator: ITranslator | null
+    translator: ITranslator | null,
+    themeManager: IThemeManager | null
   ) => {
+    // The swatches are worked out against the background the page carries and
+    // again whenever the theme changes (ACC-NOTES-177). themeChanged is
+    // emitted after the theme stylesheet has loaded, so the new background is
+    // there to be read and nothing waits on a timer.
+    applySwatchColours(document.body);
+    themeManager?.themeChanged.connect(() => applySwatchColours(document.body));
     const trans = (translator ?? nullTranslator).load(
       'jupyterlab_advanced_markdown_viewer_extension'
     );
+    // A note is signed with the handle the reader set, and the reader is
+    // asked for one the first time they write a note (ACC-NOTES-178).
+    const handle = new NoteHandle(trans);
     // The language the lab itself is set to, which the note stamps are
     // written in (ACC-NOTES-175).
     const language = (translator ?? nullTranslator).languageCode;
@@ -275,7 +293,10 @@ const plugin: JupyterFrontEndPlugin<void> = {
       const panel = new NotesPanel({
         root,
         handlers: {
-          addNote: (id, text) => notes.addNote(id, text),
+          addNote: async (id, text) => {
+            await handle.askIfUnset();
+            return notes.addNote(id, text);
+          },
           editNote: (id, note, text) => notes.editNote(id, note, text),
           removeNote: (id, note) => void notes.removeNote(id, note),
           setColour: (id, colour) => void notes.setColour(id, colour),
@@ -417,6 +438,19 @@ const plugin: JupyterFrontEndPlugin<void> = {
           attachment.panel.selectMark(id, true);
         }
       }
+    });
+
+    // The handle is not a property of a document, so the command is offered
+    // whether or not a preview is open (ACC-NOTES-179).
+    // The settings arrive after the plugin starts, and the handle has no
+    // store to write until they do, so the entry is greyed rather than
+    // listed and dead (ACC-NOTES-179).
+    app.commands.addCommand(COMMANDS.setHandle, {
+      label: trans.__('Set note handle'),
+      caption: trans.__('Set the handle your notes are signed with'),
+      describedBy: { args: { type: 'object', properties: {} } },
+      isEnabled: () => handle.ready,
+      execute: () => handle.change()
     });
 
     // The mark's identifier is what an agent or a script is told to find the
@@ -566,6 +600,12 @@ const plugin: JupyterFrontEndPlugin<void> = {
       args: { state: 'expanded' },
       category: 'Markdown Viewer'
     });
+    // The handle belongs to the reader, not to a document, so the palette is
+    // its only listing (ACC-NOTES-179).
+    palette?.addItem({
+      command: COMMANDS.setHandle,
+      category: 'Markdown Viewer'
+    });
 
     // Marking needs a selection, so its entry leads: one Mark entry opening
     // the six colours, so the menu is not six entries long before the
@@ -626,6 +666,10 @@ const plugin: JupyterFrontEndPlugin<void> = {
               attachment.notes.updateSettings(current);
             }
           };
+          handle.settings = settings;
+          // The entry was greyed while there was no store to write; the
+          // palette repaints it from this.
+          app.commands.notifyCommandChanged(COMMANDS.setHandle);
           apply();
           settings.changed.connect(apply);
         })

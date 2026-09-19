@@ -566,15 +566,9 @@ test.describe('marking a passage', () => {
   test('ACC-NOTES-121 draws each Mark entry in the colour it paints, in both themes', async ({
     page
   }) => {
-    // The hues the marks paint, as the browser reports a computed fill.
-    const HUES = [
-      'rgb(240, 212, 15)',
-      'rgb(15, 112, 240)',
-      'rgb(246, 49, 177)',
-      'rgb(241, 148, 34)',
-      'rgb(230, 30, 70)',
-      'rgb(30, 210, 50)'
-    ];
+    // The colour of a swatch is the mark's hue taken to the contrast bar
+    // (ACC-NOTES-177), so the entry's fill is the property the page worked
+    // out and never the theme's icon grey.
     const swatchFills = () =>
       page.evaluate(() =>
         Array.from(
@@ -583,38 +577,146 @@ test.describe('marking a passage', () => {
           )
         ).map(rect => getComputedStyle(rect).fill)
       );
-    await openMenu(page, await select(page, P1));
-    await openMarkMenu(page);
-    expect(await swatchFills()).toEqual(HUES);
-    await closeMenus(page);
+    const worked = () =>
+      page.evaluate(() =>
+        ['yellow', 'blue', 'pink', 'orange', 'red', 'green'].map(colour => {
+          const probe = document.createElement('span');
+          probe.style.backgroundColor = getComputedStyle(document.body)
+            .getPropertyValue(`--jp-AdvancedMd-swatch-${colour}`)
+            .trim();
+          document.body.appendChild(probe);
+          const resolved = getComputedStyle(probe).backgroundColor;
+          probe.remove();
+          return resolved;
+        })
+      );
+    const readBoth = async (): Promise<[string[], string[]]> => {
+      await openMenu(page, await select(page, P1));
+      await openMarkMenu(page);
+      const pair: [string[], string[]] = [await swatchFills(), await worked()];
+      await closeMenus(page);
+      return pair;
+    };
+
+    // The six the light theme works out, which style/base.css also names as
+    // its fallbacks and a jest check holds to the walk's own answer. Reading
+    // the property back would agree with the fill whatever the walk gave, so
+    // the values themselves are named here.
+    const lightSwatches = [
+      'rgb(156, 137, 10)',
+      'rgb(15, 112, 240)',
+      'rgb(246, 49, 177)',
+      'rgb(201, 116, 13)',
+      'rgb(230, 30, 70)',
+      'rgb(23, 159, 38)'
+    ];
+    const [light, lightWorked] = await readBoth();
+    expect(light).toEqual(lightWorked);
+    expect(light).toEqual(lightSwatches);
 
     // The dark theme recolours JupyterLab's own icons; the swatches keep
-    // the colour the mark paints.
+    // the colour the mark paints, worked out again for the new background.
     await page.theme.setDarkTheme();
-    await openMenu(page, await select(page, P1));
-    await openMarkMenu(page);
-    expect(await swatchFills()).toEqual(HUES);
-    await closeMenus(page);
+    const [dark, darkWorked] = await readBoth();
+    expect(dark).toEqual(darkWorked);
+    expect(new Set(dark).size).toBe(6);
+    expect(dark).not.toEqual(light);
   });
 
-  test('ACC-NOTES-124 draws the swatches muted, at the tint the painted mark uses', async ({
+  test('ACC-NOTES-177 stands every swatch at the contrast bar, in both themes', async ({
     page
   }) => {
-    await openMenu(page, await select(page, P1));
-    await openMarkMenu(page);
-    const tints = await page.evaluate(() =>
-      Array.from(
-        document.querySelectorAll(
-          '.lm-Menu-item[data-command="advanced-markdown-viewer:mark"] .lm-Menu-itemIcon rect'
-        )
-      ).map(rect => Number(getComputedStyle(rect).fillOpacity))
-    );
-    // The light-theme alpha of each painted mark, from style/base.css.
-    expect(tints).toEqual([0.2, 0.11, 0.14, 0.17, 0.18, 0.17]);
-    for (const tint of tints) {
-      expect(tint).toBeLessThanOrEqual(0.5);
-    }
-    await closeMenus(page);
+    // Every swatch the page shows, against the first background behind it
+    // that is not transparent: the row where the row carries one, the panel
+    // or the menu where it does not.
+    const ratios = () =>
+      page.evaluate(() => {
+        const luminance = (colour: string): number => {
+          const [red, green, blue] = colour
+            .match(/[\d.]+/g)!
+            .slice(0, 3)
+            .map(Number)
+            .map(channel => {
+              const part = channel / 255;
+              return part <= 0.03928
+                ? part / 12.92
+                : Math.pow((part + 0.055) / 1.055, 2.4);
+            });
+          return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+        };
+        const ratio = (one: string, other: string): number => {
+          const [high, low] = [luminance(one), luminance(other)].sort(
+            (a, b) => b - a
+          );
+          return (high + 0.05) / (low + 0.05);
+        };
+        const backdrop = (node: Element | null): string => {
+          for (let walk = node; walk; walk = walk.parentElement) {
+            const colour = getComputedStyle(walk).backgroundColor;
+            if (!/rgba\(0, 0, 0, 0\)|transparent/.test(colour)) {
+              return colour;
+            }
+          }
+          return getComputedStyle(document.body).backgroundColor;
+        };
+        const found = Array.from(
+          document.querySelectorAll('.jp-AdvancedMd-notesSwatch')
+        ).map(swatch =>
+          ratio(
+            getComputedStyle(swatch).backgroundColor,
+            backdrop(swatch.parentElement)
+          )
+        );
+        return found.concat(
+          Array.from(
+            document.querySelectorAll(
+              '.lm-Menu-item[data-command="advanced-markdown-viewer:mark"] .lm-Menu-itemIcon rect'
+            )
+          ).map(rect => ratio(getComputedStyle(rect).fill, backdrop(rect)))
+        );
+      });
+
+    const bar = async (expected: number): Promise<void> => {
+      const measured = await ratios();
+      expect(measured.length).toBe(expected);
+      for (const measured_ of measured) {
+        expect(measured_).toBeGreaterThanOrEqual(3);
+      }
+    };
+
+    const sweep = async (): Promise<void> => {
+      // The swatch of a row, on a plain row and on the selected one.
+      await bar(1);
+      await rows(page).first().click();
+      await expect(rows(page).first()).toHaveClass(/notesRow-selected/);
+      await bar(1);
+
+      // The five colours the row rolls down under its own swatch.
+      await rows(page)
+        .first()
+        .locator('.jp-AdvancedMd-notesSwatchButton')
+        .click();
+      await expect(
+        rows(page).first().locator('.jp-AdvancedMd-notesColours')
+      ).toBeVisible();
+      await bar(6);
+      await page.keyboard.press('Escape');
+      await expect(
+        rows(page).first().locator('.jp-AdvancedMd-notesColours')
+      ).toHaveCount(0);
+
+      // The six the Mark submenu offers.
+      await openMenu(page, await select(page, P1));
+      await openMarkMenu(page);
+      await bar(7);
+      await closeMenus(page);
+    };
+
+    await mark(page, P1);
+    await expect(rows(page)).toHaveCount(1);
+    await sweep();
+    await page.theme.setDarkTheme();
+    await sweep();
   });
 
   test('ACC-NOTES-134 keeps every highlight faint in both themes', async ({
@@ -2639,7 +2741,7 @@ test.describe('a document that already carries marks', () => {
   }) => {
     const swatch = await page.evaluate(() => {
       const node = document.querySelector(
-        '.jp-AdvancedMd-notesSwatch.jp-AdvancedMd-mark-yellow'
+        '.jp-AdvancedMd-notesSwatch.jp-AdvancedMd-swatch-yellow'
       )!;
       const box = node.getBoundingClientRect();
       const style = getComputedStyle(node);
@@ -2670,12 +2772,10 @@ test.describe('a document that already carries marks', () => {
     expect(icon.width).toBeCloseTo(swatch.width, 0);
     expect(icon.height).toBeCloseTo(swatch.height, 0);
     expect(icon.radius).toBe(swatch.radius);
-    // rgba(r, g, b, a) of the swatch is rgb(r, g, b) at fill-opacity a.
-    const parts = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(
-      swatch.background
-    )!;
-    expect(icon.fill).toBe(`rgb(${parts[1]}, ${parts[2]}, ${parts[3]})`);
-    expect(icon.alpha).toBeCloseTo(Number(parts[4]), 2);
+    // Both read the one property the page works out (ACC-NOTES-177), so the
+    // colours are equal and neither carries an alpha of its own.
+    expect(icon.fill).toBe(swatch.background);
+    expect(icon.alpha).toBe(1);
   });
 
   test('ACC-NOTES-52 closes the panel and brings it back with no mark lost', async ({
@@ -3271,6 +3371,10 @@ test.describe('adding a note from a passage far down the document', () => {
     expect(await held()).toBe(true);
 
     await writeNote(page, 'Say which orchard.');
+    // This describe sets no handle, so the question about one stands between
+    // the note and the save (ACC-NOTES-178); dismissing it must leave the
+    // view where it is, which the assertions below then read.
+    await answerHandle(page, null);
     await fileWhen(target, holds => holds.includes('Say which orchard.'));
     // The viewer's render timeout is a second; the render it would schedule
     // is given its time, and the view must still be where it was.
@@ -3352,25 +3456,53 @@ const identity = (username: string, name: string) => ({
 });
 
 /**
+ * Answer the question the extension puts about the handle (ACC-NOTES-178):
+ * type initials, or dismiss it with null.
+ */
+async function answerHandle(page: any, handle: string | null): Promise<void> {
+  const dialog = page.locator('.jp-Dialog');
+  await expect(dialog).toBeVisible();
+  if (handle === null) {
+    await dialog.locator('button.jp-mod-reject').click();
+  } else {
+    await dialog.locator('input').fill(handle);
+    await dialog.locator('button.jp-mod-accept').click();
+  }
+  await expect(dialog).toHaveCount(0);
+}
+
+/**
  * Write a note on the first sentence of a fresh document and answer with the
- * file the save left on disk.
+ * file the save left on disk. Where the handle setting is empty the question
+ * about it stands between the note and the save, so `handle` says what to
+ * answer: initials, or null to dismiss it.
  */
 async function noteOnFreshDocument(
   page: any,
   target: string,
-  text: string
+  text: string,
+  handle?: string | null
 ): Promise<string> {
   await page.contents.uploadContent(DOC, 'text', target);
   await openPreview(page, target, FIRST);
   await openMenu(page, await select(page, P1));
   await choose(page, 'Add note');
   await writeNote(page, text);
+  if (handle !== undefined) {
+    await answerHandle(page, handle);
+  }
   return fileWhen(target, holds => holds.includes(text));
 }
 
 test.describe('a lab that names its user', () => {
   test.use({
-    mockSettings: settings({ fadeDuration: 500, animation: false }),
+    // No handle is set, so these cases are the first-run ones: the extension
+    // asks for initials (ACC-NOTES-178).
+    mockSettings: settings({
+      fadeDuration: 500,
+      animation: false,
+      author: ''
+    }),
     // The lab knows exactly who the reader is, and it makes no difference:
     // the setting alone names a note line.
     mockUser: identity('kj', 'Konrad Jelen')
@@ -3383,16 +3515,105 @@ test.describe('a lab that names its user', () => {
     const text = await noteOnFreshDocument(
       page,
       `${tmpPath}/${FILE}`,
-      'The setting is empty.'
+      'The setting is empty.',
+      null
     );
 
     expect(text).toMatch(
-      /\n@author \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: The setting is empty\.\n/
+      /\n@user \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: The setting is empty\.\n/
     );
     expect(text).not.toContain('@kj');
     await expect(
       rows(page).first().locator('.jp-AdvancedMd-notesAuthor')
-    ).toHaveText('@author');
+    ).toHaveText('@user');
+  });
+
+  test('ACC-NOTES-178 asks for initials at the first note and signs with them', async ({
+    page,
+    tmpPath
+  }) => {
+    const text = await noteOnFreshDocument(
+      page,
+      `${tmpPath}/${FILE}`,
+      'Signed by the answer.',
+      'kjx'
+    );
+
+    expect(text).toMatch(
+      /\n@kjx \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Signed by the answer\.\n/
+    );
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesAuthor')
+    ).toHaveText('@kjx');
+
+    // The answer went into the setting, so a second note is written without
+    // the question being put again. The row is open already, the note just
+    // written having opened it.
+    await panelButton(page, 'Reply').click();
+    await writeNote(page, 'And again.');
+    const both = await fileWhen(`${tmpPath}/${FILE}`, holds =>
+      holds.includes('And again.')
+    );
+    await expect(page.locator('.jp-Dialog')).toHaveCount(0);
+    expect(both).toMatch(
+      /\n@kjx \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: And again\.\n/
+    );
+  });
+
+  test('ACC-NOTES-178 asks once: a dismissal stands for the session', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await noteOnFreshDocument(page, target, 'Dismissed once.', null);
+
+    await panelButton(page, 'Reply').click();
+    await writeNote(page, 'Dismissed twice.');
+    // The question is not put a second time, and the default handle stands.
+    const text = await fileWhen(target, holds =>
+      holds.includes('Dismissed twice.')
+    );
+    await expect(page.locator('.jp-Dialog')).toHaveCount(0);
+    expect(text).toMatch(
+      /\n@user \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Dismissed twice\.\n/
+    );
+  });
+
+  test('ACC-NOTES-179 sets the handle from the command palette', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(DOC, 'text', target);
+    await openPreview(page, target, FIRST);
+
+    // The palette is opened by the lab's own command, so the case does not
+    // rest on a keyboard shortcut a reader may have rebound.
+    await page.evaluate(() =>
+      (window as any).jupyterapp.commands.execute(
+        'apputils:activate-command-palette'
+      )
+    );
+    const search = page.locator('.lm-CommandPalette-input');
+    await expect(search).toBeVisible();
+    await search.fill('Set note handle');
+    await page
+      .locator('.lm-CommandPalette-item', { hasText: 'Set note handle' })
+      .first()
+      .click();
+    await answerHandle(page, 'kjp');
+
+    await openMenu(page, await select(page, P1));
+    await choose(page, 'Add note');
+    await writeNote(page, 'From the palette.');
+    // The handle is set, so no question stands between the note and the save.
+    const text = await fileWhen(target, holds =>
+      holds.includes('From the palette.')
+    );
+    await expect(page.locator('.jp-Dialog')).toHaveCount(0);
+    expect(text).toMatch(
+      /\n@kjp \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: From the palette\.\n/
+    );
   });
 
   test('ACC-NOTES-142 leaves a note line an agent wrote as it stands', async ({
@@ -3406,13 +3627,14 @@ test.describe('a lab that names its user', () => {
     await openRow(page);
     await panelButton(page, 'Reply').click();
     await writeNote(page, 'Agreed.');
+    await answerHandle(page, null);
     const text = await fileWhen(target, holds => holds.includes('Agreed.'));
 
     // The agent's line is carried through the rewrite of the marker byte for
     // byte, and only the line written here is signed with the handle.
     expect(text).toContain(AGENT_NOTE);
     expect(text).toMatch(
-      /\n@author \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Agreed\.\n/
+      /\n@user \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Agreed\.\n/
     );
   });
 });
@@ -4008,6 +4230,54 @@ test.describe('a note being written when the mark vanished', () => {
     await expect(painted(page)).toHaveCount(0);
     expect(fileText(target)).not.toContain('Written into a mark');
     expect(openingIds(fileText(target))).toEqual([]);
+  });
+});
+
+test.describe('a note answered after the mark vanished', () => {
+  // The handle is unset, so the question stands between the note and the
+  // file and the mark can go while it is up.
+  test.use({
+    mockSettings: settings({
+      fadeDuration: 500,
+      animation: false,
+      author: ''
+    })
+  });
+
+  test('ACC-NOTES-178 keeps the lab when the mark goes while the question is up', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(MARKED, 'text', target);
+    await openPreview(page, target, FIRST);
+    await openRow(page);
+    await panelButton(page, 'Comment').click();
+    await writeNote(page, 'Written while the question was up.');
+    await expect(page.locator('.jp-Dialog')).toBeVisible();
+
+    // Every marker goes from the file while the question is open, so the
+    // note the reader wrote has nowhere to land by the time it is answered.
+    await writeExternally(page, target, DOC);
+    await answerHandle(page, 'kj');
+
+    await expect(rows(page)).toHaveCount(0);
+    expect(fileText(target)).not.toContain('Written while the question');
+    expect(openingIds(fileText(target))).toEqual([]);
+
+    // The lab carries on, and the handle the reader gave is kept: the next
+    // note is signed with it and no question is put again.
+    await mark(page, P1);
+    await openRow(page);
+    await panelButton(page, 'Comment').click();
+    await writeNote(page, 'After the mark went.');
+    const text = await fileWhen(target, holds =>
+      holds.includes('After the mark went.')
+    );
+    expect(text).toMatch(
+      /\n@kj \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: After the mark went\.\n/
+    );
+    await expect(page.locator('.jp-Dialog')).toHaveCount(0);
   });
 });
 

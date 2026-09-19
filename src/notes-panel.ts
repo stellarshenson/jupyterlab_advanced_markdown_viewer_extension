@@ -298,11 +298,21 @@ export function installNotesPanel(host: INotesHost, panel: NotesPanel): void {
 }
 
 /**
- * The class carrying a mark colour, shared by the rendered decoration, the row
- * swatch and the minimap tick, so one rule in the stylesheet paints all three.
+ * The class carrying a mark colour, shared by the rendered decoration and the
+ * minimap tick, so one rule in the stylesheet paints both in the wash the
+ * mark lays on the page.
  */
 export function colourClass(colour: MarkColour): string {
   return `jp-AdvancedMd-mark-${colour}`;
+}
+
+/**
+ * The class carrying the colour of a swatch. A swatch is not painted in the
+ * wash: it stands at a contrast bar against the panel instead
+ * (ACC-NOTES-177), so it takes a class of its own.
+ */
+export function swatchClass(colour: MarkColour): string {
+  return `jp-AdvancedMd-swatch-${colour}`;
 }
 
 /**
@@ -1028,7 +1038,7 @@ export class NotesPanel extends Widget {
       passage.textContent = DOCUMENT_LABEL;
     } else {
       const swatch = document.createElement('span');
-      swatch.className = `${SWATCH_CLASS} ${colourClass(mark.colour)}`;
+      swatch.className = `${SWATCH_CLASS} ${swatchClass(mark.colour)}`;
       // The swatch is the only place the row shows its colour.
       swatch.setAttribute('role', 'img');
       swatch.setAttribute('aria-label', mark.colour);
@@ -1248,7 +1258,7 @@ export class NotesPanel extends Widget {
         this._handlers.setColour(mark.id, colour);
       });
       const swatch = document.createElement('span');
-      swatch.className = `${SWATCH_CLASS} ${colourClass(colour)}`;
+      swatch.className = `${SWATCH_CLASS} ${swatchClass(colour)}`;
       option.appendChild(swatch);
       list.appendChild(option);
     }

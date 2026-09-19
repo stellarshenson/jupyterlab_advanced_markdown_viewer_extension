@@ -257,8 +257,8 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
  | The first four still stand more than 13 CIE Lab units from the green and
  | the red a change is highlighted in; the red and the green are kin to those
  | by nature and are told from them by staying where a change highlight fades.
- | The six stand more than 7 units from one another. The swatch of each
- | colour in src/icons.ts carries the light-theme value written here.
+ | The six stand more than 7 units from one another. A swatch does not carry
+ | these values: ACC-NOTES-177 holds it to a contrast bar instead.
  */
 
 /*
@@ -326,6 +326,42 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-red {
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   background-color: rgb(30 210 50 / 18%);
+}
+
+/*
+ | A swatch is not the wash above it. That wash is close to the page by
+ | design, and on a ten pixel square it is not a colour anybody can name, so a
+ | swatch stands at three to one against the panel behind it instead
+ | (ACC-NOTES-177). src/swatch.ts walks each hue in lightness against the
+ | background the page carries and writes the six properties on the body. The
+ | value written here is the light theme's answer, which shows until that has
+ | run and wherever no background can be read at all; a jest check holds each
+ | one to what the walk gives for that theme, so a retuned hue cannot leave a
+ | fallback of another colour behind.
+ */
+
+.jp-AdvancedMd-swatch-yellow {
+  background-color: var(--jp-AdvancedMd-swatch-yellow, #9c890a);
+}
+
+.jp-AdvancedMd-swatch-blue {
+  background-color: var(--jp-AdvancedMd-swatch-blue, #0f70f0);
+}
+
+.jp-AdvancedMd-swatch-pink {
+  background-color: var(--jp-AdvancedMd-swatch-pink, #f631b1);
+}
+
+.jp-AdvancedMd-swatch-orange {
+  background-color: var(--jp-AdvancedMd-swatch-orange, #c9740d);
+}
+
+.jp-AdvancedMd-swatch-red {
+  background-color: var(--jp-AdvancedMd-swatch-red, #e61e46);
+}
+
+.jp-AdvancedMd-swatch-green {
+  background-color: var(--jp-AdvancedMd-swatch-green, #179f26);
 }
 
 /*

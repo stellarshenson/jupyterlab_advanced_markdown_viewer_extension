@@ -117,9 +117,11 @@ export const SELECTING_CLASS = 'jp-AdvancedMd-selecting';
  * The setting is the only source of the handle. A lab identity names the
  * reader to the lab, and a hub that logs users in by identifier names them to
  * nobody at all, so a note line signed from it tells whoever reads the file
- * next year less than the plain word does.
+ * next year less than the plain word does. The reader is asked for a handle
+ * the first time they write a note (ACC-NOTES-178), so this word stands only
+ * where they declined to give one.
  */
-export const DEFAULT_AUTHOR = 'author';
+export const DEFAULT_AUTHOR = 'user';
 
 /**
  * Settings the notes controller reads.
@@ -211,6 +213,25 @@ const AFTER_MARKER = /^[ \t]*\r?\n?$/;
 
 /** Characters a note handle can carry. */
 const HANDLE = /[^A-Za-z0-9_.-]+/g;
+
+/**
+ * The handle a raw setting value signs a note with, empty where it signs
+ * nothing. A leading @ is dropped, because the panel shows every handle with
+ * one and a reader answering the dialog types back what they see, and every
+ * other character a handle cannot carry becomes a hyphen so the line reads
+ * back as the entry it was written as.
+ *
+ * Both readers of the setting pass through here - the signer below and the
+ * dialog that fills it - so neither can believe a handle the other does not.
+ */
+export function handleOf(raw: string): string {
+  const handle = raw.trim().replace(/^@/, '').replace(HANDLE, '-');
+  // A name in a script the grammar cannot carry - the note head is
+  // @([A-Za-z0-9_.-]+) - comes through as nothing but hyphens. That is no
+  // handle, so it reads as no answer: the reader is signed with the default
+  // rather than with a bare dash they can never correct.
+  return /[A-Za-z0-9]/.test(handle) ? handle : '';
+}
 
 /**
  * The range of a selection that holds text, or null when nothing is selected.
@@ -917,17 +938,14 @@ export class NotesController implements IDisposable {
   }
 
   /**
-   * The handle a note line written now is signed with: the author setting,
-   * and the default handle while that is empty. Characters a handle cannot
-   * carry, whitespace among them, become a hyphen, so the line reads back as
-   * the entry it was written as.
+   * The handle a note line written now is signed with: the author setting
+   * as `handleOf` reads it, and the default handle where that is empty.
    *
    * Only lines written here are signed: a line another author already wrote
    * into the marker is carried through the rewrite as it stands.
    */
   author(): string {
-    const handle = this._settings.author.trim().replace(HANDLE, '-');
-    return handle || DEFAULT_AUTHOR;
+    return handleOf(this._settings.author) || DEFAULT_AUTHOR;
   }
 
   /**

@@ -81,8 +81,8 @@
       "default": true
     },
     "author": {
-      "title": "Note author",
-      "description": "The handle written on every note line you add, without the leading @. Empty writes @author.",
+      "title": "Note handle",
+      "description": "The handle written on every note line you add, without the leading @. Empty writes @user, and you are asked for a handle the first time you write a note. Set note handle in the command palette puts the same question again.",
       "type": "string",
       "default": ""
     }

@@ -73,6 +73,9 @@ export function settings(overrides: Record<string, unknown> = {}) {
       animationJitter: 0,
       highlight: true,
       tabCue: true,
+      // A handle is set, so the question the extension puts to a reader who
+      // has none (ACC-NOTES-178) stands only in the cases that ask for it.
+      author: 'kj',
       ...overrides
     }
   };
