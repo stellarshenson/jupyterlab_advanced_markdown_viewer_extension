@@ -1,23 +1,47 @@
 /**
- * The colour a mark's swatch is drawn in.
+ * The two colours a mark's swatch is drawn in: the rim, and the fill it
+ * holds.
  *
  * A swatch is not the wash a mark lays on the page. That wash is a tenth or
  * a fifth of an alpha, close to the page by design (ACC-NOTES-134), and on a
  * ten pixel square it is not a colour anybody can name. A swatch carries
- * information, so it is held to the three to one a graphical object is asked
- * for (ACC-NOTES-177), worked out against the background the page actually
- * carries so a theme this extension has never seen is covered.
+ * information, so its rim is held to the three to one a graphical object is
+ * asked for (ACC-NOTES-177), worked out against the background the page
+ * actually carries so a theme this extension has never seen is covered.
  *
- * Saturation is not the lever: yellow at full saturation stands at 1.28 to 1
- * on a selected row in the light theme, because yellow is a light colour.
- * The hue and the saturation are kept and the lightness is walked away from
- * the background.
+ * The bar belongs on the rim alone. Held to it the fill stops being the hue:
+ * on the light theme yellow arrives as the olive #9c890a and green as
+ * #179f26, while blue and red clear the bar unwalked and stay at full
+ * saturation, and six of those in a column pull the eye off the text
+ * (DEF-NOTES-112). The rim is the boundary the bar is about, so the fill is
+ * free to be the hue and is held only to MIN_FILL, which is what keeps it
+ * from washing into the page.
+ *
+ * Saturation is the lever for neither. The six hues already stand between
+ * 0.75 and 0.92 saturated and taking one to the full moves it by at most
+ * five hundredths of a ratio point - yellow reaches 1.07 to 1 against white
+ * where the rim needs three. Contrast is a relation between lightnesses, so
+ * the hue and the saturation are kept and the lightness is walked away from
+ * the background, as far as the bar in hand asks and no further.
+ *
+ * On a dark page every hue clears three to one unwalked, so rim and fill are
+ * both the hue and the swatch is the plain colour chip it was before this
+ * module existed. On a light page five of the six fills are the hue and
+ * yellow alone moves, to #e0c400.
  */
 
 import { MARK_COLOURS, MarkColour } from './marks';
 
-/** What a swatch stands at against the background behind it. */
+/** What a swatch's rim stands at against the background behind it. */
 export const MIN_CONTRAST = 3;
+
+/**
+ * What a swatch's fill stands at against that same background. It is not an
+ * accessibility bar - the rim answers WCAG 1.4.11 for the whole object - but
+ * the floor that keeps the fill from washing into the page. At it the fill
+ * is still the hue: on the light theme it moves yellow alone.
+ */
+export const MIN_FILL = 1.5;
 
 /**
  * The background luminance at which black and white give the same ratio.
@@ -55,9 +79,14 @@ export const HUE: Record<MarkColour, string> = {
   green: '#1ed232'
 };
 
-/** The custom property a swatch of one colour is painted from. */
+/** The custom property a swatch's rim of one colour is painted from. */
 export function swatchProperty(colour: MarkColour): string {
   return `--jp-AdvancedMd-swatch-${colour}`;
+}
+
+/** The custom property a swatch's fill of one colour is painted from. */
+export function swatchFillProperty(colour: MarkColour): string {
+  return `--jp-AdvancedMd-swatch-fill-${colour}`;
 }
 
 /** A colour as its three channels, 0 to 255. */
@@ -172,10 +201,12 @@ function worst(colour: Rgb, backgrounds: Rgb[]): number {
 }
 
 /**
- * The hue walked in lightness until it stands at the bar against every
- * background. The walk sets off away from the background and turns round
- * where that direction does not reach the bar, which takes backgrounds on
- * both sides of the crossover.
+ * The hue walked in lightness until it stands at the given bar against
+ * every background. The walk sets off away from the background and turns
+ * round where that direction does not reach the bar, which takes backgrounds
+ * on both sides of the crossover. It stops at the first colour that clears
+ * the bar, so a hue already clear of it is handed back untouched: that is
+ * every hue on a dark page, and five of the six fills on a light one.
  *
  * Where the walk finds nothing the mark's own colour is handed back
  * unwalked. That takes one background below a tenth of the luminance scale
@@ -185,7 +216,11 @@ function worst(colour: Rgb, backgrounds: Rgb[]): number {
  * thinner than its own step is the other way to reach it, which is why the
  * step is a thousandth.
  */
-export function contrasting(hue: string, backgrounds: Rgb[]): string {
+export function contrasting(
+  hue: string,
+  backgrounds: Rgb[],
+  bar: number = MIN_CONTRAST
+): string {
   const start = parse(hue)!;
   if (backgrounds.length === 0) {
     return hex(start);
@@ -205,7 +240,7 @@ export function contrasting(hue: string, backgrounds: Rgb[]): string {
         saturation,
         Math.min(1, Math.max(0, walked))
       ).map(Math.round) as Rgb;
-      if (worst(candidate, backgrounds) >= MIN_CONTRAST) {
+      if (worst(candidate, backgrounds) >= bar) {
         return hex(candidate);
       }
     }
@@ -259,19 +294,26 @@ const LIGHT_BACKGROUNDS: Rgb[] = [
 ];
 
 /**
- * The colour a swatch falls back to where the properties are not on the
- * page: the light theme's own answer, which is what the stylesheet names.
+ * The colour a swatch's rim falls back to where the properties are not on
+ * the page: the light theme's own answer, which is what the stylesheet
+ * names.
  */
 export function swatchFallback(colour: MarkColour): string {
   return contrasting(HUE[colour], LIGHT_BACKGROUNDS);
 }
 
+/** The colour a swatch's fill falls back to, the light theme's answer again. */
+export function swatchFillFallback(colour: MarkColour): string {
+  return contrasting(HUE[colour], LIGHT_BACKGROUNDS, MIN_FILL);
+}
+
 /**
- * Paint the six swatch properties on the host from the backgrounds the host
- * carries now. Called when the extension starts and whenever the theme
- * changes. Where no background can be read the properties are taken off the
- * host rather than guessed at, so the fallback stands: that is the light
- * theme's answer, where the unwalked hue would stand below the bar.
+ * Paint the twelve swatch properties on the host - a rim and a fill for each
+ * of the six colours - from the backgrounds the host carries now. Called
+ * when the extension starts and whenever the theme changes. Where no
+ * background can be read the properties are taken off the host rather than
+ * guessed at, so the fallbacks stand: those are the light theme's answers,
+ * where the unwalked hue would stand below the rim bar.
  */
 export function applySwatchColours(host: HTMLElement): void {
   const style = getComputedStyle(host);
@@ -279,11 +321,19 @@ export function applySwatchColours(host: HTMLElement): void {
     resolve(host, style.getPropertyValue(name))
   ).filter((background): background is Rgb => background !== null);
   for (const colour of MARK_COLOURS) {
-    const property = swatchProperty(colour);
-    if (backgrounds.length === 0) {
-      host.style.removeProperty(property);
-      continue;
+    const bars: [string, number][] = [
+      [swatchProperty(colour), MIN_CONTRAST],
+      [swatchFillProperty(colour), MIN_FILL]
+    ];
+    for (const [property, bar] of bars) {
+      if (backgrounds.length === 0) {
+        host.style.removeProperty(property);
+        continue;
+      }
+      host.style.setProperty(
+        property,
+        contrasting(HUE[colour], backgrounds, bar)
+      );
     }
-    host.style.setProperty(property, contrasting(HUE[colour], backgrounds));
   }
 }

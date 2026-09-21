@@ -330,38 +330,68 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 
 /*
  | A swatch is not the wash above it. That wash is close to the page by
- | design, and on a ten pixel square it is not a colour anybody can name, so a
- | swatch stands at three to one against the panel behind it instead
- | (ACC-NOTES-177). src/swatch.ts walks each hue in lightness against the
- | background the page carries and writes the six properties on the body. The
- | value written here is the light theme's answer, which shows until that has
- | run and wherever no background can be read at all; a jest check holds each
- | one to what the walk gives for that theme, so a retuned hue cannot leave a
- | fallback of another colour behind.
+ | design, and on a ten pixel square it is not a colour anybody can name, so
+ | the swatch stands at three to one against the panel behind it instead
+ | (ACC-NOTES-177). The bar is carried by the rim, which is the boundary of
+ | the object it is asked about: held to it the fill stops being the hue and
+ | six such fills in a column pull the eye off the text (DEF-NOTES-112), so
+ | the fill is the hue held only to the floor that keeps it off the page.
+ |
+ | src/swatch.ts walks each hue in lightness against the background the page
+ | carries and writes the twelve properties on the body. Each rule here binds
+ | one colour's pair to the two names the swatch and the bar are painted
+ | from, and the values named are the light theme's answers, which show until
+ | the walk has run and wherever no background can be read at all; a jest
+ | check holds each one to what the walk gives for that theme, so a retuned
+ | hue cannot leave a fallback of another colour behind. On a dark page every
+ | hue clears three to one unwalked, so rim and fill are both the hue there
+ | and the swatch is a plain colour chip.
+ |
+ | The background-color is the rim: it is what the bar of an unanchored mark
+ | takes (ACC-NOTES-180), that bar being three pixels wide with no inside to
+ | fill. The swatch square overrides it further down the file.
  */
 
 .jp-AdvancedMd-swatch-yellow {
-  background-color: var(--jp-AdvancedMd-swatch-yellow, #9c890a);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-yellow, #9c890a);
+  --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-yellow, #dec40e);
+
+  background-color: var(--jp-AdvancedMd-swatch-rim);
 }
 
 .jp-AdvancedMd-swatch-blue {
-  background-color: var(--jp-AdvancedMd-swatch-blue, #0f70f0);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-blue, #0f70f0);
+  --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-blue, #0f70f0);
+
+  background-color: var(--jp-AdvancedMd-swatch-rim);
 }
 
 .jp-AdvancedMd-swatch-pink {
-  background-color: var(--jp-AdvancedMd-swatch-pink, #f631b1);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-pink, #f631b1);
+  --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-pink, #f631b1);
+
+  background-color: var(--jp-AdvancedMd-swatch-rim);
 }
 
 .jp-AdvancedMd-swatch-orange {
-  background-color: var(--jp-AdvancedMd-swatch-orange, #c9740d);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-orange, #c9740d);
+  --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-orange, #f19422);
+
+  background-color: var(--jp-AdvancedMd-swatch-rim);
 }
 
 .jp-AdvancedMd-swatch-red {
-  background-color: var(--jp-AdvancedMd-swatch-red, #e61e46);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-red, #e61e46);
+  --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-red, #e61e46);
+
+  background-color: var(--jp-AdvancedMd-swatch-rim);
 }
 
 .jp-AdvancedMd-swatch-green {
-  background-color: var(--jp-AdvancedMd-swatch-green, #179f26);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-green, #179f26);
+  --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-green, #1ed232);
+
+  background-color: var(--jp-AdvancedMd-swatch-rim);
 }
 
 /*
@@ -698,11 +728,18 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   align-items: baseline;
 }
 
+/*
+ | The square of a row takes the hue as its fill and the rim carries the
+ | contrast bar (DEF-NOTES-112). The rim is an inset shadow and not a border,
+ | so the square keeps the ten pixels the menu icon is drawn to.
+ */
 .jp-AdvancedMd-notesSwatch {
   flex: 0 0 auto;
   width: 10px;
   height: 10px;
+  background-color: var(--jp-AdvancedMd-swatch-fill);
   border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--jp-AdvancedMd-swatch-rim);
 }
 
 .jp-AdvancedMd-notesPassage {

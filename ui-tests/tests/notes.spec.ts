@@ -566,9 +566,9 @@ test.describe('marking a passage', () => {
   test('ACC-NOTES-121 draws each Mark entry in the colour it paints, in both themes', async ({
     page
   }) => {
-    // The colour of a swatch is the mark's hue taken to the contrast bar
-    // (ACC-NOTES-177), so the entry's fill is the property the page worked
-    // out and never the theme's icon grey.
+    // A swatch is the mark's hue for its fill and the walked colour for its
+    // rim (ACC-NOTES-177, DEF-NOTES-112), so the entry takes the two
+    // properties the page worked out and never the theme's icon grey.
     const swatchFills = () =>
       page.evaluate(() =>
         Array.from(
@@ -577,32 +577,59 @@ test.describe('marking a passage', () => {
           )
         ).map(rect => getComputedStyle(rect).fill)
       );
-    const worked = () =>
+    const swatchRims = () =>
       page.evaluate(() =>
-        ['yellow', 'blue', 'pink', 'orange', 'red', 'green'].map(colour => {
-          const probe = document.createElement('span');
-          probe.style.backgroundColor = getComputedStyle(document.body)
-            .getPropertyValue(`--jp-AdvancedMd-swatch-${colour}`)
-            .trim();
-          document.body.appendChild(probe);
-          const resolved = getComputedStyle(probe).backgroundColor;
-          probe.remove();
-          return resolved;
-        })
+        Array.from(
+          document.querySelectorAll(
+            '.lm-Menu-item[data-command="advanced-markdown-viewer:mark"] .lm-Menu-itemIcon rect'
+          )
+        ).map(rect => getComputedStyle(rect).stroke)
       );
-    const readBoth = async (): Promise<[string[], string[]]> => {
+    const written = (property: string) =>
+      page.evaluate(
+        name =>
+          ['yellow', 'blue', 'pink', 'orange', 'red', 'green'].map(colour => {
+            const probe = document.createElement('span');
+            probe.style.backgroundColor = getComputedStyle(document.body)
+              .getPropertyValue(`${name}${colour}`)
+              .trim();
+            document.body.appendChild(probe);
+            const resolved = getComputedStyle(probe).backgroundColor;
+            probe.remove();
+            return resolved;
+          }),
+        property
+      );
+    const worked = () => written('--jp-AdvancedMd-swatch-fill-');
+    const rims = () => written('--jp-AdvancedMd-swatch-');
+    const readAll = async (): Promise<string[][]> => {
       await openMenu(page, await select(page, P1));
       await openMarkMenu(page);
-      const pair: [string[], string[]] = [await swatchFills(), await worked()];
+      const read = [
+        await swatchFills(),
+        await worked(),
+        await swatchRims(),
+        await rims()
+      ];
       await closeMenus(page);
-      return pair;
+      return read;
     };
 
-    // The six the light theme works out, which style/base.css also names as
-    // its fallbacks and a jest check holds to the walk's own answer. Reading
-    // the property back would agree with the fill whatever the walk gave, so
-    // the values themselves are named here.
-    const lightSwatches = [
+    // The six fills the light theme works out, and the six rims beside them.
+    // style/base.css names both sets as its fallbacks and a jest check holds
+    // each to the walk's own answer. Reading the property back would agree
+    // with the icon whatever the walk gave, so the values are named here.
+    // Five of the six fills are the hue itself; yellow alone is walked, and
+    // every rim but blue's, pink's and red's is.
+    const lightFills = [
+      'rgb(222, 196, 14)',
+      'rgb(15, 112, 240)',
+      'rgb(246, 49, 177)',
+      'rgb(241, 148, 34)',
+      'rgb(230, 30, 70)',
+      'rgb(30, 210, 50)'
+    ];
+    const lightRims = [
       'rgb(156, 137, 10)',
       'rgb(15, 112, 240)',
       'rgb(246, 49, 177)',
@@ -610,15 +637,19 @@ test.describe('marking a passage', () => {
       'rgb(230, 30, 70)',
       'rgb(23, 159, 38)'
     ];
-    const [light, lightWorked] = await readBoth();
+    const [light, lightWorked, lightRim, lightRimWorked] = await readAll();
     expect(light).toEqual(lightWorked);
-    expect(light).toEqual(lightSwatches);
+    expect(light).toEqual(lightFills);
+    expect(lightRim).toEqual(lightRimWorked);
+    expect(lightRim).toEqual(lightRims);
 
     // The dark theme recolours JupyterLab's own icons; the swatches keep
     // the colour the mark paints, worked out again for the new background.
+    // Every hue clears the rim bar there unwalked, so the two agree.
     await page.theme.setDarkTheme();
-    const [dark, darkWorked] = await readBoth();
+    const [dark, darkWorked, darkRim, darkRimWorked] = await readAll();
     expect(dark).toEqual(darkWorked);
+    expect(darkRim).toEqual(darkRimWorked);
     expect(new Set(dark).size).toBe(6);
     expect(dark).not.toEqual(light);
   });
@@ -628,7 +659,9 @@ test.describe('marking a passage', () => {
   }) => {
     // Every swatch the page shows, against the first background behind it
     // that is not transparent: the row where the row carries one, the panel
-    // or the menu where it does not.
+    // or the menu where it does not. The rim is what the bar is measured on
+    // - it is the boundary of the object - and the fill is measured against
+    // the floor that keeps it off the page (DEF-NOTES-112).
     const ratios = () =>
       page.evaluate(() => {
         const luminance = (colour: string): number => {
@@ -659,28 +692,50 @@ test.describe('marking a passage', () => {
           }
           return getComputedStyle(document.body).backgroundColor;
         };
-        const found = Array.from(
-          document.querySelectorAll('.jp-AdvancedMd-notesSwatch')
-        ).map(swatch =>
-          ratio(
-            getComputedStyle(swatch).backgroundColor,
-            backdrop(swatch.parentElement)
+        // The rim of a row's swatch is an inset shadow, so its colour is
+        // the one colour the shadow names.
+        const rim = (node: Element): string =>
+          /rgba?\([^)]*\)/.exec(getComputedStyle(node).boxShadow)![0];
+        const rects = Array.from(
+          document.querySelectorAll(
+            '.lm-Menu-item[data-command="advanced-markdown-viewer:mark"] .lm-Menu-itemIcon rect'
           )
         );
-        return found.concat(
-          Array.from(
-            document.querySelectorAll(
-              '.lm-Menu-item[data-command="advanced-markdown-viewer:mark"] .lm-Menu-itemIcon rect'
-            )
-          ).map(rect => ratio(getComputedStyle(rect).fill, backdrop(rect)))
+        const squares = Array.from(
+          document.querySelectorAll('.jp-AdvancedMd-notesSwatch')
         );
+        return {
+          rims: squares
+            .map(swatch => ratio(rim(swatch), backdrop(swatch.parentElement)))
+            .concat(
+              rects.map(rect =>
+                ratio(getComputedStyle(rect).stroke, backdrop(rect))
+              )
+            ),
+          fills: squares
+            .map(swatch =>
+              ratio(
+                getComputedStyle(swatch).backgroundColor,
+                backdrop(swatch.parentElement)
+              )
+            )
+            .concat(
+              rects.map(rect =>
+                ratio(getComputedStyle(rect).fill, backdrop(rect))
+              )
+            )
+        };
       });
 
     const bar = async (expected: number): Promise<void> => {
       const measured = await ratios();
-      expect(measured.length).toBe(expected);
-      for (const measured_ of measured) {
-        expect(measured_).toBeGreaterThanOrEqual(3);
+      expect(measured.rims.length).toBe(expected);
+      expect(measured.fills.length).toBe(expected);
+      for (const rim of measured.rims) {
+        expect(rim).toBeGreaterThanOrEqual(3);
+      }
+      for (const fill of measured.fills) {
+        expect(fill).toBeGreaterThanOrEqual(1.5);
       }
     };
 
@@ -2748,8 +2803,12 @@ test.describe('a document that already carries marks', () => {
       return {
         width: box.width,
         height: box.height,
-        radius: style.borderRadius,
-        background: style.backgroundColor
+        radius: parseFloat(style.borderRadius),
+        background: style.backgroundColor,
+        rim: /rgba?\([^)]*\)/.exec(style.boxShadow)![0],
+        thickness: parseFloat(
+          /(\d+(?:\.\d+)?)px inset$/.exec(style.boxShadow)![1]
+        )
       };
     });
     await openMenu(page, await select(page, P1));
@@ -2763,18 +2822,26 @@ test.describe('a document that already carries marks', () => {
       return {
         width: box.width,
         height: box.height,
-        radius: `${rect.getAttribute('rx')}px`,
+        radius: Number(rect.getAttribute('rx')),
         fill: style.fill,
+        rim: style.stroke,
+        thickness: parseFloat(style.strokeWidth),
         alpha: Number(style.fillOpacity)
       };
     });
     await closeMenus(page);
-    expect(icon.width).toBeCloseTo(swatch.width, 0);
-    expect(icon.height).toBeCloseTo(swatch.height, 0);
-    expect(icon.radius).toBe(swatch.radius);
-    // Both read the one property the page works out (ACC-NOTES-177), so the
-    // colours are equal and neither carries an alpha of its own.
+    // An SVG stroke straddles the edge it is drawn on, where the panel draws
+    // its rim inside the square, so the icon's painted square is its rect
+    // plus one stroke and its painted corner its rx plus half of one
+    // (DEF-NOTES-112). The two rims are the same thickness.
+    expect(icon.thickness).toBe(swatch.thickness);
+    expect(icon.width + icon.thickness).toBeCloseTo(swatch.width, 0);
+    expect(icon.height + icon.thickness).toBeCloseTo(swatch.height, 0);
+    expect(icon.radius + icon.thickness / 2).toBe(swatch.radius);
+    // Both read the two properties the page works out (ACC-NOTES-177), so
+    // the colours are equal and the fill carries no alpha of its own.
     expect(icon.fill).toBe(swatch.background);
+    expect(icon.rim).toBe(swatch.rim);
     expect(icon.alpha).toBe(1);
   });
 

@@ -61,12 +61,19 @@ import {
   ADD_CLASS
 } from '../notes-panel';
 import { IMark, INoteEntry, MARK_COLOURS, MarkColour } from '../marks';
-import { HUE, swatchFallback, swatchProperty } from '../swatch';
+import {
+  HUE,
+  swatchFallback,
+  swatchFillFallback,
+  swatchFillProperty,
+  swatchProperty
+} from '../swatch';
 import {
   CROSSED_EYE_ICON,
   MARK_ICONS,
   OPEN_EYE_ICON,
   SWATCH_RADIUS,
+  SWATCH_RIM,
   SWATCH_SIZE
 } from '../icons';
 
@@ -3011,24 +3018,57 @@ describe('the mark colours in the stylesheet', () => {
     expect(declaration('.jp-AdvancedMd-notesSwatch', 'border-radius')).toBe(
       `${SWATCH_RADIUS}px`
     );
+    // The rim carries the contrast bar and the fill carries the hue
+    // (DEF-NOTES-112). The panel draws its rim inside the square, so the
+    // square stays the size the menu icon is drawn to.
+    //
+    // The square's rule and the colour rule both set a background at one
+    // class of specificity, so the square wins on order alone: were the
+    // colour rule to move below it, every swatch would be painted the rim
+    // colour and no test that only measures the bar would notice.
+    expect(css.indexOf('\n.jp-AdvancedMd-notesSwatch {')).toBeGreaterThan(
+      css.indexOf(`\n.${swatchClass('yellow')} {`)
+    );
+    expect(declaration('.jp-AdvancedMd-notesSwatch', 'background-color')).toBe(
+      'var(--jp-AdvancedMd-swatch-fill)'
+    );
+    expect(declaration('.jp-AdvancedMd-notesSwatch', 'box-shadow')).toBe(
+      `inset 0 0 0 ${SWATCH_RIM}px var(--jp-AdvancedMd-swatch-rim)`
+    );
     for (const colour of MARK_COLOURS) {
       const rect = /<rect ([^>]*)\/>/.exec(MARK_ICONS[colour].svgstr)![1];
       const attribute = (name: string): string =>
         new RegExp(`${name}="([^"]*)"`).exec(rect)![1];
-      expect(attribute('width')).toBe(String(SWATCH_SIZE));
-      expect(attribute('height')).toBe(String(SWATCH_SIZE));
-      expect(attribute('rx')).toBe(String(SWATCH_RADIUS));
-      expect(rect).not.toContain('stroke');
-      // The menu icon takes the colour the panel swatch takes, from the one
-      // property src/swatch.ts writes, and carries no alpha of its own
+      // An SVG stroke straddles the edge it is drawn on, so the rect is
+      // pulled in by half the rim at every side and the two renderings cover
+      // the same ten pixels.
+      expect(attribute('stroke-width')).toBe(String(SWATCH_RIM));
+      expect(Number(attribute('width')) + SWATCH_RIM).toBe(SWATCH_SIZE);
+      expect(Number(attribute('height')) + SWATCH_RIM).toBe(SWATCH_SIZE);
+      expect(Number(attribute('x')) - SWATCH_RIM / 2).toBe(
+        (16 - SWATCH_SIZE) / 2
+      );
+      expect(Number(attribute('y')) - SWATCH_RIM / 2).toBe(
+        (16 - SWATCH_SIZE) / 2
+      );
+      expect(Number(attribute('rx')) + SWATCH_RIM / 2).toBe(SWATCH_RADIUS);
+      // The menu icon takes the two colours the panel swatch takes, from the
+      // properties src/swatch.ts writes, and carries no alpha of its own
       // (ACC-NOTES-177).
       expect(attribute('fill')).toBe(
+        `var(${swatchFillProperty(colour)}, ${swatchFillFallback(colour)})`
+      );
+      expect(attribute('stroke')).toBe(
         `var(${swatchProperty(colour)}, ${swatchFallback(colour)})`
       );
       expect(rect).not.toContain('fill-opacity');
+      expect(rect).not.toContain('stroke-opacity');
       expect(
-        declaration(`.${swatchClass(colour)}`, 'background-color')
+        declaration(`.${swatchClass(colour)}`, '--jp-AdvancedMd-swatch-rim')
       ).toContain(`var(${swatchProperty(colour)}`);
+      expect(
+        declaration(`.${swatchClass(colour)}`, '--jp-AdvancedMd-swatch-fill')
+      ).toContain(`var(${swatchFillProperty(colour)}`);
     }
   });
 
@@ -3043,14 +3083,19 @@ describe('the mark colours in the stylesheet', () => {
         .map(index => Number(painted[index]).toString(16).padStart(2, '0'))
         .join('');
       expect(HUE[colour]).toBe(`#${hex}`);
-      // The fallback the rule carries is what shows where the properties
-      // are not on the page. It is the walk's own answer for the light
-      // theme, so a retuned hue cannot leave a fallback of another colour
-      // behind: the bar alone would not catch that.
-      const fallback = /,\s*(#[0-9a-f]{6})\)$/.exec(
-        declaration(`.${swatchClass(colour)}`, 'background-color')
-      )!;
-      expect(fallback[1]).toBe(swatchFallback(colour));
+      // The fallbacks the rule carries are what shows where the properties
+      // are not on the page. Each is the walk's own answer for the light
+      // theme at that colour's own bar, so a retuned hue cannot leave a
+      // fallback of another colour behind: the bar alone would not catch
+      // that.
+      const named = (property: string): string =>
+        /,\s*(#[0-9a-f]{6})\)$/.exec(
+          declaration(`.${swatchClass(colour)}`, property)
+        )![1];
+      expect(named('--jp-AdvancedMd-swatch-rim')).toBe(swatchFallback(colour));
+      expect(named('--jp-AdvancedMd-swatch-fill')).toBe(
+        swatchFillFallback(colour)
+      );
     }
   });
 

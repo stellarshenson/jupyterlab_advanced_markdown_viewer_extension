@@ -5,7 +5,9 @@ import {
   contrasting,
   HUE,
   MIN_CONTRAST,
+  MIN_FILL,
   parse,
+  swatchFillProperty,
   swatchProperty
 } from '../swatch';
 
@@ -39,6 +41,51 @@ describe('the colour a swatch is drawn in', () => {
     // Pinned as a number: every case below reads the constant, so a change
     // to it would move the bar and the cases with it (ACC-NOTES-177).
     expect(MIN_CONTRAST).toBe(3);
+  });
+
+  it('holds the fill to a floor that sits below the rim bar', () => {
+    // The rim carries the bar a graphical object is asked for. The fill is
+    // held only to the floor that keeps it off the page, because meeting the
+    // bar with the fill costs the hue (DEF-NOTES-112).
+    expect(MIN_FILL).toBe(1.5);
+    expect(MIN_FILL).toBeLessThan(MIN_CONTRAST);
+  });
+
+  it('stands the fill at that floor against both backgrounds of each theme', () => {
+    for (const colour of MARK_COLOURS) {
+      for (const backgrounds of [LIGHT, DARK]) {
+        const drawn = parse(contrasting(HUE[colour], backgrounds, MIN_FILL))!;
+        for (const background of backgrounds) {
+          expect(contrast(drawn, background)).toBeGreaterThanOrEqual(MIN_FILL);
+        }
+      }
+    }
+  });
+
+  it('walks the fill no further from the hue than the rim goes', () => {
+    for (const colour of MARK_COLOURS) {
+      const [, , lightness] = hsl(HUE[colour]);
+      for (const backgrounds of [LIGHT, DARK]) {
+        const [, , fill] = hsl(contrasting(HUE[colour], backgrounds, MIN_FILL));
+        const [, , rim] = hsl(contrasting(HUE[colour], backgrounds));
+        expect(Math.abs(fill - lightness)).toBeLessThanOrEqual(
+          Math.abs(rim - lightness)
+        );
+      }
+    }
+  });
+
+  it('leaves every fill the hue itself on a dark page', () => {
+    // Every mark colour clears the rim bar on a dark page unwalked, so both
+    // colours of a swatch are the hue there and the square is a plain colour
+    // chip. On a light page the floor moves yellow alone.
+    for (const colour of MARK_COLOURS) {
+      expect(contrasting(HUE[colour], DARK, MIN_FILL)).toBe(HUE[colour]);
+    }
+    const moved = MARK_COLOURS.filter(
+      colour => contrasting(HUE[colour], LIGHT, MIN_FILL) !== HUE[colour]
+    );
+    expect(moved).toEqual(['yellow']);
   });
 
   it('stands at the bar against both backgrounds of the light theme', () => {
@@ -194,6 +241,20 @@ describe('the swatch properties on the page', () => {
     }
   });
 
+  it('writes a fill beside each rim, each standing at its own bar', () => {
+    const node = host('#ffffff', '#eeeeee');
+    applySwatchColours(node);
+    for (const colour of MARK_COLOURS) {
+      const fill = node.style.getPropertyValue(swatchFillProperty(colour));
+      expect(fill).not.toBe('');
+      for (const background of LIGHT) {
+        expect(contrast(parse(fill)!, background)).toBeGreaterThanOrEqual(
+          MIN_FILL
+        );
+      }
+    }
+  });
+
   it('answers a theme change with the colours that theme asks for', () => {
     const node = host('#ffffff', '#eeeeee');
     applySwatchColours(node);
@@ -251,12 +312,16 @@ describe('the swatch properties on the page', () => {
       // light theme's answer and stands at the bar; the unwalked hue,
       // which is what deriving a colour from nothing gives, does not.
       expect(node.style.getPropertyValue(swatchProperty(colour))).toBe('');
+      expect(node.style.getPropertyValue(swatchFillProperty(colour))).toBe('');
     }
   });
 
-  it('names the property after the colour', () => {
+  it('names each property after the colour', () => {
     expect(swatchProperty('pink' as MarkColour)).toBe(
       '--jp-AdvancedMd-swatch-pink'
+    );
+    expect(swatchFillProperty('pink' as MarkColour)).toBe(
+      '--jp-AdvancedMd-swatch-fill-pink'
     );
   });
 });

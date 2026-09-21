@@ -4,8 +4,8 @@
  *
  * Each mark colour has a swatch in that colour, so a reader picking a colour
  * from the context menu sees it before choosing; the swatch is the one the
- * panel shows on a row, drawn to the same geometry and filled from the same
- * property, which src/swatch.ts holds to a contrast bar. The note and
+ * panel shows on a row, drawn to the same geometry and painted from the same
+ * two properties, which src/swatch.ts holds to their bars. The note and
  * panel entries carry JupyterLab's own icons for editing, listing and
  * closing, so they read like the rest of the menu.
  */
@@ -27,29 +27,45 @@ import {
 
 import { MARK_COLOURS, MarkColour, PanelState } from './marks';
 
-import { swatchFallback, swatchProperty } from './swatch';
+import {
+  swatchFallback,
+  swatchFillFallback,
+  swatchFillProperty,
+  swatchProperty
+} from './swatch';
 
 /**
  * The geometry of the panel's row swatch (.jp-AdvancedMd-notesSwatch in
- * style/base.css): a 10 by 10 square with 2 px corners, here centred in the
- * 16 by 16 box of a menu icon. The stylesheet test holds the two together.
+ * style/base.css): a 10 by 10 square with 2 px corners and a 1 px rim, here
+ * centred in the 16 by 16 box of a menu icon. The stylesheet test holds the
+ * two together.
  */
 export const SWATCH_SIZE = 10;
 export const SWATCH_RADIUS = 2;
+export const SWATCH_RIM = 1;
 
 /**
- * The panel's row swatch in one colour, as a menu icon. The fallback is the
- * one the stylesheet gives the panel's own swatch, so the two renderings of
- * one swatch degrade alike where the properties are not on the page; without
- * it the rect would inherit the icon grey of whatever menu holds it.
+ * The panel's row swatch in one colour, as a menu icon: the hue as the fill
+ * and the rim carrying the contrast bar, as on a row (DEF-NOTES-112). An SVG
+ * stroke straddles the edge it is drawn on, where the panel's rim is an
+ * inset shadow drawn inside it, so the rect is pulled in by half the rim and
+ * the two occupy the same ten pixels.
+ *
+ * The fallbacks are the ones the stylesheet gives the panel's own swatch, so
+ * the two renderings of one swatch degrade alike where the properties are
+ * not on the page; without them the rect would inherit the icon grey of
+ * whatever menu holds it.
  */
 function swatch(colour: MarkColour): string {
-  const offset = (16 - SWATCH_SIZE) / 2;
+  const offset = (16 - SWATCH_SIZE) / 2 + SWATCH_RIM / 2;
+  const size = SWATCH_SIZE - SWATCH_RIM;
   return (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">' +
-    `<rect x="${offset}" y="${offset}" width="${SWATCH_SIZE}" ` +
-    `height="${SWATCH_SIZE}" rx="${SWATCH_RADIUS}" ` +
-    `fill="var(${swatchProperty(colour)}, ${swatchFallback(colour)})"/></svg>`
+    `<rect x="${offset}" y="${offset}" width="${size}" ` +
+    `height="${size}" rx="${SWATCH_RADIUS - SWATCH_RIM / 2}" ` +
+    `fill="var(${swatchFillProperty(colour)}, ${swatchFillFallback(colour)})" ` +
+    `stroke="var(${swatchProperty(colour)}, ${swatchFallback(colour)})" ` +
+    `stroke-width="${SWATCH_RIM}"/></svg>`
   );
 }
 

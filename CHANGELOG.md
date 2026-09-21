@@ -2,6 +2,14 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.20] - 2026-09-21
+
+The colour squares in the notes panel keep the mark's own colour instead of a darkened stand-in.
+
+### Changed
+
+- The colour square on a notes panel row, and on a Mark menu entry, is the mark's own colour with a thin rim around it: the rim holds the 3 to 1 a graphical object is asked for, so the colour inside it no longer has to be darkened to reach that bar. In the light theme yellow, orange and green stop arriving as muddied versions of themselves; in the dark theme nothing changes
+
 ## [1.0.19] - 2026-09-21
 
 A mark whose passage a change took away still shows where it belonged.
