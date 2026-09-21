@@ -915,6 +915,7 @@ Defects in how the viewer coexists with the sibling Markdown extensions
   - root-cause: 2026-09-15T08:34:33Z @kj `_restoreScroll` in `src/controller.ts` puts the reader's position back on an animation frame and again on a 150 ms timer (`LATE_SCROLL_RESTORE_MS`), while the table-of-contents fix starts a smooth scroll to the heading about 100 ms after each render; the two run against each other and whichever finishes last decides where the reader ends up, so a slower machine or a loaded suite flips it. The race itself was recorded as declined under ACC-COMPAT-108; this is the failure it leaves live
   - log: 2026-09-15T08:34:33Z @kj added
   - log: 2026-09-15T08:35:13Z @kj edited test-tags (added)
+  - log: 2026-09-20T14:41:25Z @kj seen again on the 2026-09-20 build carrying ACC-NOTES-180, the same 1672 px jump; run alone with --repeat-each=3 it failed once and passed twice, so it stands intermittent as recorded and is not a regression of that work, which paints only unanchored marks and this case has none (logs/galata-180d-full.log, logs/galata-180e-probe.log)
 
 ## Copying rendered content `COPY`
 

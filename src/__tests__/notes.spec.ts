@@ -62,7 +62,14 @@ import {
   SELECTING_CLASS,
   NotesController
 } from '../notes';
-import { MARK_CLASS, MARK_CLOSED_CLASS, NotesPanel } from '../notes-panel';
+import {
+  CARET_CLASS,
+  colourClass,
+  MARK_CLASS,
+  MARK_CLOSED_CLASS,
+  NotesPanel,
+  swatchClass
+} from '../notes-panel';
 import { fetchAPI } from '../request';
 
 /** The write route stand-in. */
@@ -371,6 +378,10 @@ function collapseSelection(anchorNode: Node): void {
 /** The mark spans of a render, in document order. */
 const painted = (root: HTMLElement): HTMLElement[] =>
   Array.from(root.querySelectorAll<HTMLElement>(`.${MARK_CLASS}`));
+
+/** The bars standing for unanchored marks, in document order. */
+const bars = (root: HTMLElement): HTMLElement[] =>
+  Array.from(root.querySelectorAll<HTMLElement>(`.${CARET_CLASS}`));
 
 const BARE = 'Alpha beta gamma delta.\n';
 const BARE_HTML = '<p>Alpha beta gamma delta.</p>';
@@ -1433,6 +1444,464 @@ describe('NotesController', () => {
       h.render('<p>Nothing of that document is here.</p>');
 
       expect(h.controller.marks[0].unanchored).toBe(true);
+    });
+
+    it('stands a bar where an unanchored mark sits (ACC-NOTES-180)', async () => {
+      const h = open(marked());
+      await ready();
+      // The rewrite took the marked words out of the render and left the
+      // words around them, which is what the place is read from.
+      h.render('<p>Alpha delta.</p>');
+
+      const [bar] = bars(h.root);
+      expect(bar.dataset.mark).toBe(ONE);
+      expect(bar.classList.contains(swatchClass('yellow'))).toBe(true);
+      // The swatch colour and not the wash: a wash of a fifth on two pixels
+      // is not a colour anybody can see.
+      expect(bar.classList.contains(colourClass('yellow'))).toBe(false);
+      // The bar carries no text, so the document reads as it did.
+      expect(h.root.textContent).toBe('Alpha delta.');
+      expect(bar.previousSibling?.nodeValue).toBe('Alpha');
+    });
+
+    it('takes the bar out when the mark is anchored again (ACC-NOTES-180)', async () => {
+      const h = open(marked());
+      await ready();
+      h.render('<p>Alpha delta.</p>');
+      expect(bars(h.root)).toHaveLength(1);
+
+      h.render(markedHtml());
+
+      expect(bars(h.root)).toHaveLength(0);
+      expect(painted(h.root)[0].textContent).toBe('beta gamma');
+    });
+
+    it('stands the bar again where the mark has moved to (ACC-NOTES-180)', async () => {
+      const h = open(
+        `One two Alpha <!-- mark:${ONE} note colour=yellow -->beta gamma` +
+          `<!-- /mark:${ONE} --> delta.\n`
+      );
+      await ready();
+      h.render('<p>One two Alpha delta.</p>');
+      expect(bars(h.root)[0].previousSibling?.nodeValue).toBe('One two Alpha');
+
+      // The mark is unanchored in this render too and nothing else about it
+      // changed, so only the place tells the two paints apart.
+      h.render('<p>Zero One two Alpha delta.</p>');
+
+      expect(bars(h.root)[0].previousSibling?.nodeValue).toBe(
+        'Zero One two Alpha'
+      );
+    });
+
+    it('rebuilds the bar when a note is written on an unanchored mark (ACC-NOTES-180)', async () => {
+      const h = open(marked());
+      await ready();
+      h.render('<p>Alpha delta.</p>');
+      // The words the render does not hold, which is what the reader cannot
+      // read off the page beside the bar.
+      expect(bars(h.root)[0].title).toBe('unanchored note\nbeta gamma');
+
+      // The note goes into the opening marker, so nothing the render holds
+      // changes and no render follows: only the paint's own record of what
+      // it drew tells this paint from the one before it.
+      await h.controller.addNote(ONE, 'Where did this go?');
+
+      expect(bars(h.root)[0].title).toBe(
+        'unanchored note\nbeta gamma\nuser: Where did this go?'
+      );
+    });
+
+    it('stands the bar inside the block it belongs to, not in the space between blocks (ACC-NOTES-180)', async () => {
+      const h = open(
+        `- item one <!-- mark:${ONE} note colour=yellow -->marked words` +
+          `<!-- /mark:${ONE} -->\n- item two\n`
+      );
+      await ready();
+      // The renderer writes a newline between the children of a list, and a
+      // bar there would be a child of the ul: an inline-block among block
+      // children takes a line of its own, and it is not inside a block at
+      // all, which the sibling extensions count on (COMPAT).
+      h.render('<ul>\n<li>item one</li>\n<li>item two</li>\n</ul>');
+
+      const [bar] = bars(h.root);
+      expect(bar.parentElement?.tagName).toBe('LI');
+      expect(bar.parentElement?.textContent).toBe('item one');
+    });
+
+    it('stands the bar inside the paragraph of a blockquote it belongs to (ACC-NOTES-180)', async () => {
+      const h = open(
+        `> quoted words <!-- mark:${ONE} note colour=yellow -->marked` +
+          `<!-- /mark:${ONE} -->\n\nAfter.\n`
+      );
+      await ready();
+      h.render(
+        '<blockquote>\n<p>quoted words</p>\n</blockquote>\n<p>After.</p>'
+      );
+
+      const [bar] = bars(h.root);
+      expect(bar.parentElement?.tagName).toBe('P');
+      expect(bar.parentElement?.parentElement?.tagName).toBe('BLOCKQUOTE');
+    });
+
+    it('stands no bar while a change is still decorated (ACC-NOTES-180)', async () => {
+      const h = open(marked());
+      await ready();
+      // The decoration holds the text it wraps out of the capture, so this
+      // render says nothing about the mark: not that it is unanchored, and
+      // not where it sits either. A bar here would tell the reader the
+      // passage is not in the view beside the passage.
+      h.render(
+        '<p>Alpha <span class="jp-AdvancedMd-decoration jp-AdvancedMd-added">beta gamma</span> delta.</p>'
+      );
+      expect(h.controller.marks[0].unanchored).toBe(false);
+      expect(bars(h.root)).toHaveLength(0);
+
+      // Once the change has settled the render is the document again, and
+      // this one does not hold the passage.
+      h.render('<p>Alpha delta.</p>');
+
+      expect(h.controller.marks[0].unanchored).toBe(true);
+      expect(bars(h.root)).toHaveLength(1);
+    });
+
+    it('stands a bar that falls inside a painted passage inside that paint (ACC-NOTES-180)', async () => {
+      // The second mark lost its closing marker, so it has no passage and
+      // stands where its opening marker sits, which is inside the first
+      // mark's passage. A bar between the two spans the cut makes would
+      // show the page through the middle of a highlighted phrase.
+      const h = open(
+        `Alpha <!-- mark:${ONE} note colour=blue -->beta gamma ` +
+          `<!-- mark:${TWO} note colour=red -->delta<!-- /mark:${ONE} --> epsilon.\n`
+      );
+      await ready();
+      h.render('<p>Alpha beta gamma delta epsilon.</p>');
+
+      const [bar] = bars(h.root);
+      expect(bar.dataset.mark).toBe(TWO);
+      expect(bar.parentElement?.classList.contains(MARK_CLASS)).toBe(true);
+      expect(bar.parentElement?.dataset.mark).toBe(ONE);
+    });
+
+    it('draws the bar muted when its mark is closed with the closed shown (ACC-NOTES-180)', async () => {
+      const h = open(marked());
+      await ready();
+      h.controller.setShowClosed(true);
+      h.render('<p>Alpha delta.</p>');
+      expect(bars(h.root)[0].classList.contains(MARK_CLOSED_CLASS)).toBe(false);
+
+      // Closing changes nothing else about the bar - same colour, same
+      // place, same note - so the paint's own record of what it drew is the
+      // only thing that can tell this paint from the one before it.
+      await h.controller.setClosed(ONE, true);
+
+      expect(bars(h.root)[0].classList.contains(MARK_CLOSED_CLASS)).toBe(true);
+    });
+
+    it('stands the bar beside a link, never inside it (ACC-NOTES-180)', async () => {
+      const h = open(
+        `See [the spec](https://example.test) ` +
+          `<!-- mark:${ONE} note colour=yellow -->![img](m.png)` +
+          `<!-- /mark:${ONE} --> today.\n`
+      );
+      await ready();
+      // The place is the end of the link's last word, and the space after
+      // the link is a node of the paragraph. Passing that space over as
+      // structure would put the bar inside the anchor, where the underline
+      // is drawn through it and a click on it follows the link.
+      h.render(
+        '<p>See <a href="https://example.test">the spec</a> ' +
+          '<img alt="img" src="m.png"> today.</p>'
+      );
+
+      const [bar] = bars(h.root);
+      expect(bar.parentElement?.tagName).toBe('P');
+      expect(bar.closest('a')).toBeNull();
+      // Beside it means after it. Naming the parent alone cannot tell the
+      // place apart from the one before the link, which is where a rule
+      // that reads a link's absence from the list as a block break puts it.
+      expect(bar.previousElementSibling?.tagName).toBe('A');
+    });
+
+    it('never indents the first block of the document (ACC-NOTES-180)', async () => {
+      const h = open(
+        `<!-- mark:${ONE} note colour=yellow -->marked words` +
+          `<!-- /mark:${ONE} --> Alpha beta gamma delta.\n`
+      );
+      await ready();
+      // The mark opens the document, so the place is read from the words
+      // after it and lands on the first word of the first block. There is
+      // no block above to step back to, and a bar left at that offset is
+      // the block's first in-flow content and indents its whole first line.
+      // It steps over the block's first word instead.
+      h.render('<p>Alpha beta gamma delta.</p>');
+
+      const [bar] = bars(h.root);
+      expect(bar.previousSibling?.nodeValue).toBe('Alpha');
+      expect(bar.parentElement?.firstChild).not.toBe(bar);
+    });
+
+    it('stands the bar after a link the mark begins its block with (ACC-NOTES-180)', async () => {
+      const h = open(
+        `First paragraph words standing before the second one here.\n\n` +
+          `[Docs](https://example.test) <!-- mark:${ONE} note colour=yellow -->` +
+          `marked passage words<!-- /mark:${ONE} --> and more text after.\n`
+      );
+      await ready();
+      // The mark's own block opens with a link, so the words before the
+      // marker end inside it. The bar belongs in that block and not in the
+      // paragraph above: the link's text is no place for a bar, but its
+      // absence from the list of places is not a block boundary.
+      h.render(
+        '<p>First paragraph words standing before the second one here.</p>' +
+          '<p><a href="https://example.test">Docs</a> and more text after.</p>'
+      );
+
+      const [bar] = bars(h.root);
+      expect(bar.parentElement?.textContent).toBe('Docs and more text after.');
+      expect(bar.previousElementSibling?.tagName).toBe('A');
+    });
+
+    it('stands the bar before a link the marker is written flush against (ACC-NOTES-180)', async () => {
+      const h = open(
+        `See [the spec today](https://example.test)` +
+          `<!-- mark:${ONE} note colour=yellow -->![pears](m.png)` +
+          `<!-- /mark:${ONE} -->\n`
+      );
+      await ready();
+      // Nothing separates the link from the passage, so the place is the end
+      // of the link's own last word and there is no text after it in the
+      // block. A bar there is drawn with the link's underline through it and
+      // answers the click the link would have answered, so the text before
+      // the link takes it: a word or two early, and outside the link.
+      h.render(
+        '<p>See <a href="https://example.test">the spec today</a>' +
+          '<img alt="pears" src="m.png"></p>'
+      );
+
+      const [bar] = bars(h.root);
+      expect(bar.closest('a')).toBeNull();
+      expect(bar.parentElement?.tagName).toBe('P');
+      expect(bar.previousSibling?.nodeValue).toBe('See ');
+    });
+
+    it('stands the bar at the end of the block above, never at the head of one (ACC-NOTES-180)', async () => {
+      const h = open(
+        `Old lead in words written here before the passage ` +
+          `<!-- mark:${ONE} note colour=yellow -->marked passage words` +
+          `<!-- /mark:${ONE} -->\n\nSecond paragraph words follow along here.\n`
+      );
+      await ready();
+      // The rewrite took the words before the marker as well as the passage,
+      // so the place is read from the words after it and lands on the first
+      // word of the block below. A bar there is that block's first in-flow
+      // content and indents its whole first line, which reads as structure
+      // the document does not have.
+      h.render(
+        '<p>Rewritten entirely with a different opening sentence now.</p>' +
+          '<p>Second paragraph words follow along here.</p>'
+      );
+
+      const [bar] = bars(h.root);
+      expect(bar.parentElement?.textContent).toBe(
+        'Rewritten entirely with a different opening sentence now.'
+      );
+      expect(bar.previousSibling?.nodeValue).toBe(
+        'Rewritten entirely with a different opening sentence now.'
+      );
+      expect(bar.nextSibling).toBeNull();
+    });
+
+    it('names the image on a bar whose passage the source has no words for (ACC-NOTES-180)', async () => {
+      // An agent writing an image with no alt text leaves markers around a
+      // passage of no words at all, so there is nothing of it to quote. The
+      // state word on its own does not say which note the bar belongs to,
+      // so what stands in the passage is named instead.
+      const h = open(
+        `Alpha <!-- mark:${ONE} note colour=yellow -->![](img/m.png)` +
+          `<!-- /mark:${ONE} --> delta.\n`
+      );
+      await ready();
+      h.render('<p>Alpha <img src="img/m.png"> delta.</p>');
+
+      expect(h.controller.marks[0].unanchored).toBe(true);
+      expect(bars(h.root)[0].title).toBe('unanchored note\nimage m.png');
+    });
+
+    it('names the image on a bar though the source gives it a title (ACC-NOTES-180)', async () => {
+      // A title after the target is ordinary Markdown, and it says nothing
+      // about which file the image is.
+      const h = open(
+        `Alpha <!-- mark:${ONE} note colour=yellow -->` +
+          `![](img/m.png "Figure 1")<!-- /mark:${ONE} --> delta.\n`
+      );
+      await ready();
+      h.render('<p>Alpha <img src="img/m.png" title="Figure 1"> delta.</p>');
+
+      expect(bars(h.root)[0].title).toBe('unanchored note\nimage m.png');
+    });
+
+    it('names no file for a reference-style image (ACC-NOTES-180)', async () => {
+      // The brackets carry a label, not a file. Reading the label would tell
+      // the reader the image is `fig` when the file it points at is m.png.
+      const h = open(
+        `Alpha <!-- mark:${ONE} note colour=yellow -->![][fig]` +
+          `<!-- /mark:${ONE} --> delta.\n\n[fig]: img/m.png\n`
+      );
+      await ready();
+      h.render('<p>Alpha <img src="img/m.png"> delta.</p>');
+
+      expect(bars(h.root)[0].title).toBe('unanchored note\nimage');
+    });
+
+    it('names the file alone where the image target carries a query (ACC-NOTES-180)', async () => {
+      // A query string and a fragment are not part of the name, and a whole
+      // URL is longer than the line has room for, which is the reason only
+      // the last segment is taken in the first place.
+      const h = open(
+        `Alpha <!-- mark:${ONE} note colour=yellow -->` +
+          `![](https://example.test/a/chart.png?w=900#top)<!-- /mark:${ONE} --> delta.\n`
+      );
+      await ready();
+      h.render(
+        '<p>Alpha <img src="https://example.test/a/chart.png"> delta.</p>'
+      );
+
+      expect(bars(h.root)[0].title).toBe('unanchored note\nimage chart.png');
+    });
+
+    it('keeps the bar of a mark a decorated change never touched (ACC-NOTES-180)', async () => {
+      const h = open(marked());
+      await ready();
+      h.render('<p>Alpha delta.</p>');
+      expect(bars(h.root)).toHaveLength(1);
+
+      // A change elsewhere is decorated. Holding every bar back would take
+      // away the bar of a mark this change never reached, and with it the
+      // only thing its row has to scroll to, while the row goes on saying
+      // the mark is unanchored.
+      h.render(
+        '<p>Alpha delta. <span class="jp-AdvancedMd-decoration jp-AdvancedMd-added">New sentence.</span></p>'
+      );
+
+      expect(h.controller.marks[0].unanchored).toBe(true);
+      expect(bars(h.root)).toHaveLength(1);
+    });
+
+    it('stands the bar inside the block of a container the renderer wrote (ACC-NOTES-180)', async () => {
+      const h = open(
+        `one two\n\nthree four\n\n<!-- mark:${ONE} note colour=yellow -->` +
+          `marked words<!-- /mark:${ONE} --> Alpha delta.\n`
+      );
+      await ready();
+      // A div around two blocks is what the alerts sibling writes, and what
+      // a document writes by hand with details or figure. Naming the
+      // containers one by one leaves out the ones nobody thought of, so the
+      // parent is asked whether it holds any text of its own.
+      h.render(
+        '<div class="markdown-alert"><p>one two</p>\n<p>three four</p></div>' +
+          '<p>Alpha delta.</p>'
+      );
+
+      const [bar] = bars(h.root);
+      expect(bar.parentElement?.tagName).toBe('P');
+      expect(bar.parentElement?.textContent).toBe('three four');
+    });
+
+    it('keeps the bar of a mark that lost its closing marker while a change is decorated (ACC-NOTES-180)', async () => {
+      const h = open(
+        `Alpha <!-- mark:${ONE} note colour=yellow -->beta gamma delta.\n`
+      );
+      await ready();
+      h.render('<p>Alpha beta gamma delta.</p>');
+      expect(h.controller.marks[0].unanchored).toBe(true);
+      expect(bars(h.root)).toHaveLength(1);
+
+      // Such a mark is unanchored whatever any render says and so never
+      // joins the set the hold is keyed on; holding its bar back would take
+      // it away for every decorated change there is.
+      h.render(
+        '<p>Alpha beta gamma delta. <span class="jp-AdvancedMd-decoration jp-AdvancedMd-added">New.</span></p>'
+      );
+
+      expect(bars(h.root)).toHaveLength(1);
+    });
+
+    it('stands the bar beside a link in a line built only of inline elements (ACC-NOTES-180)', async () => {
+      const h = open(
+        `- [Chapter one](#one) <!-- mark:${ONE} note colour=yellow -->` +
+          `![diagram](m.png)<!-- /mark:${ONE} -->\n- [Appendix two](#two)\n`
+      );
+      await ready();
+      // The item holds no text of its own: its whole content is a link and
+      // an image, and the one space between them is the seam being judged.
+      // Reading that space as structure would put the bar inside the link,
+      // with the link's underline drawn through it.
+      h.render(
+        '<ul><li><a href="#one">Chapter one</a> ' +
+          '<img alt="diagram" src="m.png"></li>' +
+          '<li><a href="#two">Appendix two</a></li></ul>'
+      );
+
+      const [bar] = bars(h.root);
+      expect(bar.parentElement?.tagName).toBe('LI');
+      expect(bar.closest('a')).toBeNull();
+    });
+
+    it('stands no bar where neither side of the marker is in the render (ACC-NOTES-180)', async () => {
+      const h = open(marked());
+      await ready();
+      h.render('<p>Nothing of that document is here.</p>');
+
+      expect(h.controller.marks[0].unanchored).toBe(true);
+      expect(bars(h.root)).toHaveLength(0);
+    });
+
+    it('stands no bar for a document note (ACC-NOTES-180)', async () => {
+      const h = open(`<!-- mark:${ONE} document -->\n${BARE}`);
+      await ready();
+      h.render(BARE_HTML);
+
+      expect(h.controller.marks[0].unanchored).toBe(false);
+      expect(bars(h.root)).toHaveLength(0);
+    });
+
+    it('stands no bar for a closed mark until the closed marks are shown (ACC-NOTES-180)', async () => {
+      const h = open(marked(ONE, 'colour=yellow status=closed'));
+      await ready();
+      h.render('<p>Alpha delta.</p>');
+      expect(bars(h.root)).toHaveLength(0);
+
+      h.controller.setShowClosed(true);
+      expect(bars(h.root)).toHaveLength(1);
+      // Shown on request, it is drawn muted as its passage would be
+      // (ACC-NOTES-155): colour is what says closed for every other mark.
+      expect(bars(h.root)[0].classList.contains(MARK_CLOSED_CLASS)).toBe(true);
+      // The height alone is a difference the reader has nothing to compare
+      // against while one bar is on screen, so the title says it in words.
+      expect(bars(h.root)[0].title.split('\n')[0]).toBe(
+        'hidden, unanchored note'
+      );
+
+      h.controller.setShowClosed(false);
+      expect(bars(h.root)).toHaveLength(0);
+    });
+
+    it('never stands the bar directly under the rendered host (ACC-NOTES-180)', async () => {
+      const h = open(
+        `Alpha\n\n<!-- mark:${ONE} note colour=yellow -->beta gamma<!-- /mark:${ONE} -->\n\ndelta.\n`
+      );
+      await ready();
+      // The newline between the two blocks is a text node of the host
+      // itself, and a bar there would be a direct child of it (COMPAT).
+      h.render('<p>Alpha</p>\n<p>delta.</p>');
+
+      const [bar] = bars(h.root);
+      expect(bar.parentElement?.tagName).toBe('P');
+      expect(Array.from(h.root.children).map(child => child.tagName)).toEqual([
+        'P',
+        'P'
+      ]);
     });
   });
 
@@ -3247,6 +3716,50 @@ describe('NotesController', () => {
       );
 
       expect(seen).toEqual([ONE]);
+    });
+
+    it('emits the identifier of a bar that is clicked (ACC-NOTES-180)', async () => {
+      const h = open(marked());
+      await ready();
+      h.render('<p>Alpha delta.</p>');
+      const seen: string[] = [];
+      h.controller.activated.connect((_, id) => seen.push(id));
+
+      // The bar looks like the passage it stands in for and carries the same
+      // identifier, so it answers the same click: a reader who finds one in
+      // their prose has no other way from it to what it means.
+      bars(h.root)[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      expect(seen).toEqual([ONE]);
+    });
+
+    it('stops a click on a bar from opening the section it stands in (ACC-NOTES-180)', async () => {
+      // JupyterLab's sanitiser passes details and summary through, so a
+      // collapsible section reaches the preview from any document, and the
+      // step back stands the bar of a mark opening the body in the summary
+      // above it. The bar is a decoration this module put there, so the
+      // click it answers must not also shut the section under the reader.
+      const h = open(
+        `Click to see the section <!-- mark:${ONE} note colour=yellow -->` +
+          `![](m.png)<!-- /mark:${ONE} --> and more.\n\nBody text here.\n`
+      );
+      await ready();
+      h.render(
+        '<details><summary>Click to see the section and more.</summary>' +
+          '<p>Body text here.</p></details>'
+      );
+      const bar = bars(h.root)[0];
+      const details = h.root.querySelector('details') as HTMLDetailsElement;
+      expect(bar.closest('summary')).not.toBeNull();
+      const seen: string[] = [];
+      h.controller.activated.connect((_, id) => seen.push(id));
+
+      bar.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true })
+      );
+
+      expect(seen).toEqual([ONE]);
+      expect(details.open).toBe(false);
     });
 
     it('says nothing when the click ends a selection inside the passage (DEF-NOTES-91)', async () => {

@@ -2,6 +2,19 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.19] - 2026-09-21
+
+A mark whose passage a change took away still shows where it belonged.
+
+### Added
+
+- A mark whose passage the preview no longer holds is drawn as a thin bar at the place the mark began, in the mark's own colour: selecting its row in the notes panel scrolls the bar into view and flashes it, clicking the bar opens the row, and hovering it names the mark's state, its passage and its notes
+- The bar keeps its colour under Windows High Contrast, taking that palette's own colours rather than the theme's
+
+### Changed
+
+- A tick in the collapsed notes panel says whether its mark is hidden or unanchored before it says the passage, and a hidden mark's tick gives up its colour as its passage does
+
 ## [1.0.18] - 2026-09-19
 
 The colour squares in the notes panel are readable against the page they sit on, and your notes are signed with a handle you are asked for once.

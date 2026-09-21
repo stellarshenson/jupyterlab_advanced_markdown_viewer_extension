@@ -30,14 +30,7 @@
  */
 
 import { tokenize } from './diff';
-import { captureText, ITextSnapshot } from './highlight';
-
-/**
- * One text node and its range in the captured text.
- *
- * `src/highlight.ts` keeps the type internal, so it is read off the snapshot.
- */
-type ITextSpan = ITextSnapshot['spans'][number];
+import { captureText, ITextSnapshot, ITextSpan } from './highlight';
 
 /**
  * One word of the source as the renderer shows it.
@@ -172,6 +165,23 @@ const PUNCTUATION = /[!-/:-@[-`{-~]/;
 const DELIMITER = /[*_~]/;
 const WORD = /[A-Za-z0-9]/;
 const SPACE = /\s/;
+
+/**
+ * How many source words either side of a marker are looked for.
+ *
+ * Long enough that the run is not a phrase the document repeats, short
+ * enough that a rewrite touching the same paragraph leaves some of it alone.
+ */
+const NEIGHBOURHOOD = 10;
+
+/**
+ * Where an index into one sequence is expected to fall in another, taken as
+ * the same fraction of the way through. It is what tells two occurrences of
+ * one phrase apart. Neither sequence is empty at any call.
+ */
+function hintAt(index: number, from: number, to: number): number {
+  return Math.round((index / from) * to);
+}
 
 /**
  * The lines of a source, as offset ranges that exclude the line break.
@@ -923,7 +933,7 @@ export function renderedToSource(
   const scan = tokeniseSource(source);
   const hay = scan.tokens.map(token => token.text);
   const needle = words.slice(first, last + 1).map(word => word.text);
-  const hint = Math.round((first / words.length) * hay.length);
+  const hint = hintAt(first, words.length, hay.length);
   const at = locate(needle, hay, hint);
   if (at < 0) {
     return null;
@@ -994,7 +1004,7 @@ export function passageToRendered(
     return null;
   }
   const needle = inside.map(token => token.text);
-  const hint = Math.round((firstIndex / scan.tokens.length) * words.length);
+  const hint = hintAt(firstIndex, scan.tokens.length, words.length);
   const at = locate(
     needle,
     words.map(word => word.text),
@@ -1005,6 +1015,134 @@ export function passageToRendered(
   }
   const last = Math.min(at + needle.length - 1, words.length - 1);
   return { start: words[at].start, end: words[last].end };
+}
+
+/**
+ * Where a marker sits in the captured rendered text, read from the words
+ * around it rather than from the ones between the markers.
+ *
+ * A mark whose passage the render does not hold still has a place: the
+ * markers are in the source, and the words either side of them are usually
+ * the ones a rewrite left alone. The words ending before the opening marker
+ * are looked for first and the answer is the end of where they were found,
+ * which is where the mark begins. Where that side cannot be found - the mark
+ * opens the document, or the rewrite reached it too - the words after the
+ * closing marker are looked for and the answer is the start of where they
+ * were found.
+ *
+ * The answer is a place, not a range: there is nothing to cover, because
+ * what the mark covered is what the render does not hold.
+ *
+ * Either side counts only where {@link place} confirms it: the render words
+ * of the answer are the window's own words, one for one, and they fall near
+ * where the window belongs. Neither is a formality - the location this is
+ * built on is written for passages, where a partial answer only makes a wash
+ * run long, and for a marker a partial answer is the whole of what is shown.
+ *
+ * @param open - offset in the source of the opening marker's first character
+ * @param close - offset in the source just past the closing marker, or just
+ * past the opening marker for a mark whose closing marker is gone
+ * @param scan - {@link tokeniseSource} of that source
+ * @param words - {@link renderedWords} of the captured rendered text
+ * @returns the offset in that captured text, or null where neither side of
+ * the marker is in it
+ */
+export function markerToRendered(
+  open: number,
+  close: number,
+  scan: ISourceScan,
+  words: IRenderedWord[]
+): number | null {
+  const texts = words.map(word => word.text);
+  // The words of the source are the same for both windows, so they are read
+  // once here rather than once inside each call.
+  const source = scan.tokens.map(token => token.text);
+  // Tokens run forward and do not overlap, so the ones ending at or before
+  // an offset are a prefix of them and their count is the index just past
+  // it, which is what says where among the rendered words the run belongs.
+  // A token straddling a marker - a marker written flush against a word,
+  // which this module's own writer cannot produce - is in neither window,
+  // and the bar then stands a word early.
+  const ended = scan.tokens.filter(token => token.end <= open).length;
+  const from = Math.max(0, ended - NEIGHBOURHOOD);
+  const before = scan.tokens.slice(from, ended);
+  const ends = place(before, from, source, texts);
+  if (ends >= 0) {
+    return words[ends + before.length - 1].end;
+  }
+  const starts = scan.tokens.findIndex(token => token.start >= close);
+  const after =
+    starts < 0 ? [] : scan.tokens.slice(starts, starts + NEIGHBOURHOOD);
+  const begins = place(after, starts, source, texts);
+  return begins >= 0 ? words[begins].start : null;
+}
+
+/**
+ * Where a run of source words stands among the rendered words, or -1 where
+ * it does not stand there at all.
+ *
+ * The run must be there whole. {@link locate}, which the passages use,
+ * answers a needle it cannot find with the place of its first two or its
+ * last two words, and that is a sound trade for a passage, where the only
+ * cost is a wash running long. A marker has no length to run over: a partial
+ * answer would be the whole of what is drawn, and it lands in an unrelated
+ * clause. So the occurrences of the whole run are taken, and nothing else.
+ *
+ * A run standing in one place in the render and one place in the source is
+ * that place, and is taken with no distance test at all: there is no other
+ * copy to confuse it with, and a render does not write ten consecutive
+ * words the source has not got. Both halves are needed. Without the source
+ * half, a document that repeats a run, whose marked copy a rewrite has
+ * taken out, is answered with the copy left standing.
+ *
+ * Anywhere else - the run repeated in the render, or repeated in the
+ * source and standing once in the render - two questions are asked of the
+ * copies, and they are not the same question. Which copy: the one nearest
+ * the proportional hint, that being the best single guess at where the run
+ * has landed. Whether any copy at all: whether it lies within `index` less
+ * the words the render drops and plus the words it adds, either way plus
+ * the run's own span.
+ *
+ * That interval tells copies apart. It is not a proof of reach. Two lengths
+ * give the net of the two counts and neither of them, so a render that
+ * drops thirty words and adds thirty leaves both terms at nought while the
+ * run has moved thirty, and the interval then refuses a run standing in the
+ * render once and verbatim. The unique case above is out of its reach for
+ * that reason. A run the source repeats is not, so a document that both
+ * drops and adds words and repeats the run is refused, which is what this
+ * function answers whenever it cannot tell copies apart.
+ *
+ * Two other forms were measured and thrown out. A fixed ten words lost the
+ * place on any document of ordinary length. A proportional share of the
+ * dropped words, on the reading that a window a tenth of the way through
+ * has had a tenth of them go by, holds only where they are spread evenly: a
+ * report whose figures sit at the front drops them all before an early
+ * mark, and the bound then refused a run standing in the render once and
+ * verbatim, so no bar was drawn at all.
+ */
+function place(
+  run: ISourceToken[],
+  index: number,
+  source: string[],
+  texts: string[]
+): number {
+  if (!run.length || !texts.length) {
+    return -1;
+  }
+  const needle = run.map(token => token.text);
+  const copies = occurrences(needle, texts);
+  if (!copies.length) {
+    return -1;
+  }
+  if (copies.length === 1 && occurrences(needle, source).length === 1) {
+    return copies[0];
+  }
+  const at = nearest(copies, hintAt(index, source.length, texts.length));
+  const shrink = Math.max(0, source.length - texts.length);
+  const growth = Math.max(0, texts.length - source.length);
+  return at >= index - shrink - run.length && at <= index + growth + run.length
+    ? at
+    : -1;
 }
 
 /**

@@ -4829,3 +4829,167 @@ test.describe('the first note of a long document', () => {
     expect(placed.passage[1]).toBeLessThanOrEqual(placed.view[1] + 1);
   });
 });
+
+test.describe('a mark the render has no passage for', () => {
+  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+
+  /**
+   * DOC with its first sentence replaced, between the markers, by an image.
+   *
+   * The alt text is an attribute and not a text node, so the words between
+   * the markers are in the file and in nothing the render holds: the mark is
+   * listed, it is unanchored, and there is no passage to paint. This is the
+   * shape a reader meets when an agent rewrites a marked passage into
+   * something the renderer draws rather than writes.
+   */
+  const IMAGED = [
+    '# Report',
+    '',
+    `The first paragraph mentions apples and ${opening(ONE)}` +
+      `![pears and plums](missing.png)${closing(ONE)} at the end.`,
+    '',
+    'The second paragraph mentions oranges and plums.',
+    ''
+  ].join('\n');
+
+  test('ACC-NOTES-180 stands a bar where the mark sits and flashes it when the row is chosen', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(IMAGED, 'text', target);
+    await openPreview(page, target, 'The first paragraph mentions apples');
+
+    // The mark is listed and says its passage is not in the view, and there
+    // is no passage painted for it.
+    await expect(rows(page)).toHaveCount(1);
+    await expect(painted(page)).toHaveCount(0);
+    await expect(panel(page).locator('.jp-AdvancedMd-notesState')).toHaveText(
+      'unanchored'
+    );
+
+    const bar = page.locator(
+      '.jp-RenderedMarkdown:visible .jp-AdvancedMd-markCaret'
+    );
+    await expect(bar).toHaveCount(1);
+
+    // It stands inside the paragraph, after the last word before the
+    // opening marker, and never as a child of the rendered host itself.
+    const placed = await bar.evaluate((node: HTMLElement) => ({
+      parent: node.parentElement?.tagName ?? '',
+      before: node.previousSibling?.nodeValue ?? '',
+      // The painted stroke, not the box: the box is padding, which is the
+      // pointer target and carries none of the paint, so a box wider than
+      // nothing says nothing about what the reader can see.
+      stroke: getComputedStyle(node).width,
+      colour: getComputedStyle(node).backgroundColor,
+      // The ring the flash brings up: it is there at rest and invisible, so
+      // the flash has only a colour left to ramp.
+      ring: getComputedStyle(node).boxShadow,
+      box: node.getBoundingClientRect().width,
+      host: node.closest('.jp-RenderedMarkdown') === node.parentElement
+    }));
+    expect(placed.parent).toBe('P');
+    expect(placed.before).toContain('apples and');
+    expect(placed.host).toBe(false);
+    // It is drawn: the stroke the stylesheet asks for, in a colour and not
+    // transparent.
+    expect(placed.stroke).toBe('3px');
+    expect(placed.colour).not.toBe('rgba(0, 0, 0, 0)');
+    expect(placed.ring).toContain('0px 0px 0px 2px');
+    expect(placed.ring).toContain('rgba(0, 0, 0, 0)');
+
+    // The reading is armed before the click and taken in the task the flash
+    // class arrives in. Waiting for the class and then reading is two trips,
+    // and the class comes off on a timer of its own after FLASH_MS, so the
+    // second trip can land once it has gone and report the animation as
+    // none - a failure that reads as the caret rule having lost.
+    await bar.evaluate((node: HTMLElement) => {
+      (node as unknown as { flashed: Promise<unknown> }).flashed = new Promise(
+        resolve =>
+          new MutationObserver((_, watch) => {
+            if (!node.classList.contains('jp-AdvancedMd-markFlash')) {
+              return;
+            }
+            watch.disconnect();
+            resolve({
+              name: getComputedStyle(node).animationName,
+              box: node.getBoundingClientRect().width
+            });
+          }).observe(node, { attributes: true, attributeFilter: ['class'] })
+      );
+    });
+
+    // Choosing the row reaches the bar by the same attribute a passage
+    // carries, so the flash runs on it.
+    await rows(page).first().click();
+
+    // The flash is the bar's own keyframe, and a shadow takes no room in
+    // the line, so the words around it do not move while it runs.
+    const flashing = (await bar.evaluate(
+      (node: HTMLElement) =>
+        (node as unknown as { flashed: Promise<unknown> }).flashed
+    )) as { name: string; box: number };
+    expect(flashing.name).toBe('jp-AdvancedMd-caret-flash');
+    expect(flashing.box).toBe(placed.box);
+  });
+
+  test('ACC-NOTES-180 opens the row when the bar itself is clicked', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(IMAGED, 'text', target);
+    await openPreview(page, target, 'The first paragraph mentions apples');
+
+    const bar = page.locator(
+      '.jp-RenderedMarkdown:visible .jp-AdvancedMd-markCaret'
+    );
+    await expect(bar).toHaveCount(1);
+    // The reader travels the other way too: they meet the bar in their
+    // prose and have no route from it to what it means unless it answers
+    // the click a painted passage answers.
+    await bar.click();
+
+    await expect(rows(page).first()).toHaveClass(/notesRow-selected/);
+  });
+
+  /**
+   * The same document with the marked passage inside a list item.
+   *
+   * The renderer writes a newline between the children of a `ul`, and that
+   * newline is a text node of the list itself: a bar placed there would be a
+   * child of the `ul`, which lays out on a line of its own and is not inside
+   * a block at all. Every jest fixture for this feature is a paragraph,
+   * which is why the browser carries this one.
+   */
+  const LISTED = [
+    '# Report',
+    '',
+    `- The first item mentions apples and ${opening(ONE)}` +
+      `![pears and plums](missing.png)${closing(ONE)}`,
+    '- The second item mentions oranges',
+    ''
+  ].join('\n');
+
+  test('ACC-NOTES-180 stands the bar inside the list item, not between the items', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(LISTED, 'text', target);
+    await openPreview(page, target, 'The first item mentions apples');
+
+    const bar = page.locator(
+      '.jp-RenderedMarkdown:visible .jp-AdvancedMd-markCaret'
+    );
+    await expect(bar).toHaveCount(1);
+
+    const placed = await bar.evaluate((node: HTMLElement) => ({
+      parent: node.parentElement?.tagName ?? '',
+      item: node.closest('li')?.textContent ?? ''
+    }));
+    expect(placed.parent).toBe('LI');
+    expect(placed.item).toContain('The first item mentions apples and');
+  });
+});

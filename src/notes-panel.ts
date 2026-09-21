@@ -125,6 +125,12 @@ export const MARK_CLASS = 'jp-AdvancedMd-mark';
 export const MARK_ATTRIBUTE = 'data-mark';
 /** Class the decoration of a closed mark carries while closed marks are shown. */
 export const MARK_CLOSED_CLASS = 'jp-AdvancedMd-mark-closed';
+/**
+ * Class of the bar that stands where an unanchored mark sits (ACC-NOTES-180).
+ * It carries the same attribute a passage does, so the panel reaches it by
+ * the one query and scrolls and flashes it as it does a passage.
+ */
+export const CARET_CLASS = 'jp-AdvancedMd-markCaret';
 
 /**
  * JupyterLab's class on the viewer node, the focusable ancestor of the rendered
@@ -141,8 +147,30 @@ export const FLASH_MS = 1800;
 /** Characters of a passage a row shows before it is cut short. */
 export const PASSAGE_LIMIT = 80;
 
-/** Text the row shows for a mark whose passage is not in the rendered view. */
+/**
+ * The word a row carries for a mark whose passage this render does not hold.
+ * The bar in the view and the tick in the minimap say it too, through
+ * {@link markState} (ACC-NOTES-180).
+ */
 const UNANCHORED = 'unanchored';
+
+/**
+ * What the bar and the tick of one mark say they are, on their first line.
+ *
+ * Neither carries any text, so a title is all either has to say it with, and
+ * the style each takes for a closed mark is a difference the reader has
+ * nothing to compare against while one of them is on screen. Both states are
+ * asked for, because a tick is drawn for an anchored mark as well and gives
+ * up its hue when that mark is closed: the word is then the only thing on it
+ * that says why it is grey. The words are the ones the panel header shows.
+ * The row composes its own line instead: it leaves hidden out, because the
+ * reader pressed Show hidden to see it.
+ */
+export function markState(mark: IMark, anchored: boolean): string {
+  return [mark.closed ? 'hidden' : '', anchored ? '' : UNANCHORED]
+    .filter(part => part !== '')
+    .join(', ');
+}
 
 /** Text a document note's row shows in place of a passage. */
 const DOCUMENT_LABEL = 'Document';
@@ -316,9 +344,10 @@ export function swatchClass(colour: MarkColour): string {
 }
 
 /**
- * A passage as a row shows it: one line, cut at the limit.
+ * A passage as a row shows it: one line, cut at the limit. The bar standing
+ * for an unanchored mark titles itself with the same line (ACC-NOTES-180).
  */
-function shorten(passage: string): string {
+export function shorten(passage: string): string {
   const line = passage.replace(/\s+/g, ' ').trim();
   return line.length > PASSAGE_LIMIT
     ? `${line.slice(0, PASSAGE_LIMIT)}…`
@@ -1364,8 +1393,19 @@ export class NotesPanel extends Widget {
   private _tick(item: INotesPanelItem): HTMLElement {
     const tick = document.createElement('div');
     tick.className = `${TICK_CLASS} ${colourClass(item.mark.colour)}`;
+    // A closed mark gives up its hue wherever it is drawn (ACC-NOTES-155),
+    // and the tick is the only showing it has while the panel is a strip.
+    if (item.mark.closed) {
+      tick.classList.add(MARK_CLOSED_CLASS);
+    }
     tick.dataset.mark = item.mark.id;
-    tick.title = shorten(item.passage);
+    // The tick is the mark's only showing while the panel is a strip, so it
+    // says what the row and the bar say: the state first, then the passage.
+    // A passage the render holds no words for - an image an agent wrote in
+    // its place - would otherwise leave the tick with no title at all.
+    tick.title = [markState(item.mark, item.anchored), shorten(item.passage)]
+      .filter(part => part !== '')
+      .join('\n');
     tick.style.top = `${item.position * 100}%`;
     tick.addEventListener('click', () => this.selectMark(item.mark.id));
     return tick;
@@ -1375,8 +1415,9 @@ export class NotesPanel extends Widget {
    * Bring a mark's passage into sight and flash it.
    *
    * The decorations carry the mark identifier, so the panel finds the passage
-   * without knowing how the document was rendered. An unanchored mark has no
-   * decoration and nothing is scrolled.
+   * without knowing how the document was rendered. An unanchored mark carries
+   * it on the bar standing where it sits (ACC-NOTES-180), which is scrolled
+   * to and flashed the same way; a mark with neither is not scrolled to.
    */
   private _reveal(id: string): void {
     const root = this._root();

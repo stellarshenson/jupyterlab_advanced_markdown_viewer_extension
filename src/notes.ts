@@ -34,6 +34,7 @@ import {
   inTableRow,
   IRenderedRange,
   ISourceScan,
+  markerToRendered,
   passageToRendered,
   renderedToDomRange,
   renderedToSource,
@@ -42,13 +43,22 @@ import {
   tokeniseSource
 } from './anchor';
 import { diffWords, mapOffsets } from './diff';
-import { captureText, DECORATION_CLASS, ITextSnapshot } from './highlight';
 import {
+  captureText,
+  DECORATION_CLASS,
+  ITextSnapshot,
+  ITextSpan
+} from './highlight';
+import {
+  CARET_CLASS,
   colourClass,
   MARK_ATTRIBUTE,
   MARK_CLASS,
   MARK_CLOSED_CLASS,
-  openingState
+  markState,
+  openingState,
+  shorten,
+  swatchClass
 } from './notes-panel';
 import { fetchAPI } from './request';
 import {
@@ -191,6 +201,19 @@ interface ISourceEdit {
 interface IAnchored {
   mark: IMark;
   range: IRenderedRange;
+}
+
+/**
+ * A mark the render has no passage for, and the one place it sits.
+ *
+ * An offset, not a range: what the mark covered is the part the render does
+ * not hold, so there is nothing to wrap and the bar goes between two words.
+ */
+interface ICaret {
+  mark: IMark;
+  at: number;
+  /** The passage words, which this render is the one not holding. */
+  text: string;
 }
 
 /**
@@ -371,6 +394,62 @@ function tooltip(mark: IMark): string {
 }
 
 /**
+ * The words of a passage as the renderer shows them, not the source between
+ * the markers: a marker placed on its own line before a list item takes the
+ * item's number into the passage, and one widened out of emphasis takes the
+ * delimiters (DEF-NOTES-84). They are the scan's tokens that overlap the
+ * passage, read in the context of their own line, because a slice read on
+ * its own would take a dash or a hash at its start for a bullet or a heading
+ * marker (DEF-NOTES-87).
+ */
+function passageText(
+  passage: ISpan | null,
+  scan: ISourceScan,
+  source: string
+): string {
+  if (!passage) {
+    return '';
+  }
+  const words = scan.tokens
+    .filter(token => token.end > passage.start && token.start < passage.end)
+    .map(token => token.text)
+    .join(' ');
+  return words || imageText(passage, scan, source);
+}
+
+/**
+ * A passage the source has no words for, named by what stands in it.
+ *
+ * An agent that rewrites a marked passage into an image leaves the markers
+ * around a construct carrying no words at all when it writes no alt text,
+ * and a state word on its own says nothing about which note it belongs to.
+ * The image is named instead, by the file it points at where the source
+ * gives one - the last segment of the target, a whole URL being longer than
+ * the line has room for. A query string and a fragment go with the rest of
+ * the URL, neither being part of the name. A title after the target is
+ * passed over. Only a target in round brackets is read: a reference-style
+ * image gives a label, which is not a file name, and naming the label is
+ * worse than naming nothing.
+ */
+function imageText(passage: ISpan, scan: ISourceScan, source: string): string {
+  const span = scan.protectedSpans.find(
+    entry =>
+      entry.kind === 'image' &&
+      entry.end > passage.start &&
+      entry.start < passage.end
+  );
+  if (!span) {
+    return '';
+  }
+  const target = /\(([^\s)]*)(?:\s+(?:"[^"]*"|'[^']*'))?\)\s*$/.exec(
+    source.slice(span.start, span.end)
+  );
+  const path = target ? target[1].split(/[?#]/)[0] : '';
+  const name = path.split('/').pop() ?? '';
+  return name ? `image ${name}` : 'image';
+}
+
+/**
  * Build the span that paints one mark.
  */
 function markSpan(mark: IMark): HTMLElement {
@@ -388,6 +467,229 @@ function markSpan(mark: IMark): HTMLElement {
 }
 
 /**
+ * Build the bar that stands where an unanchored mark sits.
+ *
+ * It takes the swatch colour, not the wash a passage takes: three pixels of
+ * a wash of eleven to twenty percent is not a colour anybody can see, where
+ * the swatch colour is held to three to one against the page
+ * (ACC-NOTES-177). A closed mark's bar gives that hue up as its passage
+ * does (ACC-NOTES-155), and says so on its first line.
+ *
+ * It is kept out of the accessibility tree. It carries no text, so there is
+ * nothing in it to read out, and everything it stands for - the note, the
+ * colour, the passage the view does not hold - the panel's row says in
+ * words.
+ */
+function caretSpan(mark: IMark, passage: string): HTMLElement {
+  const span = document.createElement('span');
+  span.className = `${CARET_CLASS} ${swatchClass(mark.colour)}`;
+  // A closed mark shown on request is drawn muted wherever it is drawn
+  // (ACC-NOTES-155), and colour is what says so for every other mark.
+  if (mark.closed) {
+    span.classList.add(MARK_CLOSED_CLASS);
+  }
+  span.dataset.mark = mark.id;
+  span.setAttribute('aria-hidden', 'true');
+  // The title says the state and what the thing is, then the passage, then
+  // the notes. The row puts its passage above its state line; the title
+  // leads with the state instead, a passage of eighty characters on the
+  // first line burying what the reader opened the tooltip for. The state is
+  // always there: a mark with no note yet is the common shape, a passage
+  // being marked before it is noted, and an agent writes an image with no
+  // alt text often enough that the passage line can be empty too - a bar
+  // with no title at all would leave a stroke in the reader's prose saying
+  // nothing. The word note is on the end of that line because the bar
+  // stands in the document and not in the panel: the reader meets a stroke
+  // in their own prose with nothing around it to say what it belongs to,
+  // and a state adjective alone answers a question they have not been given
+  // the subject of. A tick does not need it, standing in the panel already.
+  // The passage is on it because this render is the one not holding it, so
+  // it cannot be read off the page beside the bar, which is the same reason
+  // a minimap tick carries it and a painted passage does not.
+  span.title = [
+    `${markState(mark, false)} note`,
+    shorten(passage),
+    tooltip(mark)
+  ]
+    .filter(part => part !== '')
+    .join('\n');
+  return span;
+}
+
+/**
+ * The tags whose elements sit inside a line of text rather than making one.
+ *
+ * A short closed set, and a tag left out of it reads as a block, which is
+ * what the rule below assumed before this set existed: a tag nobody thought
+ * of costs what it cost then and nothing more.
+ */
+const INLINE = new Set([
+  'A',
+  'ABBR',
+  'B',
+  'CODE',
+  'DEL',
+  'EM',
+  'I',
+  'IMG',
+  'INS',
+  'KBD',
+  'MARK',
+  'Q',
+  'S',
+  'SMALL',
+  'SPAN',
+  'STRONG',
+  'SUB',
+  'SUP',
+  'TIME',
+  'U',
+  'VAR'
+]);
+
+/**
+ * The text nodes a bar may go in, in document order.
+ *
+ * A node holding nothing but space is structure where nothing about it says
+ * it is a seam in a line: the renderer writes one between the items of a
+ * list, the rows of a table, the blocks of a quote, and the blocks of any
+ * div or details a document or a sibling extension puts around them. A bar
+ * there is a child of that container, which takes a line or a column of its
+ * own and is not inside a block at all (COMPAT).
+ *
+ * Two things say it is a seam. The parent holds text of its own, so the
+ * space is between words of a sentence; or an element beside it sits inside
+ * a line, so the space is between a link and the image after it. Either is
+ * enough, and a block whose whole content is inline elements needs the
+ * second: its only text of its own is the seam being judged, and passing it
+ * over would put the bar inside the link before it, with the link's
+ * underline drawn through it.
+ *
+ * A heading is not passed over, though. The words before a mark that opens
+ * the paragraph under one are the heading's own, so the bar stands at the
+ * end of the heading and takes its font, at `h1` about twice the stroke of
+ * a bar in body text. It carries no text, so the heading's own text and its
+ * id are untouched and the table of contents and the anchors read as before
+ * (COMPAT). Passing headings over would put the bar at the head of the
+ * paragraph, which the step back then moves into the block above the
+ * heading, further from the mark than the heading is.
+ *
+ * The text of a link is passed over for the same reason, whatever it holds.
+ * The link's underline runs through a bar inside it, so seven pixels of what
+ * reads as one stretch of link text is not link text, and the click the bar
+ * answers is the click the link would have answered. The bar goes to the
+ * text after the link instead, a word or two late.
+ *
+ * It is worked out once for a render, not once for each bar: it does not
+ * depend on the bar.
+ */
+function caretSpans(snapshot: ITextSnapshot, root: HTMLElement): ITextSpan[] {
+  return snapshot.spans.filter(span => {
+    const parent = span.node.parentElement;
+    if (!parent || parent === root || parent.closest('a') !== null) {
+      return false;
+    }
+    if (/\S/.test(span.node.nodeValue ?? '')) {
+      return true;
+    }
+    const before = span.node.previousElementSibling;
+    const after = span.node.nextElementSibling;
+    return (
+      (before !== null && INLINE.has(before.tagName)) ||
+      (after !== null && INLINE.has(after.tagName)) ||
+      Array.from(parent.childNodes).some(
+        child =>
+          child.nodeType === Node.TEXT_NODE && /\S/.test(child.nodeValue ?? '')
+      )
+    );
+  });
+}
+
+/**
+ * The text node a bar goes in, and where inside it, or null where the render
+ * holds no node the offset reaches.
+ */
+function caretPlace(
+  spans: ITextSpan[],
+  at: number
+): { node: Text; offset: number } | null {
+  // Inside a node, where the words before the marker end mid-node; at the
+  // end of one, where those words end where a block does; for an offset on
+  // the break between two blocks and so in no node at all, the first node
+  // from there on; and where the offset is past every node there is - the
+  // last block of the document renders as a link or an image with no text
+  // beside it - the last node before it, at its end. The offset is held to
+  // the node it lands in, so each of the four says where inside it by the
+  // same arithmetic.
+  const inside = spans.find(span => span.start <= at && at < span.end);
+  const span =
+    inside ??
+    spans.find(entry => entry.end === at) ??
+    spans.find(entry => entry.start >= at) ??
+    spans[spans.length - 1];
+  if (!span) {
+    return null;
+  }
+  const offset = Math.max(0, Math.min(at, span.end) - span.start);
+  // Never at the head of a block. The bar is the first in-flow content of
+  // that block when it goes there, and seven pixels of inline box indent the
+  // block's whole first line - the left edge of a text column being the one
+  // alignment a reader reads structure from, and an indent in Markdown
+  // meaning something. The block above takes it instead, which is where the
+  // mark's own words stood: the words this place was read from are after the
+  // mark, so stepping back moves the bar onto the mark and not past it. The
+  // same step the end-of-block case makes, made for the same reason, and for
+  // a mark on the first block of all there is nowhere above to step to.
+  if (offset > 0 || !opens(span)) {
+    return { node: span.node, offset };
+  }
+  const index = spans.indexOf(span);
+  const above = index > 0 ? spans[index - 1] : null;
+  return above
+    ? { node: above.node, offset: above.end - above.start }
+    : { node: span.node, offset: firstWord(span) };
+}
+
+/**
+ * Whether a bar at the very start of a span would be the first in-flow
+ * content of its block.
+ *
+ * Asked of the nodes themselves rather than of the offsets, because the
+ * offsets no longer answer it: a link's text is not a place a bar may go,
+ * so the gap it leaves in that list is the same gap a block break leaves,
+ * and reading the gap put the bar before the link rather than after it.
+ * Walking out of the inline elements a block can open with - a sentence
+ * starting in emphasis is still the block's first content - leaves one
+ * question, which is whether anything precedes it in its block.
+ */
+function opens(span: ITextSpan): boolean {
+  let node: Node = span.node;
+  while (
+    !node.previousSibling &&
+    node.parentElement &&
+    INLINE.has(node.parentElement.tagName)
+  ) {
+    node = node.parentElement;
+  }
+  return !node.previousSibling;
+}
+
+/**
+ * Where the first word of a span ends.
+ *
+ * The one place a bar cannot step back from is the first block of the
+ * document, which has no block above it. It steps forward instead, over the
+ * block's first word, which leaves the left edge alone and puts the bar one
+ * word later than the place - the same imprecision every other fallback
+ * here already carries.
+ */
+function firstWord(span: ITextSpan): number {
+  const text = span.node.nodeValue ?? '';
+  const space = text.search(/\s/);
+  return space < 0 ? text.length : space;
+}
+
+/**
  * Paint the marked passages of a render.
  *
  * Each text node the passages reach is rebuilt once from its own slices, so
@@ -395,14 +697,20 @@ function markSpan(mark: IMark): HTMLElement {
  * they share is wrapped in one span for each of them, the earlier mark
  * outermost.
  *
+ * A bar goes in on the same pass, so a text node holding both a passage and
+ * the place of an unanchored mark is rebuilt once and neither is lost.
+ *
  * @param snapshot - text captured from `root` before painting
  * @param root - the rendered Markdown host
  * @param anchored - the marks to paint and where their passages sit
+ * @param carets - the marks with no passage in this render, and where they
+ * sit
  */
 function paintMarks(
   snapshot: ITextSnapshot,
   root: HTMLElement,
-  anchored: IAnchored[]
+  anchored: IAnchored[],
+  carets: ICaret[]
 ): void {
   const work = new Map<
     Text,
@@ -429,37 +737,81 @@ function paintMarks(
     }
   }
 
-  for (const [node, covers] of work) {
+  const bars = new Map<Text, Array<{ at: number; caret: ICaret }>>();
+  const placeable = carets.length ? caretSpans(snapshot, root) : [];
+  for (const caret of carets) {
+    const place = caretPlace(placeable, caret.at);
+    if (!place) {
+      continue;
+    }
+    const standing = bars.get(place.node) ?? [];
+    standing.push({ at: place.offset, caret });
+    bars.set(place.node, standing);
+  }
+
+  for (const node of new Set([...work.keys(), ...bars.keys()])) {
+    const covers = work.get(node) ?? [];
+    const standing = bars.get(node) ?? [];
     const value = node.nodeValue ?? '';
     const cuts = new Set<number>([0, value.length]);
     for (const cover of covers) {
       cuts.add(cover.start);
       cuts.add(cover.end);
     }
+    for (const bar of standing) {
+      cuts.add(bar.at);
+    }
     const points = Array.from(cuts).sort((a, b) => a - b);
     const fragment = document.createDocumentFragment();
+    // The bars standing at one offset, in the order the panel lists their
+    // marks, whichever of the two places below they go in.
+    const barsAt = (offset: number): DocumentFragment => {
+      const built = document.createDocumentFragment();
+      for (const bar of standing.filter(one => one.at === offset)) {
+        built.appendChild(caretSpan(bar.caret.mark, bar.caret.text));
+      }
+      return built;
+    };
     for (let i = 0; i + 1 < points.length; i++) {
       const [at, next] = [points[i], points[i + 1]];
       const covering = covers.filter(
         cover => cover.start <= at && cover.end >= next
       );
       let child: Node = document.createTextNode(value.slice(at, next));
+      let innermost: HTMLElement | null = null;
       for (let j = covering.length - 1; j >= 0; j--) {
         const element = markSpan(covering[j].mark);
         element.appendChild(child);
         child = element;
+        innermost = innermost ?? element;
       }
+      // A bar stands ahead of the text that follows it, and inside the paint
+      // that text carries: standing it between the two spans the cut makes
+      // would show the page through the middle of a highlighted phrase.
+      // Inserting before nothing is appending, so one call serves both.
+      (innermost ?? fragment).insertBefore(
+        barsAt(at),
+        innermost ? innermost.firstChild : null
+      );
       fragment.appendChild(child);
     }
+    // The last point is the end of the node, where a bar stands after every
+    // slice and no text follows it.
+    fragment.appendChild(barsAt(points[points.length - 1]));
     node.parentNode?.replaceChild(fragment, node);
   }
 }
 
 /**
  * Take every mark span out of a render, putting back the text it wrapped.
+ *
+ * A bar wraps nothing, so the same unwrapping removes it and leaves the text
+ * around it alone.
  */
 function unpaintMarks(root: HTMLElement): void {
-  for (const element of Array.from(root.querySelectorAll(`.${MARK_CLASS}`))) {
+  for (const element of Array.from(
+    root.querySelectorAll(`.${MARK_CLASS}, .${CARET_CLASS}`)
+  )) {
     const parent = element.parentNode;
     if (!parent) {
       continue;
@@ -967,16 +1319,30 @@ export class NotesController implements IDisposable {
   }
 
   /**
-   * The reader clicked in the preview: a click on a marked passage opens that
-   * mark, which is the second way to reach the note entry.
+   * The reader clicked in the preview: a click on a marked passage, or on the
+   * bar standing where an unanchored mark sits, opens that mark, which is the
+   * second way to reach the note entry. The bar answers the same click as the
+   * passage it stands in for: it carries the same identifier and looks like
+   * the same thing, and a reader who finds one in their prose has no other
+   * way from it to what it means.
    */
   private _onClick = (event: Event): void => {
     if (!this._settings.notes) {
       return;
     }
     const target = event.target as Element | null;
-    const element = target?.closest?.(`.${MARK_CLASS}`) as HTMLElement | null;
+    const element = target?.closest?.(
+      `.${MARK_CLASS}, .${CARET_CLASS}`
+    ) as HTMLElement | null;
     const id = element?.dataset.mark;
+    // The bar is a decoration this module put in the render, not part of the
+    // document, so a click on it must not run the activation behaviour of
+    // whatever it stands inside. A summary is the case that reaches the
+    // preview, JupyterLab's sanitiser passing details through, and the
+    // section would open or shut under the reader (ACC-NOTES-180).
+    if (element?.classList.contains(CARET_CLASS)) {
+      event.preventDefault();
+    }
     // A click that ends a drag over the passage is the reader selecting text
     // inside the mark, not asking for its row: an activation would move the
     // focus into the note field and take the selection away (DEF-NOTES-91).
@@ -1483,24 +1849,9 @@ export class NotesController implements IDisposable {
    * A mark in the shape the panel lists it in.
    */
   private _listed(mark: IMark, source: string, scan: ISourceScan): IListedMark {
-    // The passage is listed by its words as the renderer shows them, not by
-    // the source between the markers: a marker placed on its own line before
-    // a list item takes the item's number into the passage, and one widened
-    // out of emphasis takes the delimiters (DEF-NOTES-84). The words are the
-    // scan's tokens that overlap the passage, read in the context of their
-    // own line: a slice read on its own would take a dash or a hash at its
-    // start for a bullet or a heading marker (DEF-NOTES-87).
-    const passage = mark.passage;
     return {
       ...mark,
-      text: passage
-        ? scan.tokens
-            .filter(
-              token => token.end > passage.start && token.start < passage.end
-            )
-            .map(token => token.text)
-            .join(' ')
-        : '',
+      text: passageText(mark.passage, scan, source),
       position: mark.open ? mark.open.start / Math.max(source.length, 1) : 0,
       unanchored:
         mark.type === DOCUMENT_TYPE
@@ -1537,35 +1888,87 @@ export class NotesController implements IDisposable {
     // every mark, so both are read once here rather than once per mark.
     const scan = tokeniseSource(source);
     const words = renderedWords(captureText(root).text);
+    // While a change is decorated the text it added is held out of the
+    // capture, so a passage inside it is not there to be found and says
+    // nothing about the mark. The guard at the end of this pass has always
+    // held the unanchored wording at what it last read, and the bars are
+    // held the same way: at the marks that reading named.
+    const decorated = !!root.querySelector(`.${DECORATION_CLASS}`);
     const anchored: IAnchored[] = [];
+    const carets: ICaret[] = [];
     const lost = new Set<string>();
     for (const mark of this._marks) {
-      // A document note paints nothing, even one a hand-written closing
-      // marker gave a passage: the panel names no colour for it.
-      if (!mark.passage || mark.type === DOCUMENT_TYPE) {
+      // A document note paints nothing and stands nowhere, even one a
+      // hand-written closing marker gave a passage: the panel names no
+      // colour for it and lists it as anchored wherever its marker sits. A
+      // mark with no opening marker is not listed at all and this list holds
+      // none, but the place below is read off that marker.
+      if (mark.type === DOCUMENT_TYPE || !mark.open) {
         continue;
       }
-      // A closed mark is painted only while the closed marks are shown.
+      // A closed mark is painted only while the closed marks are shown, and
+      // stands nowhere while they are not.
       if (mark.closed && !this._showClosed) {
         continue;
       }
-      const range = passageToRendered(mark.passage, scan, words);
-      if (!range || range.end <= range.start) {
+      if (mark.passage) {
+        const range = passageToRendered(mark.passage, scan, words);
+        if (range && range.end > range.start) {
+          anchored.push({ mark, range });
+          continue;
+        }
         lost.add(mark.id);
+      }
+      // A mark already known to be unanchored is let through, and one this
+      // render merely cannot find is given none: a bar there would stand
+      // beside the very text that holds the passage. Holding every mark back
+      // instead would take away the bar of a mark the change never touched,
+      // and with it the only thing its row has to scroll to. A mark with no
+      // closing marker is unanchored whatever any render says and never
+      // enters that set, so it is named here rather than looked up.
+      //
+      // What is kept is the mark, not its place: the place is worked out
+      // again below against a capture the decorated text is held out of, so
+      // a mark whose words either side of the marker are both inside the
+      // change loses its bar until the change settles. A remembered place
+      // would be a place that change may have moved, and a wrong place is
+      // answered here by drawing nothing rather than by drawing it.
+      if (decorated && mark.passage && !this._lost.has(mark.id)) {
         continue;
       }
-      anchored.push({ mark, range });
+      // The mark is in the file and its passage is not in this render, so
+      // the place its opening marker sits is all there is to show
+      // (ACC-NOTES-180). The words after the closing marker are the fallback
+      // side, which for a mark that lost that marker is the text the mark
+      // opened on.
+      const at = markerToRendered(
+        mark.open.start,
+        mark.close ? mark.close.end : mark.open.end,
+        scan,
+        words
+      );
+      if (at !== null) {
+        carets.push({
+          mark,
+          at,
+          text: passageText(mark.passage, scan, source)
+        });
+      }
     }
 
-    const signature = anchored
-      .map(
+    const signature = [
+      ...anchored.map(
         item =>
           `${item.mark.id} ${item.mark.colour} ${item.mark.closed} ${item.range.start}-${item.range.end} ${JSON.stringify(tooltip(item.mark))}`
+      ),
+      ...carets.map(
+        caret =>
+          `caret ${caret.mark.id} ${caret.mark.colour} ${caret.mark.closed} ${caret.at} ${JSON.stringify(caret.text)} ${JSON.stringify(tooltip(caret.mark))}`
       )
-      .join('\n');
+    ].join('\n');
     if (signature !== this._painted) {
       unpaintMarks(root);
-      paintMarks(captureText(root), root, anchored);
+      paintMarks(captureText(root), root, anchored, carets);
       this._painted = signature;
     }
 
@@ -1575,7 +1978,7 @@ export class NotesController implements IDisposable {
     // passage inside it is not there to be found and says nothing about the
     // mark; the marks are painted again when the change settles.
     if (
-      !root.querySelector(`.${DECORATION_CLASS}`) &&
+      !decorated &&
       (lost.size !== this._lost.size ||
         [...lost].some(id => !this._lost.has(id)))
     ) {

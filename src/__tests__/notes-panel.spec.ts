@@ -37,6 +37,7 @@ import {
   LIST_CLASS,
   MAP_CLASS,
   MARK_CLASS,
+  MARK_CLOSED_CLASS,
   MINIMAP_CLASS,
   NotesPanel,
   PASSAGE_CLASS,
@@ -1639,6 +1640,51 @@ describe('writing a note', () => {
     ).toBe(true);
   });
 
+  it('titles an unanchored tick with the state and the passage (ACC-NOTES-180)', () => {
+    // The tick is the mark's only showing while the panel is a strip, so it
+    // says what the row and the bar say. A passage the render holds no words
+    // for - an image an agent wrote in its place - would leave it untitled.
+    panel.showClosed = true;
+    panel.setMarks([
+      item('a', 'first passage', { anchored: false }),
+      item('b', '', { anchored: false }),
+      item('c', 'third passage'),
+      item('d', 'fourth passage', {
+        anchored: false,
+        mark: mark('d', { closed: true })
+      })
+    ]);
+    panel.state = 'minimap';
+
+    const titles = Array.from(
+      panel.node.querySelectorAll<HTMLElement>(`.${TICK_CLASS}`)
+    ).map(tick => tick.title);
+
+    expect(titles).toEqual([
+      'unanchored\nfirst passage',
+      'unanchored',
+      'third passage',
+      'hidden, unanchored\nfourth passage'
+    ]);
+  });
+
+  it("gives a closed mark's tick the class its passage is muted by, and the word for it (ACC-NOTES-155)", () => {
+    panel.showClosed = true;
+    panel.setMarks([
+      item('a', 'first passage', { mark: mark('a', { closed: true }) })
+    ]);
+    panel.state = 'minimap';
+
+    const [tick] = Array.from(
+      panel.node.querySelectorAll<HTMLElement>(`.${TICK_CLASS}`)
+    );
+
+    expect(tick.classList.contains(MARK_CLOSED_CLASS)).toBe(true);
+    // The tick gives up its hue for a closed mark, and while the panel is a
+    // strip the title is the only thing on it that can say why it is grey.
+    expect(tick.title).toBe('hidden\nfirst passage');
+  });
+
   it('shows no tick for a document note', () => {
     panel.setMarks([documentItem('d'), item('a', 'first passage')]);
     panel.state = 'minimap';
@@ -3026,6 +3072,24 @@ describe('the mark colours in the stylesheet', () => {
     }
   });
 
+  it("mutes a closed mark's bar by its colour, as its passage is muted (ACC-NOTES-155)", () => {
+    // Muting by height instead was tried and taken out: it is a difference
+    // the reader has nothing to compare against while one bar is on screen,
+    // and it left the bar the one fully coloured mark decoration on a page
+    // whose closed passages had given their hue up.
+    const rule =
+      /\.jp-AdvancedMd-markCaret\.jp-AdvancedMd-mark-closed[^{]*\{([^}]*)\}/.exec(
+        css
+      );
+    expect(rule).not.toBeNull();
+    expect(rule![1]).toContain('background-color');
+    expect(rule![1]).not.toContain('height');
+  });
+
+  it('mutes a closed mark wherever it is drawn, the tick included (ACC-NOTES-155)', () => {
+    expect(css).toMatch(/notesTick\)\.jp-AdvancedMd-mark-closed/);
+  });
+
   it('keeps the flash under reduced motion, and it ramps nothing but a colour', () => {
     // The flash is what tells the reader which passage the row they chose
     // belongs to, and a colour ramp is not motion - the same reading that
@@ -3035,14 +3099,74 @@ describe('the mark colours in the stylesheet', () => {
     // catches the rule wherever a regression puts it back. The stylesheet
     // carries no reduced-motion block at all since DEF-CUE-68, and cue.spec
     // guards that; this guards the flash on its own terms.
+    //
+    // Both keyframes are held to it. The bar of an unanchored mark flashes
+    // by the colour of a ring around it (ACC-NOTES-180); a size or a
+    // position in either one is motion, and the reading would not carry it.
     const guard = new RegExp(
       `\\.${FLASH_CLASS}[^{]*\\{[^}]*animation:\\s*none`
     );
     expect(guard.test(css)).toBe(false);
-    const start = css.indexOf('@keyframes jp-AdvancedMd-mark-flash {');
+    for (const [keyframes, ramped] of [
+      ['jp-AdvancedMd-mark-flash', '    background-color:'],
+      ['jp-AdvancedMd-caret-flash', '    box-shadow:']
+    ]) {
+      const start = css.indexOf(`@keyframes ${keyframes} {`);
+      expect(start).toBeGreaterThan(-1);
+      const frames = css.slice(start, css.indexOf('\n}', start));
+      expect(frames.match(/^ {4}[a-z-]+:/gm)).toEqual([ramped]);
+    }
+    // The ring carries its size in its own value, so the property name
+    // alone cannot say that only a colour moves. The rule and the frame
+    // must declare the same geometry, and then only the colour is left.
+    // Read from the two blocks that carry it rather than counted over the
+    // file, which any other rule reaching for a two pixel ring would answer
+    // for without a regression here.
+    const ring = (from: string, to: string): string | null => {
+      const start = css.indexOf(from);
+      const block = css.slice(start, css.indexOf(to, start + from.length));
+      return /box-shadow:\s*([^;]*?)\s+\S+;/.exec(block)?.[1] ?? null;
+    };
+    const rule = ring('.jp-AdvancedMd-markCaret {', '}');
+    expect(rule).toBe('0 0 0 2px');
+    // A background declared in a stylesheet is painted the page's own canvas
+    // colour under forced colours, which leaves the bar seven transparent
+    // pixels carrying a cursor and a tooltip; it is the one mark decoration
+    // whose whole showing is its colour (ACC-NOTES-180).
+    expect(declaration('.jp-AdvancedMd-markCaret', 'forced-color-adjust')).toBe(
+      'none'
+    );
+    expect(ring('@keyframes jp-AdvancedMd-caret-flash {', '\n}')).toBe(rule);
+  });
+
+  it('hands the bar to the forced palette where the page is forced (ACC-NOTES-180)', () => {
+    // Opting out of forced colours keeps the colour this stylesheet chose,
+    // and that colour was chosen against the theme's page rather than the
+    // canvas the platform forces underneath it. Measured in Chrome: the
+    // canvas goes white under a light forced palette and black under a dark
+    // one whichever theme is loaded, so a closed bar in the light theme
+    // stood at 54 percent black on black and a bar in the dark theme stood
+    // near white on white - two of the four pairings lost the bar outright.
+    // The query hands both states back to the palette's own tokens, the only
+    // colours guaranteed to stand against that canvas.
+    const start = css.indexOf('@media (forced-colors: active) {');
     expect(start).toBeGreaterThan(-1);
-    const frames = css.slice(start, css.indexOf('\n}', start));
-    expect(frames.match(/^ {4}[a-z-]+:/gm)).toEqual(['    background-color:']);
+    const block = css.slice(start, css.indexOf('\n}', start));
+    expect(block).toContain('background-color: CanvasText;');
+    expect(block).toContain('background-color: GrayText;');
+    expect(block).toContain('--jp-AdvancedMd-caret-ring: Highlight;');
+    // Mark is the token a highlight reaches for first, and it is refused: it
+    // is the same yellow in both palettes and measures 1.07 to 1 on a white
+    // canvas, which loses the bar again on the pairing this rule is for.
+    expect(block).not.toContain('Mark;');
+    // The ring travels through a property of its own, which is what lets the
+    // query retarget it without a second set of frames.
+    expect(
+      declaration('.jp-AdvancedMd-markCaret', '--jp-AdvancedMd-caret-ring')
+    ).toBe('var(--jp-content-font-color1)');
+    expect(css).toContain(
+      'box-shadow: 0 0 0 2px var(--jp-AdvancedMd-caret-ring);'
+    );
   });
 
   it('flashes light enough to be seen away from where the eye already is', () => {

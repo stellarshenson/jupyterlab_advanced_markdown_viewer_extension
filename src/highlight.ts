@@ -76,7 +76,7 @@ export const HEADINGS = 'h1,h2,h3,h4,h5,h6';
 /**
  * One text node and the range of the captured text it holds.
  */
-interface ITextSpan {
+export interface ITextSpan {
   node: Text;
   start: number;
   end: number;

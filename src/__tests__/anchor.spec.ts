@@ -5,6 +5,7 @@ import {
   ISelectionRange,
   ISourceRange,
   locate,
+  markerToRendered,
   passageToRendered,
   renderedToSource,
   renderedWords,
@@ -996,3 +997,365 @@ function captured(root: HTMLElement): string {
     .map(node => node.nodeValue ?? '')
     .join('');
 }
+
+/**
+ * Where the markers of a mark sit in the rendered text, the way `_paint`
+ * asks: both scans taken once over the source and the render.
+ */
+function placeOf(
+  open: number,
+  close: number,
+  source: string,
+  root: HTMLElement
+): number | null {
+  return markerToRendered(
+    open,
+    close,
+    tokeniseSource(source),
+    renderedWords(captureText(root).text)
+  );
+}
+
+/** The offsets of a mark's two markers in a source that holds both. */
+function markersOf(source: string, id = 'a'): { open: number; close: number } {
+  const closing = `<!-- /mark:${id} -->`;
+  return {
+    open: source.indexOf(`<!-- mark:${id}`),
+    close: source.indexOf(closing) + closing.length
+  };
+}
+
+describe('markerToRendered', () => {
+  it('puts the place at the end of the words before the opening marker', () => {
+    const source =
+      'Alpha beta gamma <!-- mark:a note -->delta epsilon<!-- /mark:a --> zeta eta.';
+    // The rewrite that took the passage away left the words around it.
+    const root = render('<p>Alpha beta gamma zeta eta.</p>');
+    const { open, close } = markersOf(source);
+    const text = captureText(root).text;
+
+    expect(placeOf(open, close, source, root)).toBe(
+      text.indexOf('gamma') + 'gamma'.length
+    );
+  });
+
+  it('puts the place at the start of the words after the closing marker where the mark opens the document', () => {
+    const source =
+      '<!-- mark:a note -->Alpha beta<!-- /mark:a --> gamma delta epsilon.';
+    const root = render('<p>gamma delta epsilon.</p>');
+    const { open, close } = markersOf(source);
+    const text = captureText(root).text;
+
+    expect(placeOf(open, close, source, root)).toBe(text.indexOf('gamma'));
+  });
+
+  it('falls back to the words after the marker where the ones before it went too', () => {
+    const source =
+      'One two three four five six seven eight nine ten eleven ' +
+      '<!-- mark:a note -->passage<!-- /mark:a --> alpha beta gamma delta.';
+    const root = render('<p>alpha beta gamma delta.</p>');
+    const { open, close } = markersOf(source);
+    const text = captureText(root).text;
+
+    expect(placeOf(open, close, source, root)).toBe(text.indexOf('alpha'));
+  });
+
+  it('reports nothing where neither side of the marker is in the render', () => {
+    const source =
+      'Alpha beta <!-- mark:a note -->gamma<!-- /mark:a --> delta epsilon.';
+    const root = render('<p>Nothing of that document is here.</p>');
+    const { open, close } = markersOf(source);
+
+    expect(placeOf(open, close, source, root)).toBeNull();
+  });
+
+  it('reads the place off the opening marker for a mark whose closing marker is gone', () => {
+    const source = 'Alpha beta gamma <!-- mark:a note -->delta epsilon zeta.';
+    const root = render('<p>Alpha beta gamma delta epsilon zeta.</p>');
+    const open = source.indexOf('<!-- mark:a');
+    const close = source.indexOf('-->') + '-->'.length;
+    const text = captureText(root).text;
+
+    expect(placeOf(open, close, source, root)).toBe(
+      text.indexOf('gamma') + 'gamma'.length
+    );
+  });
+
+  it('takes the place from the other side where the words before the marker matched only in part', () => {
+    // locate answers a needle it cannot find whole with the place of its
+    // first two words, and the walk on from there ends in an unrelated
+    // clause. Here The quarterly survived the rewrite and the rest of that
+    // side did not, while the whole of the other side stands in the render.
+    const source =
+      'The quarterly report shows that revenue in the northern region ' +
+      '<!-- mark:a note -->rose sharply<!-- /mark:a --> over the period, ' +
+      'which the board will review next month.';
+    const root = render(
+      '<p>The quarterly figures are attached as a separate spreadsheet for ' +
+        'the finance team, over the period, which the board will review ' +
+        'next month.</p>'
+    );
+    const { open, close } = markersOf(source);
+    const text = captureText(root).text;
+
+    expect(placeOf(open, close, source, root)).toBe(
+      text.indexOf('over the period')
+    );
+  });
+
+  it('reports nothing where each side of the marker matched only in part', () => {
+    const source =
+      'alpha bravo charlie delta echo foxtrot golf hotel northern region ' +
+      '<!-- mark:a note -->passage here<!-- /mark:a --> and nothing else.';
+    // The tail pair of the window before the marker is here and the rest of
+    // it is not, and none of the window after it is here at all.
+    const root = render(
+      '<p>northern region is all that is left of that sentence now.</p>'
+    );
+    const { open, close } = markersOf(source);
+
+    expect(placeOf(open, close, source, root)).toBeNull();
+  });
+
+  it('reports nothing where the words after the marker matched only at their tail', () => {
+    // The tail pair of that window is in the render and its head is not, so
+    // locate answers with the tail's place walked back to the start of the
+    // render, which is a place the mark has nothing to do with.
+    const source =
+      '<!-- mark:a note -->passage<!-- /mark:a --> alpha bravo charlie ' +
+      'delta echo foxtrot golf hotel india juliet.';
+    const root = render(
+      '<p>zulu yankee xray whisky victor uniform tango sierra india ' +
+        'juliet.</p>'
+    );
+    const { open, close } = markersOf(source);
+
+    expect(placeOf(open, close, source, root)).toBeNull();
+  });
+
+  it('reports nothing where the words before the marker matched only at their tail', () => {
+    // The tail pair of that window stands in the render and its head does
+    // not, so the location answers with the tail's place walked back, which
+    // lands the end of the walk exactly on the window's own last word. One
+    // word of the answer therefore says nothing; the run of them does.
+    const source =
+      'One two three four five six seven eight group last ' +
+      '<!-- mark:a note -->passage<!-- /mark:a --> nothing here.';
+    const root = render(
+      '<p>Everything else is new text now. A working group last met in ' +
+        'April.</p>'
+    );
+    const { open, close } = markersOf(source);
+
+    expect(placeOf(open, close, source, root)).toBeNull();
+  });
+
+  it('reports nothing where the words after the marker matched only at their head', () => {
+    const source =
+      '<!-- mark:a note -->passage<!-- /mark:a --> The shipment was ' +
+      'cancelled and then nothing happened for weeks.';
+    const root = render(
+      '<p>A wholly different opening. The shipment arrived on time and ' +
+        'everyone went home early.</p>'
+    );
+    const { open, close } = markersOf(source);
+
+    expect(placeOf(open, close, source, root)).toBeNull();
+  });
+
+  it('reports nothing where the words around the marker stand whole in another part of the document', () => {
+    // A templated document repeats a sentence, and the rewrite took away
+    // the copy the mark belongs to. The words of the other copy are the
+    // window's words one for one, so only how far off it falls says that it
+    // is a place the mark has nothing to do with.
+    const repeated = 'Fixed a bug where the export dialog would not close on';
+    const source = [
+      '## Release 1.2',
+      '',
+      `${repeated} cancel.`,
+      '',
+      '## Release 1.3',
+      '',
+      `${repeated} <!-- mark:a note -->cancel again<!-- /mark:a --> today.`
+    ].join('\n');
+    const root = render(
+      '<h2>Release 1.2</h2>' +
+        `<p>${repeated} cancel.</p>` +
+        '<h2>Release 1.3</h2>' +
+        '<p>Rewritten entirely with nothing of the old sentence left here ' +
+        'at all.</p>'
+    );
+    const { open, close } = markersOf(source);
+
+    expect(placeOf(open, close, source, root)).toBeNull();
+  });
+
+  it('still reports nothing where that document also carries words the render does not write', () => {
+    // The same document with one image in it. The words of its alt text are
+    // in the file and in no text node, and a tolerance that answers to the
+    // count of such words over the whole document widens by them here, where
+    // they are nowhere near the marker - far enough to take in the copy of
+    // the sentence the case above rejects.
+    const repeated = 'Fixed a bug where the export dialog would not close on';
+    const source = [
+      '## Release 1.2',
+      '',
+      `${repeated} cancel.`,
+      '',
+      '![dialog](f.png)',
+      '',
+      '## Release 1.3',
+      '',
+      `${repeated} <!-- mark:a note -->cancel again<!-- /mark:a --> today.`
+    ].join('\n');
+    const root = render(
+      '<h2>Release 1.2</h2>' +
+        `<p>${repeated} cancel.</p>` +
+        '<p><img alt="dialog" src="f.png" /></p>' +
+        '<h2>Release 1.3</h2>' +
+        '<p>Rewritten entirely with nothing of the old sentence left here ' +
+        'at all.</p>'
+    );
+    const { open, close } = markersOf(source);
+
+    expect(placeOf(open, close, source, root)).toBeNull();
+  });
+
+  it('stands the place where the words the render never writes are all ahead of the marker', () => {
+    // A report opening with a cover figure. Its alt words are source tokens
+    // and no text node, and they all stand before a mark near the top, so
+    // the render is short of the source by the whole of them by the time
+    // the marker is reached. A bound that gives the marker a share of them
+    // in proportion to how far through the document it sits gives an early
+    // marker almost none, and refuses a run standing in the render once and
+    // word for word.
+    const alt = Array.from({ length: 17 }, (_, i) => `cover${i}`).join(' ');
+    const paragraph = (n: number): string =>
+      `Paragraph ${n} of the report carries a sentence worth reading here.`;
+    const rest = Array.from({ length: 20 }, (_, i) => paragraph(i + 1));
+    const marked =
+      'The opening line of the report itself stands here and it reads';
+    const source = [
+      `![${alt}](cover.png)`,
+      `${marked} <!-- mark:a note -->deleted passage<!-- /mark:a --> and ends here.`,
+      ...rest
+    ].join('\n\n');
+    const root = render(
+      ['<p><img alt="cover" src="cover.png" /></p>']
+        .concat([`<p>${marked} and ends here.</p>`])
+        .concat(rest.map(line => `<p>${line}</p>`))
+        .join('')
+    );
+    const { open, close } = markersOf(source);
+    const text = captureText(root).text;
+
+    const at = placeOf(open, close, source, root);
+
+    expect(at).not.toBeNull();
+    expect(text.slice(at! - 'reads'.length, at!)).toBe('reads');
+  });
+
+  it('stands the place on a document whose source carries far more words than the render shows', () => {
+    // The render is short of the source by every token it does not write,
+    // and a marked passage an agent rewrote into an image is exactly that:
+    // its alt words are in the file and in no text node. The place is
+    // expected in proportion, so the further through such a document the
+    // marker sits the further that estimate drifts. A tolerance that does
+    // not answer to the drift loses the place on a document of any ordinary
+    // length, which is every document this feature is for.
+    const alt = Array.from({ length: 30 }, (_, i) => `word${i}`).join(' ');
+    const paragraph = (n: number): string =>
+      `Paragraph ${n} of the report carries a sentence worth reading here.`;
+    const ahead = Array.from({ length: 20 }, (_, i) => paragraph(i));
+    const behind = Array.from({ length: 20 }, (_, i) => paragraph(i + 21));
+    const marked = 'The marked line reads';
+    const source = [
+      ...ahead,
+      `${marked} <!-- mark:a note -->![${alt}](m.png)` +
+        '<!-- /mark:a --> and ends here.',
+      ...behind
+    ].join('\n\n');
+    const root = render(
+      [...ahead, `${marked} and ends here.`, ...behind]
+        .map(line => `<p>${line}</p>`)
+        .join('')
+    );
+    const { open, close } = markersOf(source);
+    const text = captureText(root).text;
+
+    const at = placeOf(open, close, source, root);
+
+    expect(at).not.toBeNull();
+    expect(text.slice(at! - 'reads'.length, at!)).toBe('reads');
+  });
+
+  it('takes the copy of a repeated run nearest where the marker belongs', () => {
+    const run = 'repeat words here alpha bravo charlie delta echo foxtrot golf';
+    const source = [
+      run,
+      '',
+      'filler',
+      '',
+      `${run} <!-- mark:a note -->passage<!-- /mark:a --> tail.`
+    ].join('\n');
+    const root = render(`<p>${run}</p><p>filler</p><p>${run} tail.</p>`);
+    const { open, close } = markersOf(source);
+    const text = captureText(root).text;
+
+    // The marker sits beside the second copy, so that is the one taken; the
+    // first is further from where the run belongs than the run is long.
+    expect(placeOf(open, close, source, root)).toBe(
+      text.lastIndexOf('golf') + 'golf'.length
+    );
+  });
+
+  it('stands the place where the render lost words before the marker and gained as many after', () => {
+    // The render is the same length as the source here, so what it leaves
+    // out says nothing about how far the estimate is off: a rewrite that
+    // drops three words ahead of the marker and adds four behind it moves
+    // the run without changing either count. The run's own span is what
+    // covers that.
+    const words =
+      'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu ' +
+      'nu xi omicron';
+    const source = `${words} <!-- mark:a note -->passage<!-- /mark:a --> end.`;
+    const root = render(
+      '<p>delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron ' +
+        'end. and four words more.</p>'
+    );
+    const { open, close } = markersOf(source);
+    const text = captureText(root).text;
+
+    expect(placeOf(open, close, source, root)).toBe(
+      text.indexOf('omicron') + 'omicron'.length
+    );
+  });
+
+  it('stands the place where the render both drops and adds many words (ACC-NOTES-180)', () => {
+    // Two lengths give the net of the two counts and neither of them.
+    // Thirty words gone from the head and thirty arrived at the foot leave
+    // the counts one apart while the run before the marker has moved
+    // thirty places, so a distance read off the lengths refuses a run that
+    // stands in the render once and word for word.
+    const gone = Array.from({ length: 30 }, (_, i) => `gone${i}`).join(' ');
+    const kept =
+      'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu';
+    const extra = Array.from({ length: 30 }, (_, i) => `extra${i}`).join(' ');
+    const source = `${gone}\n\n${kept} <!-- mark:a note -->passage<!-- /mark:a --> end.`;
+    const root = render(`<p>${kept} end.</p><p>${extra}</p>`);
+    const { open, close } = markersOf(source);
+    const text = captureText(root).text;
+
+    expect(placeOf(open, close, source, root)).toBe(
+      text.indexOf(' mu') + ' mu'.length
+    );
+  });
+
+  it('reports nothing for a marker in a source of no words at all', () => {
+    const source = '<!-- mark:a note --><!-- /mark:a -->';
+    const root = render('<p>Alpha beta.</p>');
+    const { open, close } = markersOf(source);
+
+    expect(placeOf(open, close, source, root)).toBeNull();
+  });
+});

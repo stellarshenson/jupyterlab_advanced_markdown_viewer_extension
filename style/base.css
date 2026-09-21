@@ -389,6 +389,134 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 }
 
 /*
+ | A mark whose passage the render does not hold still has a place: its
+ | markers are in the file, and markerToRendered in src/anchor.ts finds where
+ | they sit from the words around them. A bar stands there (ACC-NOTES-180).
+ | It takes the swatch colour of the rules above, not the wash a passage
+ | takes, because three pixels of a wash of a fifth is not a colour anybody
+ | can see. Three rather than two so the bar is not read as a text cursor,
+ | and so the stroke still carries its colour where the display scales it
+ | onto fractional device pixels.
+ |
+ | The padding is the pointer target and carries none of the paint: the
+ | background is clipped to the content box, so the reader sees a stroke of
+ | three pixels and can hit seven, which is what makes a click on the bar a
+ | way to its row. There is no negative margin. One would buy a wider target
+ | only by taking it off the word before: the bar paints after that word and
+ | so hit-tests over it, and measured, four pixels of a letter answered as
+ | the bar - a hand cursor over a letter, the bar's tooltip over the wrong
+ | word, and a plain click there opening a note row and re-centring the
+ | preview. The line therefore costs the seven pixels the bar is wide, which
+ | is about two spaces, and that is the only place the text moves for it.
+ |
+ | A closed mark shown on request is drawn muted wherever it is drawn
+ | (ACC-NOTES-155), and that rule words it as the colour giving way. The bar
+ | gives it up too, for the secondary text colour the closed row's passage
+ | takes, which holds above three to one in either theme. Muting by height
+ | instead was tried and taken out: it is a difference the reader has nothing
+ | to compare against while one bar is on screen, it shrinks the pointer
+ | target, and it left the bar the one fully coloured mark decoration on a
+ | page where the closed passages beside it had given their hue up. The word
+ | on the bar's first line carries the state instead.
+ |
+ | The flash a selected row runs is a background colour, and on a stroke this
+ | thin it is barely a change, so a ring comes up around the bar instead.
+ | Two earlier forms were measured and taken out. A ramp of the bar's own
+ | opacity fades it to a quarter, and the one moment the reader needs it
+ | most - the panel has just scrolled the preview to a hairline they have
+ | yet to find - is the moment it would go faintest; a cue has to add to
+ | what it points at. The passage flash's own grey then read 1.96 to one
+ | against the light theme's page, which is a sound wash under a phrase and
+ | not a colour for a two pixel stroke, ACC-NOTES-177 asking three to one of
+ | a graphical object; the text colour reads 16.1 to one on either theme.
+ |
+ | The bar takes the content text colours, not the interface ones. It stands
+ | on the rendered page, not in the panel, and the two families are what a
+ | theme has to tell those apart with. The stock light theme gives them the
+ | same values; the stock dark theme does not, and the content pair is the
+ | brighter of the two there - the closed bar reads 8.5 to one against the
+ | page rather than 5.6, and the ring 16.1 rather than 12.5.
+ |
+ | The ring is a shadow and not an outline. A transparent outline is the
+ | one a reader running forced colours is shown: the platform paints every
+ | outline colour it is given, so a ring declared here to be invisible
+ | became a permanent box around every bar on a page where the marks
+ | themselves had gone - measured in Chrome under forced-colors. A shadow is
+ | dropped in that mode instead. Neither takes room in the line, so nothing
+ | reflows.
+ |
+ | The bar opts out of the forced palette altogether. Measured in the same
+ | way: a background declared here is painted the page's own canvas colour,
+ | so the bar went from a coloured stroke to seven transparent pixels that
+ | still carried a hand cursor and a tooltip, while a painted passage keeps
+ | its words and a tick keeps its forced border. The bar is the one mark
+ | decoration whose whole showing is its colour, which is the case
+ | forced-color-adjust exists for.
+ |
+ | The opt-out alone is not enough, and the query below is what finishes it.
+ | Opting out keeps the colour this stylesheet chose, and that colour was
+ | chosen against the theme's page, not against the canvas the platform has
+ | just forced underneath it. Measured in Chrome: the canvas is forced to
+ | white under a light palette and to black under a dark one, whichever
+ | theme is loaded, so a closed bar in the light theme stands at 54 percent
+ | black on black, and a bar in the dark theme stands near white on white.
+ | Two of the four pairings lost the bar outright. Inside the query the two
+ | states take the forced palette's own tokens instead, which are the only
+ | colours guaranteed to stand against that canvas: CanvasText at 21 to 1 in
+ | both palettes, GrayText at 14 to 1 in both, and Highlight for the ring at
+ | 11.3 to 1 light and 8.7 to 1 dark. Mark, the token a highlight would
+ | reach for first, is refused: it is the same yellow in both palettes and
+ | measures 1.07 to 1 on a white canvas. The ring travels through a property
+ | of its own so the query can retarget it without a second set of frames.
+ |
+ | Only the name of the animation is written here: the duration, the timing
+ | and the count cascade from the flash rule above, which is the envelope
+ | DEF-NOTES-38 recorded and FLASH_MS mirrors. A colour ramp is what that
+ | reading turns on - a ramp is not motion - and the ring's geometry is the
+ | same in the rule and in the frame, so only its colour moves.
+ */
+
+.jp-AdvancedMd-markCaret {
+  --jp-AdvancedMd-caret-ring: var(--jp-content-font-color1);
+
+  display: inline-block;
+  width: 3px;
+  height: 1em;
+  padding: 0 2px;
+  vertical-align: text-bottom;
+  cursor: pointer;
+  background-clip: content-box;
+  box-shadow: 0 0 0 2px transparent;
+  forced-color-adjust: none;
+}
+
+.jp-AdvancedMd-markCaret.jp-AdvancedMd-mark-closed {
+  background-color: var(--jp-content-font-color2);
+}
+
+.jp-AdvancedMd-markCaret.jp-AdvancedMd-markFlash {
+  animation-name: jp-AdvancedMd-caret-flash;
+}
+
+@keyframes jp-AdvancedMd-caret-flash {
+  50% {
+    box-shadow: 0 0 0 2px var(--jp-AdvancedMd-caret-ring);
+  }
+}
+
+@media (forced-colors: active) {
+  .jp-AdvancedMd-markCaret {
+    --jp-AdvancedMd-caret-ring: Highlight;
+
+    background-color: CanvasText;
+  }
+
+  .jp-AdvancedMd-markCaret.jp-AdvancedMd-mark-closed {
+    background-color: GrayText;
+  }
+}
+
+/*
  | The panel is a column of a fixed width, expanded or minimap. The width is
  | set here rather than by the layout, so the box that holds the preview and
  | the panel side by side gives the panel exactly this and the rendered
@@ -862,17 +990,22 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 
 /*
  * A closed mark shown on request: its colour gives way to a grey wash with
- * no hue, as faint as the open marks in either theme, and its row's passage
+ * no hue, as faint as the open marks in either theme, wherever it is drawn -
+ * the painted passage and the minimap tick alike - and its row's passage
  * takes the secondary text colour, which keeps the state line and the stamps
- * readable. `body` on the mark rules puts them level with the dark-theme
+ * readable. The bar is the third place a closed mark is drawn and is not in
+ * this rule: a twelve percent wash is nothing at three pixels wide, so it
+ * takes the secondary content colour solid, up with the caret rules
+ * (ACC-NOTES-180). `body` on the mark rules puts them level with the dark-theme
  * colour rules above, and the later source order wins (ACC-NOTES-155).
  */
-body .jp-AdvancedMd-mark.jp-AdvancedMd-mark-closed {
+body
+  :is(.jp-AdvancedMd-mark, .jp-AdvancedMd-notesTick).jp-AdvancedMd-mark-closed {
   background-color: rgb(128 128 128 / 12%);
 }
 
 body[data-jp-theme-light='false']
-  .jp-AdvancedMd-mark.jp-AdvancedMd-mark-closed {
+  :is(.jp-AdvancedMd-mark, .jp-AdvancedMd-notesTick).jp-AdvancedMd-mark-closed {
   background-color: rgb(200 200 200 / 12%);
 }
 
