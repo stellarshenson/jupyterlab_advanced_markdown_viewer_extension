@@ -347,51 +347,56 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
  | hue clears three to one unwalked, so rim and fill are both the hue there
  | and the swatch is a plain colour chip.
  |
- | The background-color is the rim: it is what the bar of an unanchored mark
- | takes (ACC-NOTES-180), that bar being three pixels wide with no inside to
- | fill. The swatch square overrides it further down the file.
+ | Three names, not two. The background-color is the colour that stands at
+ | the bar, which is what the bar of an unanchored mark takes
+ | (ACC-NOTES-180), that bar being three pixels wide with no inside to fill.
+ | The square's own edge is a fourth thing again on a dark page - the hue at
+ | a lower alpha than its fill, so it reads as a darker edge and not a
+ | brighter one (DEF-NOTES-113) - and it is the rim name the square binds to.
+ | On a light page the two are the same colour. The square overrides the
+ | background further down the file.
  */
 
 .jp-AdvancedMd-swatch-yellow {
-  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-yellow, #9c890a);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-yellow, #9c890a);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-yellow, #dec40e);
 
-  background-color: var(--jp-AdvancedMd-swatch-rim);
+  background-color: var(--jp-AdvancedMd-swatch-yellow, #9c890a);
 }
 
 .jp-AdvancedMd-swatch-blue {
-  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-blue, #0f70f0);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-blue, #0f70f0);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-blue, #0f70f0);
 
-  background-color: var(--jp-AdvancedMd-swatch-rim);
+  background-color: var(--jp-AdvancedMd-swatch-blue, #0f70f0);
 }
 
 .jp-AdvancedMd-swatch-pink {
-  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-pink, #f631b1);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-pink, #f631b1);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-pink, #f631b1);
 
-  background-color: var(--jp-AdvancedMd-swatch-rim);
+  background-color: var(--jp-AdvancedMd-swatch-pink, #f631b1);
 }
 
 .jp-AdvancedMd-swatch-orange {
-  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-orange, #c9740d);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-orange, #c9740d);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-orange, #f19422);
 
-  background-color: var(--jp-AdvancedMd-swatch-rim);
+  background-color: var(--jp-AdvancedMd-swatch-orange, #c9740d);
 }
 
 .jp-AdvancedMd-swatch-red {
-  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-red, #e61e46);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-red, #e61e46);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-red, #e61e46);
 
-  background-color: var(--jp-AdvancedMd-swatch-rim);
+  background-color: var(--jp-AdvancedMd-swatch-red, #e61e46);
 }
 
 .jp-AdvancedMd-swatch-green {
-  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-green, #179f26);
+  --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-green, #179f26);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-green, #1ed232);
 
-  background-color: var(--jp-AdvancedMd-swatch-rim);
+  background-color: var(--jp-AdvancedMd-swatch-green, #179f26);
 }
 
 /*

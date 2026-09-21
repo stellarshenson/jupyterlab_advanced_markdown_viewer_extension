@@ -2,6 +2,19 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.21] - 2026-09-21
+
+The colour squares in the notes panel stop glaring in the dark theme, and Shift Enter saves a note.
+
+### Added
+
+- Shift Enter in the note box saves the note, doing what the Save button does; Enter on its own still starts a new line
+
+### Changed
+
+- In a dark theme the colour square on a notes panel row, and on a Mark menu entry, is now the mark's own colour laid over the panel at a transparency worked out for that theme, so it sits quietly beside the text instead of standing as far as 6.8 to 1 away from it. Its 1 px edge is the same colour at a weaker transparency, so the edge is darker than the square rather than brighter. In a light theme the squares are unchanged, because a transparency over a pale page washes a colour out rather than calming it
+- Each square is now worked out against every surface it is drawn on, the Mark menu included. That menu is painted darker than the panel, and a square worked out against the panel alone stood too far off there
+
 ## [1.0.20] - 2026-09-21
 
 The colour squares in the notes panel keep the mark's own colour instead of a darkened stand-in.

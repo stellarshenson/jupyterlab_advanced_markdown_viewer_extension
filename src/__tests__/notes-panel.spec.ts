@@ -63,6 +63,8 @@ import {
 import { IMark, INoteEntry, MARK_COLOURS, MarkColour } from '../marks';
 import {
   HUE,
+  swatchEdgeFallback,
+  swatchEdgeProperty,
   swatchFallback,
   swatchFillFallback,
   swatchFillProperty,
@@ -716,6 +718,69 @@ describe('a row', () => {
     expect(asked).toEqual([]);
     expect(panel.node.querySelector('textarea')).toBeNull();
     expect(texts(rows()[0])).toEqual(['first line\nsecond line', 'a reply']);
+  });
+
+  it('saves from the box on Shift Enter, and leaves Enter a line break (ACC-NOTES-181)', async () => {
+    expand(rows()[0]);
+    const edit = () =>
+      rows()[0].querySelector<HTMLButtonElement>(`.${ENTRY_ICON_CLASS}`)!;
+    const typed = (): HTMLTextAreaElement =>
+      rows()[0].querySelector<HTMLTextAreaElement>('textarea')!;
+    const strike = (
+      field: HTMLTextAreaElement,
+      shift: boolean
+    ): KeyboardEvent => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        shiftKey: shift,
+        bubbles: true,
+        cancelable: true
+      });
+      field.dispatchEvent(event);
+      return event;
+    };
+
+    // Enter alone writes nothing and is left to the browser, which is what
+    // puts the line break in.
+    edit().click();
+    const field = typed();
+    field.value = 'a second thought';
+    field.dispatchEvent(new Event('input'));
+    const plain = strike(field, false);
+    expect(plain.defaultPrevented).toBe(false);
+    expect(asked).toEqual([]);
+    expect(panel.node.querySelector('textarea')).not.toBeNull();
+
+    // Shift and Enter save what the Save button would, and stop the break
+    // from going in first.
+    const shifted = strike(field, true);
+    expect(shifted.defaultPrevented).toBe(true);
+    expect(asked).toEqual([
+      'edit a first line\nsecond line -> a second thought'
+    ]);
+    await Promise.resolve();
+    expect(panel.node.querySelector('textarea')).toBeNull();
+
+    // A box holding only whitespace closes and writes nothing, as Save does.
+    asked = [];
+    edit().click();
+    const blank = typed();
+    blank.value = '   ';
+    blank.dispatchEvent(new Event('input'));
+    strike(blank, true);
+    expect(asked).toEqual([]);
+    expect(panel.node.querySelector('textarea')).toBeNull();
+  });
+
+  it('names the shortcut on the control that carries it (ACC-NOTES-181)', () => {
+    expand(rows()[0]);
+    rows()[0].querySelector<HTMLButtonElement>(`.${ENTRY_ICON_CLASS}`)!.click();
+    const save = Array.from(
+      rows()[0].querySelectorAll<HTMLButtonElement>(`.${BUTTON_CLASS}`)
+    ).find(control => control.textContent === 'Save')!;
+    // Nothing else on the panel announces it, so the tooltip of the button
+    // that does the same thing is where a reader meets it.
+    expect(save.title).toBe('Save this note (Shift Enter)');
   });
 
   it('closes an edit whose entry left the marker meanwhile (ACC-NOTES-164)', async () => {
@@ -3059,12 +3124,17 @@ describe('the mark colours in the stylesheet', () => {
         `var(${swatchFillProperty(colour)}, ${swatchFillFallback(colour)})`
       );
       expect(attribute('stroke')).toBe(
-        `var(${swatchProperty(colour)}, ${swatchFallback(colour)})`
+        `var(${swatchEdgeProperty(colour)}, ${swatchEdgeFallback(colour)})`
       );
       expect(rect).not.toContain('fill-opacity');
       expect(rect).not.toContain('stroke-opacity');
       expect(
         declaration(`.${swatchClass(colour)}`, '--jp-AdvancedMd-swatch-rim')
+      ).toContain(`var(${swatchEdgeProperty(colour)}`);
+      // The colour the bar of an unanchored mark takes is a name of its own,
+      // because the square's edge may be a transparency (ACC-NOTES-180).
+      expect(
+        declaration(`.${swatchClass(colour)}`, 'background-color')
       ).toContain(`var(${swatchProperty(colour)}`);
       expect(
         declaration(`.${swatchClass(colour)}`, '--jp-AdvancedMd-swatch-fill')
@@ -3092,7 +3162,10 @@ describe('the mark colours in the stylesheet', () => {
         /,\s*(#[0-9a-f]{6})\)$/.exec(
           declaration(`.${swatchClass(colour)}`, property)
         )![1];
-      expect(named('--jp-AdvancedMd-swatch-rim')).toBe(swatchFallback(colour));
+      expect(named('--jp-AdvancedMd-swatch-rim')).toBe(
+        swatchEdgeFallback(colour)
+      );
+      expect(named('background-color')).toBe(swatchFallback(colour));
       expect(named('--jp-AdvancedMd-swatch-fill')).toBe(
         swatchFillFallback(colour)
       );

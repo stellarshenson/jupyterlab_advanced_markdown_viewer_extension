@@ -11,23 +11,20 @@
  *
  * The bar belongs on the rim alone. Held to it the fill stops being the hue:
  * on the light theme yellow arrives as the olive #9c890a and green as
- * #179f26, while blue and red clear the bar unwalked and stay at full
- * saturation, and six of those in a column pull the eye off the text
- * (DEF-NOTES-112). The rim is the boundary the bar is about, so the fill is
- * free to be the hue and is held only to MIN_FILL, which is what keeps it
- * from washing into the page.
+ * #179f26, and six of those in a column pull the eye off the text
+ * (DEF-NOTES-112).
  *
- * Saturation is the lever for neither. The six hues already stand between
- * 0.75 and 0.92 saturated and taking one to the full moves it by at most
- * five hundredths of a ratio point - yellow reaches 1.07 to 1 against white
- * where the rim needs three. Contrast is a relation between lightnesses, so
- * the hue and the saturation are kept and the lightness is walked away from
- * the background, as far as the bar in hand asks and no further.
+ * So the fill is the mark's own colour at an alpha, and the rim is the one
+ * held to the bar. The alpha dims a dark page's square - every step of it is
+ * a step toward the page's own colour, so brightness and colour come down
+ * together and the hue survives - and the browser composites it against
+ * whatever is actually behind it, which is the panel, the selected row or
+ * the Mark submenu, three surfaces a single worked-out colour cannot serve
+ * at once (DEF-NOTES-113). On a light page an alpha dilutes rather than
+ * dims, so there the fill is the hue walked in lightness, as it was.
  *
- * On a dark page every hue clears three to one unwalked, so rim and fill are
- * both the hue and the swatch is the plain colour chip it was before this
- * module existed. On a light page five of the six fills are the hue and
- * yellow alone moves, to #e0c400.
+ * Nothing is written per theme: which of the two the page takes, the alpha
+ * itself and every bar are read from the backgrounds the page carries.
  */
 
 import { MARK_COLOURS, MarkColour } from './marks';
@@ -38,10 +35,27 @@ export const MIN_CONTRAST = 3;
 /**
  * What a swatch's fill stands at against that same background. It is not an
  * accessibility bar - the rim answers WCAG 1.4.11 for the whole object - but
- * the floor that keeps the fill from washing into the page. At it the fill
- * is still the hue: on the light theme it moves yellow alone.
+ * the floor that keeps the fill from washing into the page.
  */
 export const MIN_FILL = 1.5;
+
+/**
+ * How far a swatch's edge stands from the fill it encloses. The edge is
+ * darker than the fill on a dark page at the Star Colonel's instruction, and
+ * nothing darker than the panel can reach the three to one a boundary is
+ * otherwise asked for - the panel's own luminance puts that colour at
+ * -0.0285, which no colour has - so the edge is measured against the fill it
+ * borders instead (DEF-NOTES-113).
+ */
+export const RIM_EDGE = 1.25;
+
+/**
+ * How finely the alpha of a fill is looked for: in whole percent, which is
+ * the unit the stylesheet carries it in. Looking finer and rounding to the
+ * percent afterwards can round the answer back below the floor it was
+ * chosen to clear.
+ */
+const ALPHAS = 100;
 
 /**
  * The background luminance at which black and white give the same ratio.
@@ -59,12 +73,21 @@ const CROSSOVER = 0.179;
 const STEPS = 1000;
 
 /**
- * The two backgrounds a swatch is drawn on: a panel row, and a selected one.
- * A Mark submenu entry sits on --jp-layout-color0, which is not walked
- * against because it lies further out on the same ramp as --jp-layout-color1
- * and so can only stand further from a swatch that already cleared it.
+ * The three backgrounds a swatch is drawn on: a panel row, a selected one,
+ * and the Mark submenu, which is painted on --jp-layout-color0.
+ *
+ * The menu was left out while the fill had a floor and nothing else, on the
+ * grounds that it lies further out on the same ramp and so can only stand
+ * further from a swatch that already cleared the floor. That holds for a
+ * floor and fails for a ceiling: standing further is the thing a ceiling
+ * forbids, and a fill worked out against the panel alone was measured at 6.6
+ * to 1 in the menu against a ceiling of 5 (DEF-NOTES-113).
  */
-const BACKGROUNDS = ['--jp-layout-color1', '--jp-layout-color2'];
+const BACKGROUNDS = [
+  '--jp-layout-color0',
+  '--jp-layout-color1',
+  '--jp-layout-color2'
+];
 
 /**
  * The hue of each mark colour, the light-theme rgb of style/base.css before
@@ -87,6 +110,16 @@ export function swatchProperty(colour: MarkColour): string {
 /** The custom property a swatch's fill of one colour is painted from. */
 export function swatchFillProperty(colour: MarkColour): string {
   return `--jp-AdvancedMd-swatch-fill-${colour}`;
+}
+
+/**
+ * The custom property a swatch's edge of one colour is painted from. It is
+ * not the same as the rim colour above: that one stands at the bar and is
+ * what the bar of an unanchored mark takes (ACC-NOTES-180), where this one
+ * may be a transparency of the hue that only has to be told from the fill.
+ */
+export function swatchEdgeProperty(colour: MarkColour): string {
+  return `--jp-AdvancedMd-swatch-edge-${colour}`;
 }
 
 /** A colour as its three channels, 0 to 255. */
@@ -193,6 +226,44 @@ function fromHsl(hue: number, saturation: number, lightness: number): Rgb {
   return parts.map(part => (part + base) * 255) as Rgb;
 }
 
+/** Whether the page behind a swatch is a light one. */
+function pageIsLight(backgrounds: Rgb[]): boolean {
+  return backgrounds.some(background => luminance(background) > CROSSOVER);
+}
+
+/** A colour laid over a background at an alpha, as the browser composites it. */
+export function composite(colour: Rgb, alpha: number, background: Rgb): Rgb {
+  return colour.map((part, at) =>
+    Math.round(alpha * part + (1 - alpha) * background[at])
+  ) as Rgb;
+}
+
+/**
+ * The smallest alpha, in whole percent, at which the hue laid over every one
+ * of the backgrounds still stands at the bar - or null where none does.
+ *
+ * An alpha is a dimmer on a dark page: every step of it is a step toward the
+ * page's own colour, so the square loses brightness and colour together and
+ * keeps the hue it is named after. On a light page the same step dilutes
+ * instead, and the answer is refused there rather than washed out.
+ */
+function alphaAt(hue: Rgb, backgrounds: Rgb[], bar: number): number | null {
+  if (pageIsLight(backgrounds)) {
+    return null;
+  }
+  for (let percent = 1; percent <= ALPHAS; percent++) {
+    const stands = backgrounds.every(
+      background =>
+        contrast(composite(hue, percent / ALPHAS, background), background) >=
+        bar
+    );
+    if (stands) {
+      return percent;
+    }
+  }
+  return null;
+}
+
 /** How far a colour stands from the nearest of the backgrounds behind it. */
 function worst(colour: Rgb, backgrounds: Rgb[]): number {
   return Math.min(
@@ -294,17 +365,104 @@ const LIGHT_BACKGROUNDS: Rgb[] = [
 ];
 
 /**
+ * The fill of a swatch.
+ *
+ * On a dark page it is the mark's own colour at full saturation, given an
+ * alpha, so the browser composites it against whatever is actually behind
+ * it: the panel, the selected row, or the Mark submenu, which is painted on
+ * --jp-layout-color0 and is darker than either. One value holds its distance
+ * on all three, where a colour worked out against the panel alone stood at
+ * 6.6 to 1 in the menu (DEF-NOTES-113). The alpha is the smallest that keeps
+ * the square off every one of them.
+ *
+ * On a light page there is no alpha to be had: laying a hue over white at
+ * anything under full strength dilutes it rather than dimming it, and the
+ * square washes out. The hue is walked in lightness there, as it was before.
+ */
+export function swatchFilling(hue: string, backgrounds: Rgb[]): string {
+  if (backgrounds.length === 0) {
+    return hue;
+  }
+  const percent = alphaAt(parse(hue)!, backgrounds, MIN_FILL);
+  if (percent === null) {
+    return contrasting(hue, backgrounds, MIN_FILL);
+  }
+  const [red, green, blue] = parse(hue)!;
+  return `rgb(${red} ${green} ${blue} / ${percent}%)`;
+}
+
+/**
+ * The colour of a swatch that stands at the bar: the hue walked in lightness
+ * until it clears MIN_CONTRAST against every background behind it.
+ *
+ * It is the swatch's edge on a light page, and it is what the bar of an
+ * unanchored mark is painted in wherever the theme (ACC-NOTES-180), that bar
+ * being three pixels wide with no inside to fill and nothing but its colour
+ * to show. It cannot be the hue at an alpha: on the dark theme's selected
+ * row blue, pink and red do not reach three to one at full strength -
+ * 2.20, 2.87 and 2.22 - so an alpha has no answer there and the walk, which
+ * may leave the hue's own lightness, is the only thing that carries it.
+ */
+export function swatchBarring(hue: string, backgrounds: Rgb[]): string {
+  return contrasting(hue, backgrounds, MIN_CONTRAST);
+}
+
+/**
+ * The edge of a swatch: the 1 px rim drawn inside the square.
+ *
+ * On a light page it is the colour above, which stands at the bar and is
+ * darker than the fill there in any case. On a dark page it is the same hue
+ * at a lower alpha than the fill, so it sits between the fill and the panel
+ * and reads as a darker edge rather than a brighter one. Being the same hue
+ * over the same panel, it stays darker than the fill on every backdrop the
+ * square is drawn on, and it is held to RIM_EDGE against that fill.
+ *
+ * Where no lower alpha is far enough from the fill - which takes a fill so
+ * faint there is no room under it - the fill is handed back and the square
+ * carries no edge at all, rather than an edge nobody can see.
+ */
+export function swatchRimming(hue: string, backgrounds: Rgb[]): string {
+  const colour = parse(hue);
+  const fill =
+    colour && backgrounds.length > 0
+      ? alphaAt(colour, backgrounds, MIN_FILL)
+      : null;
+  if (fill === null || !colour) {
+    return swatchBarring(hue, backgrounds);
+  }
+  for (let percent = fill - 1; percent >= 0; percent--) {
+    const apart = backgrounds.every(
+      background =>
+        contrast(
+          composite(colour, percent / ALPHAS, background),
+          composite(colour, fill / ALPHAS, background)
+        ) >= RIM_EDGE
+    );
+    if (apart) {
+      const [red, green, blue] = colour;
+      return `rgb(${red} ${green} ${blue} / ${percent}%)`;
+    }
+  }
+  return swatchFilling(hue, backgrounds);
+}
+
+/**
  * The colour a swatch's rim falls back to where the properties are not on
  * the page: the light theme's own answer, which is what the stylesheet
  * names.
  */
 export function swatchFallback(colour: MarkColour): string {
-  return contrasting(HUE[colour], LIGHT_BACKGROUNDS);
+  return swatchBarring(HUE[colour], LIGHT_BACKGROUNDS);
+}
+
+/** The colour a swatch's edge falls back to, the light theme's answer again. */
+export function swatchEdgeFallback(colour: MarkColour): string {
+  return swatchRimming(HUE[colour], LIGHT_BACKGROUNDS);
 }
 
 /** The colour a swatch's fill falls back to, the light theme's answer again. */
 export function swatchFillFallback(colour: MarkColour): string {
-  return contrasting(HUE[colour], LIGHT_BACKGROUNDS, MIN_FILL);
+  return swatchFilling(HUE[colour], LIGHT_BACKGROUNDS);
 }
 
 /**
@@ -321,19 +479,17 @@ export function applySwatchColours(host: HTMLElement): void {
     resolve(host, style.getPropertyValue(name))
   ).filter((background): background is Rgb => background !== null);
   for (const colour of MARK_COLOURS) {
-    const bars: [string, number][] = [
-      [swatchProperty(colour), MIN_CONTRAST],
-      [swatchFillProperty(colour), MIN_FILL]
+    const painters: [string, (hue: string, on: Rgb[]) => string][] = [
+      [swatchProperty(colour), swatchBarring],
+      [swatchEdgeProperty(colour), swatchRimming],
+      [swatchFillProperty(colour), swatchFilling]
     ];
-    for (const [property, bar] of bars) {
+    for (const [property, paint] of painters) {
       if (backgrounds.length === 0) {
         host.style.removeProperty(property);
         continue;
       }
-      host.style.setProperty(
-        property,
-        contrasting(HUE[colour], backgrounds, bar)
-      );
+      host.style.setProperty(property, paint(HUE[colour], backgrounds));
     }
   }
 }

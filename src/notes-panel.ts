@@ -1311,7 +1311,8 @@ export class NotesPanel extends Widget {
 
   /**
    * The note entry: a text box, and the two ways out of it in a row below
-   * the box, so the box keeps the panel's whole width.
+   * the box, so the box keeps the panel's whole width. Shift Enter in the
+   * box saves, as the Save button does (ACC-NOTES-181).
    *
    * Saving blank text writes nothing, so a passage mark stays bare rather than
    * gaining an empty note line, and a document note with no note is removed as
@@ -1363,26 +1364,37 @@ export class NotesPanel extends Widget {
         this._render();
       })
     );
-    buttons.appendChild(
-      button(BUTTON_CLASS, 'Save', 'Save this note', () => {
-        const written = text.value.trim();
-        if (!written) {
-          this._closeEntry();
-          this._render();
-          return;
+    const save = (): void => {
+      const written = text.value.trim();
+      if (!written) {
+        this._closeEntry();
+        this._render();
+        return;
+      }
+      const write = entry.editing
+        ? this._handlers.editNote(entry.id, entry.editing, written)
+        : this._handlers.addNote(entry.id, written);
+      void write.then(saved => {
+        // An edit that found no entry to rewrite has nothing left to edit;
+        // a new entry the mark could not take stays in its field.
+        if ((saved || entry.editing) && this._entry?.id === entry.id) {
+          this._entry = null;
         }
-        const write = entry.editing
-          ? this._handlers.editNote(entry.id, entry.editing, written)
-          : this._handlers.addNote(entry.id, written);
-        void write.then(saved => {
-          // An edit that found no entry to rewrite has nothing left to edit;
-          // a new entry the mark could not take stays in its field.
-          if ((saved || entry.editing) && this._entry?.id === entry.id) {
-            this._entry = null;
-          }
-          this._render();
-        });
-      })
+        this._render();
+      });
+    };
+    // Shift Enter saves from the box, so a note is written and put away
+    // without the hand leaving the keyboard (ACC-NOTES-181). Enter alone
+    // stays a line break: a note runs to more than one line often enough
+    // that taking the break away would cost more than the shortcut saves.
+    text.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && event.shiftKey) {
+        event.preventDefault();
+        save();
+      }
+    });
+    buttons.appendChild(
+      button(BUTTON_CLASS, 'Save', 'Save this note (Shift Enter)', save)
     );
     return form;
   }

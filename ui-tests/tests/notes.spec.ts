@@ -601,7 +601,7 @@ test.describe('marking a passage', () => {
         property
       );
     const worked = () => written('--jp-AdvancedMd-swatch-fill-');
-    const rims = () => written('--jp-AdvancedMd-swatch-');
+    const rims = () => written('--jp-AdvancedMd-swatch-edge-');
     const readAll = async (): Promise<string[][]> => {
       await openMenu(page, await select(page, P1));
       await openMarkMenu(page);
@@ -619,8 +619,10 @@ test.describe('marking a passage', () => {
     // style/base.css names both sets as its fallbacks and a jest check holds
     // each to the walk's own answer. Reading the property back would agree
     // with the icon whatever the walk gave, so the values are named here.
-    // Five of the six fills are the hue itself; yellow alone is walked, and
-    // every rim but blue's, pink's and red's is.
+    // A light page takes no alpha - one there dilutes rather than dims
+    // (DEF-NOTES-113) - so each fill is the hue walked to the floor and each
+    // rim the hue walked to the bar. Blue, pink and red stand at the bar as
+    // they are, so those three rims are their fills.
     const lightFills = [
       'rgb(222, 196, 14)',
       'rgb(15, 112, 240)',
@@ -683,6 +685,20 @@ test.describe('marking a passage', () => {
           );
           return (high + 0.05) / (low + 0.05);
         };
+        // A dark page's fill is the hue at an alpha, so what the reader sees
+        // is the composite against whatever is behind it (DEF-NOTES-113).
+        const flatten = (colour: string, behind: string): string => {
+          const parts = colour.match(/[\d.]+/g)!.map(Number);
+          const alpha = parts.length > 3 ? parts[3] : 1;
+          if (alpha === 1) {
+            return colour;
+          }
+          const back = behind.match(/[\d.]+/g)!.map(Number);
+          const mixed = [0, 1, 2].map(at =>
+            Math.round(alpha * parts[at] + (1 - alpha) * back[at])
+          );
+          return `rgb(${mixed.join(', ')})`;
+        };
         const backdrop = (node: Element | null): string => {
           for (let walk = node; walk; walk = walk.parentElement) {
             const colour = getComputedStyle(walk).backgroundColor;
@@ -704,47 +720,60 @@ test.describe('marking a passage', () => {
         const squares = Array.from(
           document.querySelectorAll('.jp-AdvancedMd-notesSwatch')
         );
-        return {
-          rims: squares
-            .map(swatch => ratio(rim(swatch), backdrop(swatch.parentElement)))
-            .concat(
-              rects.map(rect =>
-                ratio(getComputedStyle(rect).stroke, backdrop(rect))
-              )
-            ),
-          fills: squares
-            .map(swatch =>
-              ratio(
-                getComputedStyle(swatch).backgroundColor,
-                backdrop(swatch.parentElement)
-              )
-            )
-            .concat(
-              rects.map(rect =>
-                ratio(getComputedStyle(rect).fill, backdrop(rect))
-              )
-            )
+        const reading = (
+          edgeColour: string,
+          fillColour: string,
+          behind: string
+        ): { edge: number; fill: number; apart: number } => {
+          const edge = flatten(edgeColour, behind);
+          const fill = flatten(fillColour, behind);
+          return {
+            edge: ratio(edge, behind),
+            fill: ratio(fill, behind),
+            apart: ratio(edge, fill)
+          };
         };
+        return squares
+          .map(swatch => {
+            const behind = backdrop(swatch.parentElement);
+            return reading(
+              rim(swatch),
+              getComputedStyle(swatch).backgroundColor,
+              behind
+            );
+          })
+          .concat(
+            rects.map(rect => {
+              const behind = backdrop(rect);
+              const style = getComputedStyle(rect);
+              return reading(style.stroke, style.fill, behind);
+            })
+          );
       });
 
-    const bar = async (expected: number): Promise<void> => {
+    const bar = async (expected: number, dark: boolean): Promise<void> => {
       const measured = await ratios();
-      expect(measured.rims.length).toBe(expected);
-      expect(measured.fills.length).toBe(expected);
-      for (const rim of measured.rims) {
-        expect(rim).toBeGreaterThanOrEqual(3);
-      }
-      for (const fill of measured.fills) {
-        expect(fill).toBeGreaterThanOrEqual(1.5);
+      expect(measured.length).toBe(expected);
+      for (const swatch of measured) {
+        expect(swatch.fill).toBeGreaterThanOrEqual(1.5);
+        if (dark) {
+          // Nothing darker than the panel reaches three to one against it,
+          // so on a dark page the edge is darker than the fill and is
+          // measured against the fill it borders (DEF-NOTES-113).
+          expect(swatch.apart).toBeGreaterThanOrEqual(1.25);
+          expect(swatch.edge).toBeLessThan(swatch.fill);
+        } else {
+          expect(swatch.edge).toBeGreaterThanOrEqual(3);
+        }
       }
     };
 
-    const sweep = async (): Promise<void> => {
+    const sweep = async (dark: boolean): Promise<void> => {
       // The swatch of a row, on a plain row and on the selected one.
-      await bar(1);
+      await bar(1, dark);
       await rows(page).first().click();
       await expect(rows(page).first()).toHaveClass(/notesRow-selected/);
-      await bar(1);
+      await bar(1, dark);
 
       // The five colours the row rolls down under its own swatch.
       await rows(page)
@@ -754,7 +783,7 @@ test.describe('marking a passage', () => {
       await expect(
         rows(page).first().locator('.jp-AdvancedMd-notesColours')
       ).toBeVisible();
-      await bar(6);
+      await bar(6, dark);
       await page.keyboard.press('Escape');
       await expect(
         rows(page).first().locator('.jp-AdvancedMd-notesColours')
@@ -763,15 +792,15 @@ test.describe('marking a passage', () => {
       // The six the Mark submenu offers.
       await openMenu(page, await select(page, P1));
       await openMarkMenu(page);
-      await bar(7);
+      await bar(7, dark);
       await closeMenus(page);
     };
 
     await mark(page, P1);
     await expect(rows(page)).toHaveCount(1);
-    await sweep();
+    await sweep(false);
     await page.theme.setDarkTheme();
-    await sweep();
+    await sweep(true);
   });
 
   test('ACC-NOTES-134 keeps every highlight faint in both themes', async ({
@@ -1418,6 +1447,43 @@ test.describe('marking a passage', () => {
     expect(fonts.family).toBe(fonts.noteFamily);
     expect(fonts.family).not.toMatch(/monospace/);
     expect(fonts.size).toBeCloseTo(fonts.noteSize, 2);
+  });
+
+  test('ACC-NOTES-181 saves the note on Shift Enter and keeps Enter a line break', async ({
+    page
+  }) => {
+    await mark(page, P1);
+    await openRow(page);
+    await panelButton(page, 'Comment').click();
+    const field = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await expect(field).toBeFocused();
+    await expect(panelButton(page, 'Save')).toHaveAttribute(
+      'title',
+      'Save this note (Shift Enter)'
+    );
+
+    // Enter alone puts the break in and saves nothing.
+    await field.type('first line');
+    await page.keyboard.press('Enter');
+    await field.type('second line');
+    await expect(field).toHaveValue('first line\nsecond line');
+    await expect(field).toBeVisible();
+
+    // Shift and Enter save, and the break does not go in on the way.
+    await page.keyboard.press('Shift+Enter');
+    await expect(field).toHaveCount(0);
+    const shown = rows(page).first().locator('.jp-AdvancedMd-notesText');
+    await expect(shown).toHaveText('first line\nsecond line');
+
+    // A box holding only whitespace closes and writes nothing.
+    await panelButton(page, 'Reply').click();
+    const again = page.locator('.jp-AdvancedMd-notesForm textarea');
+    await again.fill('   ');
+    await page.keyboard.press('Shift+Enter');
+    await expect(again).toHaveCount(0);
+    await expect(
+      rows(page).first().locator('.jp-AdvancedMd-notesText')
+    ).toHaveCount(1);
   });
 
   test('ACC-NOTES-151 draws the note field as a rounded box with a brand-coloured border while focused, no ring, and Cancel then Save at the right edge in the look of Add note', async ({

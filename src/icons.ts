@@ -28,10 +28,10 @@ import {
 import { MARK_COLOURS, MarkColour, PanelState } from './marks';
 
 import {
-  swatchFallback,
+  swatchEdgeFallback,
+  swatchEdgeProperty,
   swatchFillFallback,
-  swatchFillProperty,
-  swatchProperty
+  swatchFillProperty
 } from './swatch';
 
 /**
@@ -64,7 +64,7 @@ function swatch(colour: MarkColour): string {
     `<rect x="${offset}" y="${offset}" width="${size}" ` +
     `height="${size}" rx="${SWATCH_RADIUS - SWATCH_RIM / 2}" ` +
     `fill="var(${swatchFillProperty(colour)}, ${swatchFillFallback(colour)})" ` +
-    `stroke="var(${swatchProperty(colour)}, ${swatchFallback(colour)})" ` +
+    `stroke="var(${swatchEdgeProperty(colour)}, ${swatchEdgeFallback(colour)})" ` +
     `stroke-width="${SWATCH_RIM}"/></svg>`
   );
 }
