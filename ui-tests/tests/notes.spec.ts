@@ -5063,7 +5063,7 @@ test.describe('a mark the render has no passage for', () => {
       (node: HTMLElement) =>
         (node as unknown as { flashed: Promise<unknown> }).flashed
     )) as { name: string; box: number };
-    expect(flashing.name).toBe('jp-AdvancedMd-caret-flash');
+    expect(flashing.name).toBe('jp-AdvancedMd-ring-flash');
     expect(flashing.box).toBe(placed.box);
   });
 
@@ -5124,5 +5124,245 @@ test.describe('a mark the render has no passage for', () => {
     }));
     expect(placed.parent).toBe('LI');
     expect(placed.item).toContain('The first item mentions apples and');
+  });
+});
+
+test.describe('a note on a drawn diagram (ACC-NOTES-182)', () => {
+  test.use({ mockSettings: settings() });
+
+  /** A document whose one fence JupyterLab draws as a picture. */
+  const DIAGRAM = [
+    '# Report',
+    '',
+    'The first paragraph is unchanged.',
+    '',
+    '```mermaid',
+    'graph TD',
+    '  Alpha[Start here] --> Beta[End here]',
+    '```',
+    '',
+    'The last paragraph mentions cherries and figs.',
+    ''
+  ].join('\n');
+
+  /** The picture the fence was drawn into, once it is on screen. */
+  const picture = (page: any) =>
+    page.locator('.jp-RenderedMarkdown:visible .jp-RenderedMermaid img');
+
+  test.beforeEach(async ({ page, tmpPath }) => {
+    await page.contents.uploadContent(DIAGRAM, 'text', `${tmpPath}/${FILE}`);
+    await openPreview(page, `${tmpPath}/${FILE}`);
+    await expect(picture(page)).toHaveCount(1);
+  });
+
+  test('marks the fence from a right click on the picture, and washes it', async ({
+    page,
+    tmpPath
+  }) => {
+    // A picture holds no words, so there is nothing to drag across: the
+    // press that opens the menu is what selects the diagram.
+    const box = (await picture(page).boundingBox())!;
+    await openMenu(page, {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2
+    });
+    await openMarkMenu(page);
+    await choose(page, colourLabel('yellow'));
+
+    const figure = page.locator(
+      '.jp-RenderedMarkdown:visible .jp-AdvancedMd-markDiagram'
+    );
+    await expect(figure).toHaveCount(1);
+
+    const text = fileText(`${tmpPath}/${FILE}`);
+    const id = /<!-- mark:([0-9a-f-]+) note colour=yellow -->/.exec(text)?.[1];
+    expect(id).toMatch(UUID);
+    // The markers go on their own lines around the whole fence, so the fence
+    // still opens a line and still draws.
+    expect(text).toContain(`${opening(id!)}\n\`\`\`mermaid\n`);
+    expect(text).toContain(`\n\`\`\`\n${closing(id!)}\n`);
+
+    // The wash is drawn over the picture, not behind it, and it is the
+    // colour the reader chose rather than nothing at all.
+    const drawn = await figure.evaluate((node: HTMLElement) => ({
+      tag: node.tagName,
+      wash: getComputedStyle(node, '::after').backgroundColor,
+      over: getComputedStyle(node, '::after').position,
+      through: getComputedStyle(node, '::after').pointerEvents,
+      ring: getComputedStyle(node, '::after').boxShadow,
+      clips: getComputedStyle(node).overflow
+    }));
+    expect(drawn.tag).toBe('FIGURE');
+    expect(drawn.over).toBe('absolute');
+    expect(drawn.through).toBe('none');
+    expect(drawn.wash).toMatch(/^rgba\(240, 212, 15, 0\.2\)$/);
+    // The figure scrolls its own content, so a ring drawn outside it would
+    // be clipped away and the reveal flash would paint nothing at all.
+    expect(drawn.clips).not.toBe('visible');
+    expect(drawn.ring).toContain('inset');
+
+    // The hidden source the mark anchors to is never painted as text.
+    await expect(
+      page.locator('.jp-RenderedMarkdown:visible .jp-AdvancedMd-mark')
+    ).toHaveCount(0);
+  });
+
+  test('leaves the keyboard shortcut working after a press on the picture', async ({
+    page,
+    tmpPath
+  }) => {
+    // The press takes none of the browser's own answer to it, which is what
+    // puts the focus in the viewer the shortcut is bound to.
+    const box = (await picture(page).boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.locator('.jp-AdvancedMd-selecting')).toHaveCount(1);
+
+    await page.keyboard.press('Control+Shift+M');
+
+    await expect(
+      page.locator('.jp-RenderedMarkdown:visible .jp-AdvancedMd-markDiagram')
+    ).toHaveCount(1);
+    expect(fileText(`${tmpPath}/${FILE}`)).toMatch(
+      /<!-- mark:[0-9a-f-]+ note colour=yellow -->\n```mermaid\n/
+    );
+  });
+
+  test('keeps a diagram inside a callout in its quote, still drawing', async ({
+    page,
+    tmpPath
+  }) => {
+    // A marker written at the left margin would end the quote, and one
+    // written into the fence line would land in its info string and stop
+    // the diagram drawing altogether.
+    // A file of its own, so the preview opened by the setup is not the one
+    // under test and no change has to travel from disk first.
+    const target = `${tmpPath}/callout.md`;
+    await page.contents.uploadContent(
+      [
+        '# Report',
+        '',
+        'The first paragraph is unchanged.',
+        '',
+        '> [!NOTE]',
+        '> See the flow.',
+        '>',
+        '> ```mermaid',
+        '> graph TD',
+        '>   Alpha[Start here] --> Beta[End here]',
+        '> ```',
+        ''
+      ].join('\n'),
+      'text',
+      target
+    );
+    await openPreview(page, target);
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'See the flow.'
+    );
+    await expect(picture(page)).toHaveCount(1);
+
+    const box = (await picture(page).boundingBox())!;
+    await openMenu(page, {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2
+    });
+    await openMarkMenu(page);
+    await choose(page, colourLabel('green'));
+
+    // The wash is painted when the mark is read back, which is after the
+    // write has landed on disk.
+    await expect(
+      page.locator('.jp-RenderedMarkdown:visible .jp-AdvancedMd-markDiagram')
+    ).toHaveCount(1);
+    await expect.poll(() => fileText(target)).toContain('<!-- mark:');
+    const text = fileText(target);
+    const id = /<!-- mark:([0-9a-f-]+) note colour=green -->/.exec(text)?.[1];
+    expect(id).toMatch(UUID);
+    expect(text).toContain(
+      `> ${opening(id!, 'note colour=green')}\n> \`\`\`mermaid`
+    );
+    expect(text).toContain(`> \`\`\`\n> ${closing(id!)}`);
+    // The fence still draws, which is what says the markers stayed out of
+    // its info string and out of its program.
+    await expect(picture(page)).toHaveCount(1);
+  });
+
+  test('lists the diagram in the panel and scrolls to it from its row', async ({
+    page,
+    tmpPath
+  }) => {
+    const box = (await picture(page).boundingBox())!;
+    await openMenu(page, {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2
+    });
+    await choose(page, 'Add note');
+    await writeNote(page, 'Redraw this as a sequence.');
+
+    await expect(rows(page)).toHaveCount(1);
+    const figure = page.locator(
+      '.jp-RenderedMarkdown:visible .jp-AdvancedMd-markDiagram'
+    );
+    // The panel reaches the diagram by the same attribute it reaches a
+    // painted passage by, so choosing the row flashes it.
+    await expect(figure).toHaveAttribute('data-mark', UUID);
+    await expect(figure).toHaveAttribute(
+      'title',
+      /Redraw this as a sequence\./
+    );
+    expect(fileText(`${tmpPath}/${FILE}`)).toContain(
+      'Redraw this as a sequence.'
+    );
+  });
+});
+
+test.describe('a note on text a character reference holds together (ACC-NOTES-183)', () => {
+  test.use({ mockSettings: settings() });
+
+  /** A proposal row whose status chip is raw HTML, as such documents are. */
+  const CHIPPED = [
+    '# Report',
+    '',
+    'The first paragraph is unchanged.',
+    '',
+    '<table>',
+    '<tr>',
+    '<td>Image normalisation</td>',
+    '<td><span style="white-space:nowrap">In&nbsp;Scope</span></td>',
+    '</tr>',
+    '</table>',
+    ''
+  ].join('\n');
+
+  test('marks the chip and leaves the reference as the file writes it', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(CHIPPED, 'text', target);
+    await openPreview(page, target);
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      'Image normalisation'
+    );
+
+    // The browser shows the reference as a space, so the render has two
+    // words where the file has one run of characters.
+    await openMenu(page, await select(page, 'In Scope'));
+    await openMarkMenu(page);
+    await choose(page, colourLabel('pink'));
+
+    const painted = page.locator(
+      '.jp-RenderedMarkdown:visible .jp-AdvancedMd-mark'
+    );
+    await expect(painted).toHaveCount(1);
+    await expect(painted).toHaveText('In Scope');
+
+    const text = fileText(target);
+    const id = /<!-- mark:([0-9a-f-]+) note colour=pink -->/.exec(text)?.[1];
+    expect(id).toMatch(UUID);
+    expect(text).toContain(
+      `<span style="white-space:nowrap">${opening(id!, 'note colour=pink')}` +
+        `In&nbsp;Scope${closing(id!)}</span>`
+    );
   });
 });

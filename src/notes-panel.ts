@@ -122,9 +122,26 @@ export const BADGE_EMPTY_CLASS = 'jp-AdvancedMd-notesBadge-empty';
  * so the two are written here once for the decorator and the panel alike.
  */
 export const MARK_CLASS = 'jp-AdvancedMd-mark';
-export const MARK_ATTRIBUTE = 'data-mark';
+const MARK_ATTRIBUTE = 'data-mark';
+/**
+ * How a decoration of the render is looked for by the mark it belongs to.
+ *
+ * The attribute names every mark the decoration carries, separated by
+ * spaces: a painted passage carries one, and a washed diagram carries each
+ * of the marks over its fence, a picture having one wash to give
+ * (ACC-NOTES-182). The word match reads both.
+ */
+export const markedBy = (id: string): string => `[${MARK_ATTRIBUTE}~="${id}"]`;
 /** Class the decoration of a closed mark carries while closed marks are shown. */
 export const MARK_CLOSED_CLASS = 'jp-AdvancedMd-mark-closed';
+/**
+ * Class the figure of a drawn diagram carries while a mark covers it
+ * (ACC-NOTES-182). A diagram holds no words to wrap, so the figure is washed
+ * rather than any text inside it, and it carries the same attribute a
+ * passage does, so the panel scrolls to it and flashes it through the one
+ * query.
+ */
+export const DIAGRAM_CLASS = 'jp-AdvancedMd-markDiagram';
 /**
  * Class of the bar that stands where an unanchored mark sits (ACC-NOTES-180).
  * It carries the same attribute a passage does, so the panel reaches it by
@@ -797,9 +814,7 @@ export class NotesPanel extends Widget {
    */
   private _keepInView(id: string): void {
     const root = this._root();
-    const marked = root?.querySelector<HTMLElement>(
-      `[${MARK_ATTRIBUTE}="${id}"]`
-    );
+    const marked = root?.querySelector<HTMLElement>(markedBy(id));
     if (!root || !marked) {
       return;
     }
@@ -1436,9 +1451,7 @@ export class NotesPanel extends Widget {
     if (!root) {
       return;
     }
-    const marked = Array.from(
-      root.querySelectorAll<HTMLElement>(`[${MARK_ATTRIBUTE}="${id}"]`)
-    );
+    const marked = Array.from(root.querySelectorAll<HTMLElement>(markedBy(id)));
     if (!marked.length) {
       return;
     }

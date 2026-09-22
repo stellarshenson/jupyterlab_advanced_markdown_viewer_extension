@@ -1202,11 +1202,14 @@ describe('LiveViewController', () => {
       jest.advanceTimersByTime(300);
       applied();
       render('<p>w5 w2 w3 w4</p>');
-      // The ghost stands whole for the 200 ms left of its pause.
+      // The ghost stands whole for the rest of its pause, which the three
+      // samples below spend 150 ms of.
       for (const held of sample(() => ghosts(), 50, 3)) {
         expect(held).toEqual(['w0 w1 ']);
       }
-      jest.advanceTimersByTime(50 + 'w0 w1 '.length * 10 + 32);
+      jest.advanceTimersByTime(
+        GHOST_HOLD_MS - 300 - 150 + 'w0 w1 '.length * 10 + 32
+      );
       expect(ghosts()).toEqual([]);
     });
 
@@ -1225,7 +1228,9 @@ describe('LiveViewController', () => {
       for (const held of sample(() => ghosts(), 50, 9)) {
         expect(held).toEqual(['alpha beta gamma']);
       }
-      jest.advanceTimersByTime(50 + 'alpha beta gamma'.length * 10 + 32);
+      jest.advanceTimersByTime(
+        GHOST_HOLD_MS - 450 + 'alpha beta gamma'.length * 10 + 32
+      );
       expect(ghosts()).toEqual([]);
       expect(root.textContent).toBe('iota theta delta eta');
     });

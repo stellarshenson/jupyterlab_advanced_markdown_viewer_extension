@@ -1,6 +1,18 @@
 import { changeRanges, diffWords, mapOffsets } from '../diff';
-import { ChangeAnimator, GHOST_HOLD_MS, TYPING_CLASS } from '../animate';
+import {
+  ChangeAnimator,
+  FADE_IN_MS,
+  GHOST_HOLD_MS,
+  TYPING_CLASS
+} from '../animate';
 import { ADDED_CLASS, captureText, decorate, undecorate } from '../highlight';
+
+// The test compiler options carry the jest types alone, so the two things
+// this file needs from the module system are declared where they are used.
+declare const __dirname: string;
+const { readFileSync } = jest.requireActual('fs') as {
+  readFileSync(file: string, encoding: string): string;
+};
 
 /**
  * Build a stand-in for the rendered Markdown host.
@@ -386,5 +398,70 @@ describe('ChangeAnimator', () => {
       }
       expect(added(again)[1]).toBe('brown');
     });
+  });
+});
+
+describe('the three beats of a removal', () => {
+  const stylesheet = readFileSync(`${__dirname}/../../style/base.css`, 'utf8');
+  const variable = (name: string): number =>
+    Number(
+      new RegExp(`--jp-AdvancedMd-${name}: (\\d+)ms;`).exec(stylesheet)![1]
+    );
+
+  it('holds a ghost for its rise and its strike together (ACC-HILITE-156)', () => {
+    // The reader meets a removal in three beats: the red rises, the strike
+    // is drawn over what it claimed, then the words go. The animator waits
+    // out the first two, so each number it waits on is the stylesheet's.
+    expect(FADE_IN_MS).toBe(variable('fade-in'));
+    expect(GHOST_HOLD_MS).toBe(variable('fade-in') + variable('strike'));
+  });
+
+  it('takes as long to come in as an addition takes to leave', () => {
+    // A removal's way in and an addition's way out are the same length, so
+    // neither reads as the hurried one.
+    expect(GHOST_HOLD_MS).toBe(variable('fade-out'));
+  });
+
+  it('draws the strike after the rise and not with it', () => {
+    const rule = stylesheet.slice(
+      stylesheet.indexOf('\n.jp-AdvancedMd-removed {'),
+      stylesheet.indexOf('}', stylesheet.indexOf('\n.jp-AdvancedMd-removed {'))
+    );
+    // The line cannot be animated into existence, so it is there from the
+    // start with no colour and is given one on its own beat.
+    expect(rule).toContain('text-decoration-color: transparent;');
+    expect(rule).toContain('jp-AdvancedMd-strike');
+    // Three animations, and the strike waits out the rise before it runs.
+    expect(rule).toContain('var(--jp-AdvancedMd-strike)');
+    expect(rule.slice(rule.indexOf('animation-delay'))).toContain(
+      'var(--jp-AdvancedMd-struck);'
+    );
+    expect(stylesheet).toContain('@keyframes jp-AdvancedMd-strike');
+  });
+
+  it('keeps the three beats in order at every highlight duration', () => {
+    // The rise and the strike take 750 ms together, and a highlight duration
+    // under a second leaves the ghost less room than that: the strike is
+    // brought forward to end where the colour starts to leave, rather than
+    // being drawn after a removal has begun to fade, which would leave it
+    // told from an addition by hue alone.
+    const decoration = stylesheet.slice(
+      stylesheet.indexOf('\n.jp-AdvancedMd-decoration {'),
+      stylesheet.indexOf(
+        '}',
+        stylesheet.indexOf('\n.jp-AdvancedMd-decoration {')
+      )
+    );
+    const struck = decoration.slice(
+      decoration.indexOf('--jp-AdvancedMd-struck:')
+    );
+    expect(struck).toContain('min(');
+    expect(struck).toContain('var(--jp-AdvancedMd-fade-in)');
+    expect(struck).toContain(
+      'calc(var(--jp-AdvancedMd-drain) - var(--jp-AdvancedMd-strike))'
+    );
+    // The drain itself is where it was: the reader's own duration is asked
+    // for no more time than they gave.
+    expect(decoration).toContain('--jp-AdvancedMd-drain: max(');
   });
 });

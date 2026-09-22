@@ -5,6 +5,7 @@ import {
   ISelectionRange,
   ISourceRange,
   locate,
+  markerText,
   markerToRendered,
   passageToRendered,
   renderedToSource,
@@ -113,13 +114,18 @@ function selection(
  * Write the two markers of a mark into the source at the range found.
  */
 function applyMarkers(source: string, range: ISourceRange, id = 'm'): string {
-  const opening = `${range.startPrefix}<!-- mark:${id} note -->${range.startOwnLine ? '\n' : ''}`;
-  const closing = `${range.endOwnLine ? '\n' : ''}<!-- /mark:${id} -->`;
+  // Composed by the function production composes it with, so a case here
+  // cannot pass against a rule the writer no longer follows.
+  const marker = markerText(
+    range,
+    `<!-- mark:${id} note -->`,
+    `<!-- /mark:${id} -->`
+  );
   return (
     source.slice(0, range.start) +
-    opening +
+    marker.opening +
     source.slice(range.start, range.end) +
-    closing +
+    marker.closing +
     source.slice(range.end)
   );
 }
@@ -323,13 +329,16 @@ describe('tokeniseSource', () => {
     });
   });
 
-  it('protects an indented code block', () => {
+  it('protects an indented code block, and says indentation made it', () => {
     const source = 'Intro.\n\n    const x = 1;\n    const y = 2;\n\nTail.';
     const { protectedSpans } = tokeniseSource(source);
+    // Indentation made this block, which the span says: the indentation is
+    // what makes it code, so a marker beside it cannot be written under it.
     expect(protectedSpans).toContainEqual({
       kind: 'code-block',
       start: source.indexOf('    const x'),
-      end: source.indexOf('\n\nTail')
+      end: source.indexOf('\n\nTail'),
+      indented: true
     });
   });
 
@@ -398,6 +407,133 @@ describe('tokeniseSource', () => {
       start: source.indexOf('<b>'),
       end: source.indexOf('<b>') + 3
     });
+  });
+
+  it('reads a character reference as the character it stands for (ACC-NOTES-183)', () => {
+    // The render shows the character, so the word here has to be the word
+    // there: a reference standing for a space parts two words, and one
+    // standing for anything else sits inside the word it interrupts.
+    const source = 'Status <span>In&nbsp;Scope</span> for R&amp;D.';
+    const { tokens } = tokeniseSource(source);
+    expect(tokens.map(token => token.text)).toEqual([
+      'Status',
+      'In',
+      'Scope',
+      'for',
+      'R&D.'
+    ]);
+    // The offsets cover the reference as written, so a marker lands beside
+    // it and never inside it.
+    const scope = tokens.find(token => token.text === 'Scope')!;
+    expect(source.slice(scope.start, scope.end)).toBe('Scope');
+    const rd = tokens.find(token => token.text === 'R&D.')!;
+    expect(source.slice(rd.start, rd.end)).toBe('R&amp;D.');
+  });
+
+  it('reads a numeric character reference, in either base (ACC-NOTES-183)', () => {
+    const { tokens } = tokeniseSource('One&#8212;two&#xA0;three&#x2014;four');
+    expect(tokens.map(token => token.text)).toEqual([
+      'One\u2014two',
+      'three\u2014four'
+    ]);
+  });
+
+  it('reads a reference through the table the renderer decodes with (ACC-NOTES-183)', () => {
+    // The browser's own table answers, so every name it holds is read, and
+    // a code point that is no character is read as the replacement character
+    // the renderer draws in its place. Either way the source word is the
+    // word on the page.
+    const { tokens } = tokeniseSource('a&spades;b &#1114112; &#xD800;');
+    expect(tokens.map(token => token.text)).toEqual([
+      'a\u2660b',
+      '\ufffd',
+      '\ufffd'
+    ]);
+  });
+
+  it('leaves a reference the table does not hold as it is written (ACC-NOTES-183)', () => {
+    // A name nothing stands for, and two shapes that are not references at
+    // all: the renderer shows each of them as the file writes it, so the
+    // source word is what the file holds.
+    const { tokens } = tokeniseSource('a&xyzzy;b &amp c&#;d');
+    expect(tokens.map(token => token.text)).toEqual([
+      'a&xyzzy;b',
+      '&amp',
+      'c&#;d'
+    ]);
+  });
+
+  it('leaves a character reference in a code block as it is written (ACC-NOTES-183)', () => {
+    // Code is shown as it stands, so its words are the file's own words.
+    const { tokens } = tokeniseSource('```\nx = "a&nbsp;b"\n```\n');
+    expect(tokens.map(token => token.text)).toEqual(['x', '=', '"a&nbsp;b"']);
+  });
+
+  it('keeps a quote marker that is a line of the code, not a container', () => {
+    // A Markdown sample showing a callout, a shell transcript, a git log:
+    // the marker at the start of the line is the reader's own text, and a
+    // marker the fence's own line did not carry is never read off.
+    const source =
+      'How to write a callout:\n\n```markdown\n> [!NOTE]\n> Mind the gap.\n```\n';
+    const { tokens } = tokeniseSource(source);
+    expect(tokens.map(token => token.text)).toEqual([
+      'How',
+      'to',
+      'write',
+      'a',
+      'callout:',
+      '>',
+      '[!NOTE]',
+      '>',
+      'Mind',
+      'the',
+      'gap.'
+    ]);
+  });
+
+  it('reads a fence inside a blockquote as the fenced block it is', () => {
+    const source = '> Intro.\n>\n> ```\n> total = one\n> ```\n';
+    const { tokens, protectedSpans } = tokeniseSource(source);
+    expect(tokens.map(token => token.text)).toEqual([
+      'Intro.',
+      'total',
+      '=',
+      'one'
+    ]);
+    expect(protectedSpans).toContainEqual({
+      kind: 'code-block',
+      start: source.indexOf('> ```'),
+      end: source.length - 1
+    });
+  });
+
+  it('leaves a marker written beside a block a block of the marker alone', () => {
+    // A marker carries its block's own indentation, so the line it is on
+    // must not be deep enough to be read as code itself: read as code it
+    // would take the block, the words of the marker and the list with it.
+    const source =
+      '- item one\n\n  <!-- mark:m note -->\n  ```mermaid\n  graph TD\n  ```\n' +
+      '  <!-- /mark:m -->\n\n- item two\n';
+    const { protectedSpans } = tokeniseSource(source);
+    const code = protectedSpans.filter(span => span.kind === 'code-block');
+    expect(code).toHaveLength(1);
+    expect(source.slice(code[0].start, code[0].end)).toBe(
+      '  ```mermaid\n  graph TD\n  ```'
+    );
+  });
+
+  it('opens no fence on a line of inline code spans', () => {
+    // A backtick fence's info string may hold no backtick of its own, so a
+    // line of code spans is prose. Read as a fence it would open one that
+    // nothing closes, and the rest of the document would be protected as
+    // the reader's program.
+    const source =
+      '> ```one``` and ```two``` are inline\n\nA paragraph after the quote.\n';
+    const { protectedSpans, tokens } = tokeniseSource(source);
+    expect(protectedSpans.filter(span => span.kind === 'code-block')).toEqual(
+      []
+    );
+    expect(tokens.map(token => token.text)).toContain('quote.');
   });
 
   it('reads an unterminated fence to the end of the document', () => {
@@ -801,6 +937,168 @@ describe('selectionToSource', () => {
     ]) {
       expect(marked.split(marker).length - 1).toBe(1);
     }
+  });
+
+  it('marks a chip inside raw HTML whose words a reference parts (ACC-NOTES-183)', () => {
+    // The status chips of a proposal are raw HTML in the Markdown, and the
+    // two words of one are held together by a non-breaking space written as
+    // a reference. The browser shows that reference as a space, so the
+    // render has two words where the file has one run of characters.
+    const source =
+      'Intro line.\n\n<table>\n<tr>\n' +
+      '<td><span style="white-space:nowrap">In&nbsp;Scope</span></td>\n' +
+      '</tr>\n</table>\n';
+    const root = render(
+      '<p>Intro line.</p>\n<table><tbody><tr>' +
+        '<td><span style="white-space:nowrap">In\u00a0Scope</span></td>' +
+        '</tr></tbody></table>'
+    );
+    // The reader drags across the chip, which is one text node.
+    const chip = root.querySelector('span')!.firstChild as Text;
+    const range = selectionToSource(
+      selection({ node: chip, offset: 0 }, { node: chip, offset: chip.length }),
+      root,
+      source
+    );
+    expect(range).not.toBeNull();
+    expect(range!.startOwnLine).toBe(false);
+    expect(range!.endOwnLine).toBe(false);
+    expect(applyMarkers(source, range!)).toContain(
+      '<td><span style="white-space:nowrap">' +
+        '<!-- mark:m note -->In&nbsp;Scope<!-- /mark:m --></span></td>'
+    );
+  });
+
+  it('marks a drawn diagram by the fence its hidden source came from (ACC-NOTES-182)', () => {
+    // JupyterLab draws a mermaid fence as a picture and keeps the fence's
+    // own source beside it, hidden. That source is the block's text in the
+    // capture, so a selection over the whole block anchors to the fence and
+    // the markers go on their own lines around it.
+    const source =
+      'Intro line.\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n\nAfter.\n';
+    const root = render(
+      '<p>Intro line.</p>' +
+        '<div class="jp-RenderedMermaid"><figure>' +
+        '<img alt="a flow chart">' +
+        '<pre><code class="mermaid">graph TD\n  A[Start] --> B[End]</code></pre>' +
+        '<figcaption class="jp-sr-only">two boxes and an arrow</figcaption>' +
+        '</figure></div>' +
+        '<p>After.</p>'
+    );
+    const block = root.querySelector('.jp-RenderedMermaid') as HTMLElement;
+    const range = selectionToSource(
+      selection(
+        { node: block, offset: 0 },
+        { node: block, offset: block.childNodes.length }
+      ),
+      root,
+      source
+    );
+    expect(range).not.toBeNull();
+    expect(range!.startOwnLine).toBe(true);
+    expect(range!.endOwnLine).toBe(true);
+    expect(applyMarkers(source, range!)).toBe(
+      'Intro line.\n\n<!-- mark:m note -->\n```mermaid\ngraph TD\n' +
+        '  A[Start] --> B[End]\n```\n<!-- /mark:m -->\n\nAfter.\n'
+    );
+  });
+
+  it('marks a drawn diagram inside a blockquote without taking it out of one (ACC-NOTES-182)', () => {
+    // A fence inside a quote is a fenced block like any other, and the
+    // markers carry the quote's own markers: written at the left margin
+    // they would end the quote, and written into the fence line they would
+    // land in its info string and stop the diagram drawing.
+    const source =
+      '> [!NOTE]\n> See the flow.\n>\n> ```mermaid\n> graph TD\n>   A --> B\n> ```\n';
+    const root = render(
+      '<blockquote>\n<p>See the flow.</p>\n' +
+        '<div class="jp-RenderedMermaid"><figure><img alt="a flow chart">' +
+        '<pre><code class="mermaid">graph TD\n  A --> B</code></pre>' +
+        '</figure></div>\n</blockquote>'
+    );
+    const block = root.querySelector('.jp-RenderedMermaid') as HTMLElement;
+    const range = selectionToSource(
+      selection(
+        { node: block, offset: 0 },
+        { node: block, offset: block.childNodes.length }
+      ),
+      root,
+      source
+    );
+    expect(range).not.toBeNull();
+    expect(range!.startPrefix).toBe('> ');
+    expect(range!.endPrefix).toBe('> ');
+    expect(applyMarkers(source, range!)).toBe(
+      '> [!NOTE]\n> See the flow.\n>\n> <!-- mark:m note -->\n' +
+        '> ```mermaid\n> graph TD\n>   A --> B\n> ```\n> <!-- /mark:m -->\n'
+    );
+  });
+
+  it('keeps a fence inside a list item under its bullet (ACC-NOTES-182)', () => {
+    // A marker at the left margin after a blank line ends the list, which
+    // lifts the block out of the item the reader wrote it in.
+    const source =
+      '- item one\n\n  ```mermaid\n  graph TD\n    A --> B\n  ```\n\n- item two\n';
+    const root = render(
+      '<ul>\n<li><p>item one</p>\n' +
+        '<div class="jp-RenderedMermaid"><figure><img alt="a flow chart">' +
+        '<pre><code class="mermaid">graph TD\n  A --> B</code></pre>' +
+        '</figure></div>\n</li>\n<li><p>item two</p>\n</li>\n</ul>'
+    );
+    const block = root.querySelector('.jp-RenderedMermaid') as HTMLElement;
+    const range = selectionToSource(
+      selection(
+        { node: block, offset: 0 },
+        { node: block, offset: block.childNodes.length }
+      ),
+      root,
+      source
+    );
+    expect(range).not.toBeNull();
+    expect(range!.startPrefix).toBe('  ');
+    expect(applyMarkers(source, range!)).toBe(
+      '- item one\n\n  <!-- mark:m note -->\n  ```mermaid\n  graph TD\n' +
+        '    A --> B\n  ```\n  <!-- /mark:m -->\n\n- item two\n'
+    );
+  });
+
+  it('keeps a marked paragraph under the bullet it was written in', () => {
+    // A marker at the left margin after a blank line ends the list, which
+    // splits one two-item list into two one-item lists with the paragraph
+    // standing between them.
+    const source =
+      '- item one\n\n  Second paragraph in the item.\n\n- item two\n';
+    const root = render(
+      '<ul>\n<li><p>item one</p>\n<p>Second paragraph in the item.</p>\n</li>\n' +
+        '<li><p>item two</p>\n</li>\n</ul>'
+    );
+    const range = sourceRange(root, source, 'Second', 'item.');
+    expect(range.startOwnLine).toBe(true);
+    expect(range.startPrefix).toBe('  ');
+    expect(applyMarkers(source, range)).toBe(
+      '- item one\n\n  <!-- mark:m note -->\n' +
+        '  Second paragraph in the item.<!-- /mark:m -->\n\n- item two\n'
+    );
+  });
+
+  it('writes no marker inside a code block indentation alone made', () => {
+    // The first line of the block is a run of backticks, which a fence's
+    // line would be; indentation is what made this one code, and a marker
+    // carrying that indentation would be printed as a line of the program.
+    const source =
+      'Intro here.\n\n    ```\n    code here\n    ```\n\nAfter here.\n';
+    const root = render(
+      '<p>Intro here.</p>\n<pre><code>```\ncode here\n```\n</code></pre>\n' +
+        '<p>After here.</p>'
+    );
+    const range = sourceRange(root, source, '```', 'here');
+    expect(range.startOwnLine).toBe(true);
+    expect(range.startPrefix).toBe('');
+    expect(range.endPrefix).toBe('');
+    expect(applyMarkers(source, range)).toBe(
+      'Intro here.\n\n<!-- mark:m note -->\n    ```\n    code here\n    ```\n' +
+        '<!-- /mark:m -->\n\nAfter here.\n'
+    );
   });
 
   it('reports nothing when the selected words are not in the source', () => {

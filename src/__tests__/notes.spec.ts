@@ -65,6 +65,8 @@ import {
 import {
   CARET_CLASS,
   colourClass,
+  DIAGRAM_CLASS,
+  FLASH_CLASS,
   MARK_CLASS,
   MARK_CLOSED_CLASS,
   NotesPanel,
@@ -386,6 +388,86 @@ const bars = (root: HTMLElement): HTMLElement[] =>
 const BARE = 'Alpha beta gamma delta.\n';
 const BARE_HTML = '<p>Alpha beta gamma delta.</p>';
 
+/** A document whose one fence JupyterLab draws as a picture. */
+const DIAGRAM =
+  'Alpha beta.\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n\nGamma delta.\n';
+
+/**
+ * That document as JupyterLab renders it: the picture, the fence's own
+ * source kept beside it and hidden, and the description of the diagram
+ * written for a screen reader (`@jupyterlab/mermaid`).
+ */
+const DIAGRAM_HTML =
+  '<p>Alpha beta.</p>' +
+  '<div class="jp-RenderedMermaid"><figure>' +
+  '<img alt="a flow chart">' +
+  '<pre><code class="mermaid">graph TD\n  A[Start] --> B[End]</code></pre>' +
+  '<figcaption class="jp-sr-only">two boxes and an arrow</figcaption>' +
+  '</figure></div>' +
+  '<p>Gamma delta.</p>';
+
+/** That document with one mark around the whole fence. */
+const diagramMarked = (id = ONE, attributes = 'colour=yellow', notes = '') =>
+  `Alpha beta.\n\n<!-- mark:${id} note ${attributes}${notes} -->\n` +
+  '```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n' +
+  `<!-- /mark:${id} -->\n\nGamma delta.\n`;
+
+/** The figures a wash is on, in document order. */
+const washed = (root: HTMLElement): HTMLElement[] =>
+  Array.from(root.querySelectorAll<HTMLElement>(`.${DIAGRAM_CLASS}`));
+
+/**
+ * A window selection the press handler can move, as the browser's is.
+ *
+ * `selectAllChildren` is the one call the handler makes; from then on the
+ * stub reports the range the browser would report over that node.
+ */
+function trackingSelection(): () => Node | null {
+  let held: Node | null = null;
+  stubSelection({
+    get isCollapsed() {
+      return held === null;
+    },
+    get rangeCount() {
+      return held === null ? 0 : 1;
+    },
+    get anchorNode() {
+      return held;
+    },
+    getRangeAt: () =>
+      held === null
+        ? null
+        : {
+            startContainer: held,
+            startOffset: 0,
+            endContainer: held,
+            endOffset: held.childNodes.length,
+            collapsed: false,
+            commonAncestorContainer: held,
+            toString: () => held?.textContent ?? ''
+          },
+    selectAllChildren: (node: Node) => {
+      held = node;
+    },
+    removeAllRanges: jest.fn(),
+    collapseToEnd: jest.fn(),
+    collapse: jest.fn(),
+    addRange: jest.fn()
+  });
+  return () => held;
+}
+
+/** Press a mouse button on a node, as the reader does on a picture. */
+function press(node: Node, button = 0): MouseEvent {
+  const event = new MouseEvent('mousedown', {
+    bubbles: true,
+    cancelable: true,
+    button
+  });
+  node.dispatchEvent(event);
+  return event;
+}
+
 /** A document holding one bare yellow mark over `beta gamma`. */
 const marked = (id = ONE, attributes = 'colour=yellow') =>
   `Alpha <!-- mark:${id} note ${attributes} -->beta gamma<!-- /mark:${id} --> delta.\n`;
@@ -652,6 +734,187 @@ describe('NotesController', () => {
       expect(h.source()).toContain(`<!-- mark:${id} note colour=yellow -->`);
       expect(h.saves).toHaveLength(0);
       expect(h.dirty()).toBe(true);
+    });
+  });
+
+  describe('a drawn diagram (ACC-NOTES-182)', () => {
+    it('selects the whole diagram when the reader presses on the picture', async () => {
+      const h = open(DIAGRAM);
+      await ready();
+      h.render(DIAGRAM_HTML);
+      const selected = trackingSelection();
+      const block = h.root.querySelector('.jp-RenderedMermaid');
+
+      // A picture holds no words, so a drag across one selects nothing: the
+      // browser drags the picture instead. The press answers that.
+      const event = press(h.root.querySelector('img')!);
+
+      expect(selected()).toBe(block);
+      // The browser's own answer to the press is left alone: it focuses the
+      // viewer, which the marking shortcut's selector needs.
+      expect(event.defaultPrevented).toBe(false);
+      document.dispatchEvent(new Event('selectionchange'));
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
+    });
+
+    it('selects from a right press too, which is what opens the menu', async () => {
+      const h = open(DIAGRAM);
+      await ready();
+      h.render(DIAGRAM_HTML);
+      const selected = trackingSelection();
+
+      const event = press(h.root.querySelector('img')!, 2);
+
+      expect(selected()).toBe(h.root.querySelector('.jp-RenderedMermaid'));
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it('leaves a press anywhere else alone', async () => {
+      const h = open(DIAGRAM);
+      await ready();
+      h.render(DIAGRAM_HTML);
+      const selected = trackingSelection();
+
+      const event = press(h.root.querySelector('p')!);
+
+      expect(selected()).toBeNull();
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it('marks the fence the picture was drawn from', async () => {
+      const h = open(DIAGRAM);
+      await ready();
+      h.render(DIAGRAM_HTML);
+      trackingSelection();
+      press(h.root.querySelector('img')!);
+      document.dispatchEvent(new Event('selectionchange'));
+
+      const id = await h.controller.mark('yellow');
+
+      expect(id).not.toBeNull();
+      // The markers go on their own lines around the whole fence, so the
+      // fence still opens a line and still draws.
+      expect(h.source()).toBe(diagramMarked(id!));
+    });
+
+    it('washes the figure rather than painting the source beside it', async () => {
+      const h = open(diagramMarked(ONE, 'colour=blue'));
+      await ready();
+      h.render(DIAGRAM_HTML);
+
+      // The words of the passage are the hidden source, which the reader
+      // never sees, so wrapping them would paint nothing at all.
+      expect(painted(h.root)).toHaveLength(0);
+      const [figure] = washed(h.root);
+      expect(figure.tagName).toBe('FIGURE');
+      expect(figure.classList.contains(colourClass('blue'))).toBe(true);
+      expect(figure.dataset.mark).toBe(ONE);
+    });
+
+    it('carries the note of the mark on the figure, as a passage carries it', async () => {
+      const h = open(
+        diagramMarked(
+          ONE,
+          'colour=yellow',
+          '\n@kj 2026-09-21T10:00:00Z: Check this\n'
+        )
+      );
+      await ready();
+      h.render(DIAGRAM_HTML);
+
+      expect(washed(h.root)[0].title).toBe('kj: Check this');
+    });
+
+    it('takes the wash off the figure when the mark goes', async () => {
+      const h = open(diagramMarked());
+      await ready();
+      h.render(DIAGRAM_HTML);
+      expect(washed(h.root)).toHaveLength(1);
+
+      h.external(DIAGRAM);
+      h.render(DIAGRAM_HTML);
+
+      const figure = h.root.querySelector('figure') as HTMLElement;
+      expect(washed(h.root)).toHaveLength(0);
+      expect(figure.className).toBe('');
+      expect(figure.dataset.mark).toBeUndefined();
+      expect(figure.hasAttribute('title')).toBe(false);
+    });
+
+    it('names every mark over one fence on the one wash it has to give', async () => {
+      // A picture has one wash, so a second mark on the same diagram shares
+      // it. Both marks stay reachable: the panel scrolls to a diagram by the
+      // attribute, and a row that named nothing would lead nowhere.
+      const two =
+        'Alpha beta.\n\n' +
+        `<!-- mark:${ONE} note colour=yellow -->\n` +
+        `<!-- mark:${TWO} note colour=blue -->\n` +
+        '```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n' +
+        `<!-- /mark:${TWO} -->\n<!-- /mark:${ONE} -->\n\nGamma delta.\n`;
+      const h = open(two);
+      await ready();
+      h.render(DIAGRAM_HTML);
+
+      const [figure] = washed(h.root);
+      expect(figure.dataset.mark).toBe(`${ONE} ${TWO}`);
+      expect(h.root.querySelectorAll(`[data-mark~="${ONE}"]`)).toHaveLength(1);
+      expect(h.root.querySelectorAll(`[data-mark~="${TWO}"]`)).toHaveLength(1);
+      // The wash shows the colour of the last mark, the one that would lie
+      // on top were the diagram text.
+      expect(figure.classList.contains(colourClass('blue'))).toBe(true);
+      expect(figure.classList.contains(colourClass('yellow'))).toBe(false);
+    });
+
+    it('takes a stranded flash off the figure with the wash', async () => {
+      // A painted passage takes its flash away with the span it was on. A
+      // figure is the renderer's own element and survives, so a flash left
+      // on it would go on running as a wash over the picture, the rule that
+      // makes it a ring having gone with the wash.
+      const h = open(diagramMarked());
+      await ready();
+      h.render(DIAGRAM_HTML);
+      const [figure] = washed(h.root);
+      figure.classList.add(FLASH_CLASS);
+
+      h.external(DIAGRAM);
+      h.render(DIAGRAM_HTML);
+
+      const box = h.root.querySelector('figure') as HTMLElement;
+      expect(box.classList.contains(FLASH_CLASS)).toBe(false);
+    });
+
+    it('paints a fence the renderer could not draw as the text it shows', async () => {
+      // A failed fence shows its own source on the page, folded into a
+      // details element with the parser's message under it. There is a
+      // passage to select and to paint, so nothing is washed.
+      const h = open(diagramMarked());
+      await ready();
+      h.render(
+        '<p>Alpha beta.</p>' +
+          '<div class="jp-RenderedMermaid jp-mod-warning">' +
+          '<details class="jp-RenderedMermaid-Details"><summary>' +
+          '<pre><code class="mermaid">graph TD\n  A[Start] --> B[End]</code></pre>' +
+          '</summary><pre>Parse error on line 2</pre></details></div>' +
+          '<p>Gamma delta.</p>'
+      );
+
+      expect(washed(h.root)).toHaveLength(0);
+      expect(painted(h.root)).toHaveLength(1);
+      expect(painted(h.root)[0].textContent).toBe(
+        'graph TD\n  A[Start] --> B[End]'
+      );
+    });
+
+    it('mutes a closed diagram as it mutes a closed passage (ACC-NOTES-155)', async () => {
+      const h = open(diagramMarked(ONE, 'colour=yellow status=closed'));
+      await ready();
+      h.render(DIAGRAM_HTML);
+      expect(washed(h.root)).toHaveLength(0);
+
+      h.controller.setShowClosed(true);
+
+      const [figure] = washed(h.root);
+      expect(figure.classList.contains(MARK_CLOSED_CLASS)).toBe(true);
     });
   });
 

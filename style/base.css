@@ -14,9 +14,12 @@
   --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 31%);
   --jp-AdvancedMd-cue-blocked: rgb(218 54 51);
   --jp-AdvancedMd-mark-flash-bg: rgb(128 128 128 / 55%);
+  --jp-AdvancedMd-flash-ring: var(--jp-content-font-color1);
+  --jp-AdvancedMd-flash-beat: 900ms;
   --jp-AdvancedMd-fade-duration: 3000ms;
   --jp-AdvancedMd-fade-in: 500ms;
   --jp-AdvancedMd-fade-out: 750ms;
+  --jp-AdvancedMd-strike: 250ms;
 }
 
 body[data-jp-theme-light='false'] {
@@ -69,18 +72,35 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
 }
 
 .jp-AdvancedMd-decoration {
+  /* When the colour starts to drain, named here because a ghost writes its
+     own animation list and has to wait the same time. It is declared on the
+     decoration and not on the root, so the values it is built from are the
+     ones this element carries, which src/highlight.ts sets per decoration. */
+  --jp-AdvancedMd-drain: max(
+    0ms,
+    calc(
+      var(--jp-AdvancedMd-fade-in) + var(--jp-AdvancedMd-fade-duration) -
+        var(--jp-AdvancedMd-fade-out)
+    )
+  );
+
+  /* When a ghost's strike is drawn. It waits out the rise, unless the colour
+     would start to leave first: a highlight duration under a second leaves
+     the ghost less room than the two beats take, and a removal whose line is
+     never drawn is told from an addition by hue alone. The strike is then
+     brought forward to end where the drain begins, which keeps the three
+     beats in their order at every setting and asks the reader's own duration
+     for no more time than they gave. */
+  --jp-AdvancedMd-struck: min(
+    var(--jp-AdvancedMd-fade-in),
+    max(0ms, calc(var(--jp-AdvancedMd-drain) - var(--jp-AdvancedMd-strike)))
+  );
+
   border-radius: 2px;
   animation:
     jp-AdvancedMd-fade-in var(--jp-AdvancedMd-fade-in) ease-out,
     jp-AdvancedMd-fade-out var(--jp-AdvancedMd-fade-out) ease-in
-      max(
-        0ms,
-        calc(
-          var(--jp-AdvancedMd-fade-in) + var(--jp-AdvancedMd-fade-duration) -
-            var(--jp-AdvancedMd-fade-out)
-        )
-      )
-      forwards;
+      var(--jp-AdvancedMd-drain) forwards;
 }
 
 .jp-AdvancedMd-added {
@@ -102,11 +122,28 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
  | nobody can see. The opacity fade runs under reduced motion as well, because
  | it is what keeps the reflow at removal off screen; colour and opacity ramps
  | are not motion.
+ |
+ | A removal is read in three beats, in the order the reader meets them: the
+ | red rises, the strike is drawn over the words it has claimed, and only then
+ | do the words start to go (ACC-HILITE-156). The strike is held off with a
+ | transparent decoration colour rather than added late, because the presence
+ | of a line cannot be animated and a line appearing from nowhere lands in the
+ | same frame as the deletion it is meant to precede. The two beats together
+ | take the time the added text's own colour takes to leave, so the red's way
+ | in and the green's way out are the same length.
  */
 .jp-AdvancedMd-removed {
-  background-color: var(--jp-AdvancedMd-removed-bg);
   text-decoration: line-through;
-  animation-name: jp-AdvancedMd-fade-in, jp-AdvancedMd-ghost-out;
+  text-decoration-color: transparent;
+  background-color: var(--jp-AdvancedMd-removed-bg);
+  animation-name:
+    jp-AdvancedMd-fade-in, jp-AdvancedMd-ghost-out, jp-AdvancedMd-strike;
+  animation-duration:
+    var(--jp-AdvancedMd-fade-in), var(--jp-AdvancedMd-fade-out),
+    var(--jp-AdvancedMd-strike);
+  animation-timing-function: ease-out, ease-in, ease-out;
+  animation-delay: 0ms, var(--jp-AdvancedMd-drain), var(--jp-AdvancedMd-struck);
+  animation-fill-mode: none, forwards, forwards;
 }
 
 /*
@@ -115,6 +152,10 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
  | change never restarts an animation, so the fade-in runs from creation and
  | the fade-out starts at completion. A ghost being deleted is taken out by the
  | animator before its fade-out would run.
+ |
+ | The list is read round for a ghost, which carries three animations: the
+ | strike takes the first value again and runs, as it must, being one of the
+ | beats that happen before the deletion it precedes.
  */
 .jp-AdvancedMd-decoration.jp-AdvancedMd-typing {
   animation-play-state: running, paused;
@@ -140,6 +181,12 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
 @keyframes jp-AdvancedMd-fade-out {
   to {
     background-color: transparent;
+  }
+}
+
+@keyframes jp-AdvancedMd-strike {
+  to {
+    text-decoration-color: currentcolor;
   }
 }
 
@@ -276,56 +323,64 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
   line-height: normal;
 }
 
+/*
+ | A mark's colour is a wash, named once per colour as a custom property and
+ | read by everything that lays it: the painted passage, the minimap tick and
+ | the block a drawn diagram is washed in (ACC-NOTES-182). The property is
+ | what lets the diagram draw the same colour on a pseudo-element, which is
+ | the only place a wash can go over a picture.
+ */
 .jp-AdvancedMd-mark {
+  background-color: var(--jp-AdvancedMd-mark-wash);
   transition: background-color 150ms ease-out;
 }
 
 .jp-AdvancedMd-mark-yellow {
-  background-color: rgb(240 212 15 / 20%);
+  --jp-AdvancedMd-mark-wash: rgb(240 212 15 / 20%);
 }
 
 .jp-AdvancedMd-mark-blue {
-  background-color: rgb(15 112 240 / 11%);
+  --jp-AdvancedMd-mark-wash: rgb(15 112 240 / 11%);
 }
 
 .jp-AdvancedMd-mark-pink {
-  background-color: rgb(246 49 177 / 14%);
+  --jp-AdvancedMd-mark-wash: rgb(246 49 177 / 14%);
 }
 
 .jp-AdvancedMd-mark-orange {
-  background-color: rgb(241 148 34 / 17%);
+  --jp-AdvancedMd-mark-wash: rgb(241 148 34 / 17%);
 }
 
 .jp-AdvancedMd-mark-red {
-  background-color: rgb(230 30 70 / 18%);
+  --jp-AdvancedMd-mark-wash: rgb(230 30 70 / 18%);
 }
 
 .jp-AdvancedMd-mark-green {
-  background-color: rgb(30 210 50 / 17%);
+  --jp-AdvancedMd-mark-wash: rgb(30 210 50 / 17%);
 }
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-yellow {
-  background-color: rgb(240 212 15 / 14%);
+  --jp-AdvancedMd-mark-wash: rgb(240 212 15 / 14%);
 }
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-blue {
-  background-color: rgb(68 141 241 / 17%);
+  --jp-AdvancedMd-mark-wash: rgb(68 141 241 / 17%);
 }
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-pink {
-  background-color: rgb(247 68 178 / 15%);
+  --jp-AdvancedMd-mark-wash: rgb(247 68 178 / 15%);
 }
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-orange {
-  background-color: rgb(241 148 34 / 15%);
+  --jp-AdvancedMd-mark-wash: rgb(241 148 34 / 15%);
 }
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-red {
-  background-color: rgb(230 30 70 / 18%);
+  --jp-AdvancedMd-mark-wash: rgb(230 30 70 / 18%);
 }
 
 body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
-  background-color: rgb(30 210 50 / 18%);
+  --jp-AdvancedMd-mark-wash: rgb(30 210 50 / 18%);
 }
 
 /*
@@ -414,12 +469,74 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
  */
 
 .jp-AdvancedMd-markFlash {
-  animation: jp-AdvancedMd-mark-flash 900ms ease-in-out 2;
+  animation: jp-AdvancedMd-mark-flash var(--jp-AdvancedMd-flash-beat)
+    ease-in-out 2;
 }
 
 @keyframes jp-AdvancedMd-mark-flash {
   50% {
     background-color: var(--jp-AdvancedMd-mark-flash-bg);
+  }
+}
+
+/*
+ | A mark on a drawn diagram (ACC-NOTES-182). JupyterLab draws a mermaid
+ | fence as a picture and hides the fence's source beside it, so there is no
+ | text to wrap: the wash goes over the picture instead, on a pseudo-element,
+ | because the picture is a drawn image of its own and a colour behind it
+ | would not be seen. The pseudo-element adds no node to the render, which
+ | the edit-at-content extension counts.
+ |
+ | The class is on the figure and not on the block around it, which is as
+ | wide as the text column while the picture is only as wide as it was drawn.
+ | The wash takes no pointer events, so a press still reaches the picture and
+ | selects it.
+ |
+ | It opts out of forced colours, being the one showing a marked diagram has:
+ | a background declared in a stylesheet is painted the page's own canvas
+ | colour there, which would leave every colour on every diagram the same
+ | veil, and a veil reads as disabled rather than as marked. The backdrop is
+ | the picture, which forced colours does not repaint, so no second rule is
+ | needed inside the query.
+ |
+ | The flash a selected row runs is a ring rather than the grey the same
+ | flash lays over text. Over text that grey sits behind the glyphs and the
+ | words stay readable; over a picture it sits on top and hides the very
+ | thing the reader asked to be shown, which is the reading that already
+ | gave the bar of an unanchored mark a ring (ACC-NOTES-180). The figure's
+ | own animation is taken off, its colour being behind the picture.
+ |
+ | The ring is drawn inside the wash rather than around it, which is why it
+ | has frames of its own: the figure scrolls its own content, so anything
+ | drawn outside its edge is clipped away and an outward ring would be
+ | painted nowhere at all.
+ */
+.jp-AdvancedMd-markDiagram {
+  position: relative;
+}
+
+.jp-AdvancedMd-markDiagram::after {
+  position: absolute;
+  background-color: var(--jp-AdvancedMd-mark-wash);
+  box-shadow: inset 0 0 0 2px transparent;
+  content: '';
+  forced-color-adjust: none;
+  inset: 0;
+  pointer-events: none;
+}
+
+.jp-AdvancedMd-markDiagram.jp-AdvancedMd-markFlash {
+  animation-name: none;
+}
+
+.jp-AdvancedMd-markDiagram.jp-AdvancedMd-markFlash::after {
+  animation: jp-AdvancedMd-diagram-flash var(--jp-AdvancedMd-flash-beat)
+    ease-in-out 2;
+}
+
+@keyframes jp-AdvancedMd-diagram-flash {
+  50% {
+    box-shadow: inset 0 0 0 2px var(--jp-AdvancedMd-flash-ring);
   }
 }
 
@@ -512,8 +629,6 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
  */
 
 .jp-AdvancedMd-markCaret {
-  --jp-AdvancedMd-caret-ring: var(--jp-content-font-color1);
-
   display: inline-block;
   width: 3px;
   height: 1em;
@@ -530,19 +645,24 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 }
 
 .jp-AdvancedMd-markCaret.jp-AdvancedMd-markFlash {
-  animation-name: jp-AdvancedMd-caret-flash;
+  animation-name: jp-AdvancedMd-ring-flash;
 }
 
-@keyframes jp-AdvancedMd-caret-flash {
+@keyframes jp-AdvancedMd-ring-flash {
   50% {
-    box-shadow: 0 0 0 2px var(--jp-AdvancedMd-caret-ring);
+    box-shadow: 0 0 0 2px var(--jp-AdvancedMd-flash-ring);
   }
 }
 
 @media (forced-colors: active) {
-  .jp-AdvancedMd-markCaret {
-    --jp-AdvancedMd-caret-ring: Highlight;
+  /* The ring is named once for every decoration that draws one: a mark
+     decoration that opts out of the forced palette still has to be told
+     which of that palette's colours to stand in. */
+  :root {
+    --jp-AdvancedMd-flash-ring: Highlight;
+  }
 
+  .jp-AdvancedMd-markCaret {
     background-color: CanvasText;
   }
 
@@ -957,14 +1077,17 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
  | of the browser's outline and with no ring around the box. The text being
  | written is in the font and at the size of the notes shown in the rows. The
  | box grows with its content (NotesPanel._form sets its height), so it never
- | needs a scrollbar of its own.
+ | needs a scrollbar of its own. Both axes are hidden, not the vertical one
+ | alone: a lone `overflow-y` leaves `overflow-x` at the box's own `auto`, and
+ | a platform whose text measures a fraction of a pixel past the box then
+ | draws a bar along the bottom as soon as a note is typed (DEF-NOTES-115).
  */
 .jp-AdvancedMd-notesForm textarea {
   width: 100%;
   padding: 8px 10px;
   box-sizing: border-box;
   resize: none;
-  overflow-y: hidden;
+  overflow: hidden;
   color: inherit;
   font-family: inherit;
   font-size: inherit;
@@ -1018,6 +1141,7 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 
 .jp-AdvancedMd-notesTick {
   position: absolute;
+  background-color: var(--jp-AdvancedMd-mark-wash);
   right: 6px;
   left: 6px;
   box-sizing: border-box;
@@ -1042,13 +1166,21 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
  * colour rules above, and the later source order wins (ACC-NOTES-155).
  */
 body
-  :is(.jp-AdvancedMd-mark, .jp-AdvancedMd-notesTick).jp-AdvancedMd-mark-closed {
-  background-color: rgb(128 128 128 / 12%);
+  :is(
+    .jp-AdvancedMd-mark,
+    .jp-AdvancedMd-notesTick,
+    .jp-AdvancedMd-markDiagram
+  ).jp-AdvancedMd-mark-closed {
+  --jp-AdvancedMd-mark-wash: rgb(128 128 128 / 12%);
 }
 
 body[data-jp-theme-light='false']
-  :is(.jp-AdvancedMd-mark, .jp-AdvancedMd-notesTick).jp-AdvancedMd-mark-closed {
-  background-color: rgb(200 200 200 / 12%);
+  :is(
+    .jp-AdvancedMd-mark,
+    .jp-AdvancedMd-notesTick,
+    .jp-AdvancedMd-markDiagram
+  ).jp-AdvancedMd-mark-closed {
+  --jp-AdvancedMd-mark-wash: rgb(200 200 200 / 12%);
 }
 
 .jp-AdvancedMd-notesRow-closed .jp-AdvancedMd-notesPassage {

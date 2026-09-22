@@ -38,12 +38,23 @@ export const TYPING_CLASS = 'jp-AdvancedMd-typing';
 export const FADE_IN_MS = 500;
 
 /**
- * How long a removal ghost stands complete before its deletion starts: its
- * own rise, the time the added text beside it takes to reach its colour, so
- * the ghost is seen whole before it goes. The deletion then runs beside the
- * typing, the one the inverse of the other (ACC-HILITE-156).
+ * How long the strike takes to arrive over a ghost, once the red beneath it
+ * has risen. Matches the stylesheet.
  */
-export const GHOST_HOLD_MS = FADE_IN_MS;
+const STRIKE_MS = 250;
+
+/**
+ * How long a removal ghost stands complete before its deletion starts: its
+ * own rise, the time the added text beside it takes to reach its colour, and
+ * then the strike drawn over the words that rise has claimed, so the reader
+ * meets the three beats of a removal in order and the ghost is seen whole and
+ * struck before it goes. The deletion then runs beside the typing, the one
+ * the inverse of the other (ACC-HILITE-156).
+ *
+ * The two beats come to the time the added text's colour takes to leave, so a
+ * removal's way in and an addition's way out are the same length.
+ */
+export const GHOST_HOLD_MS = FADE_IN_MS + STRIKE_MS;
 
 /**
  * One decoration being typed or deleted.

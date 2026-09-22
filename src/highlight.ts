@@ -56,6 +56,16 @@ export const GAP_CLASS = 'jp-AdvancedMd-gap';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /**
+ * Text the renderer put on the page that no Markdown source holds: the
+ * description of a diagram written for a screen reader, and the parser's
+ * message under a fence it could not draw. A passage that took either in
+ * could not be found in the source, and a change that never reached the file
+ * is no change to decorate. The copy drops both for the same reason
+ * (src/content.ts).
+ */
+const UNSOURCED = '.jp-sr-only, .jp-RenderedMermaid-Details > pre';
+
+/**
  * Stands in the captured text between two blocks whose own text would
  * otherwise run together.
  *
@@ -142,6 +152,9 @@ export function captureText(root: HTMLElement): ITextSnapshot {
         if (parent.closest('.jp-InternalAnchorLink')) {
           return NodeFilter.FILTER_REJECT;
         }
+        if (parent.closest(UNSOURCED)) {
+          return NodeFilter.FILTER_REJECT;
+        }
         return NodeFilter.FILTER_ACCEPT;
       }
     }
@@ -219,7 +232,15 @@ function makeDecoration(
   span.className = `${DECORATION_CLASS} ${className}`;
   span.style.setProperty('--jp-AdvancedMd-fade-duration', `${fadeMs}ms`);
   if (!fresh) {
+    // A ghost an earlier render already showed gives up its rise and its
+    // strike rather than starting either again: this render builds it a new
+    // element, and a beat begun afresh against a hold that is part spent
+    // would land after the deletion it is meant to precede. A ghost rebuilt
+    // early in its own hold is struck before its rise was due, which is the
+    // cost of giving them up rather than carrying what is left of them
+    // (ACC-HILITE-156).
     span.style.setProperty('--jp-AdvancedMd-fade-in', '0ms');
+    span.style.setProperty('--jp-AdvancedMd-strike', '0ms');
   }
   span.textContent = text;
   offsets.set(span, at);

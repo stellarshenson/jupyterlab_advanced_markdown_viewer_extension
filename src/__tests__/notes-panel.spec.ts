@@ -1535,6 +1535,20 @@ describe('writing a note', () => {
     expect(box.style.height).toBe('122px');
   });
 
+  it('draws no scrollbar in the box, on either axis (DEF-NOTES-115)', () => {
+    // jsdom lays nothing out, so the rule is read as written. The box is
+    // grown to its content and its text wraps, so it has nothing to scroll
+    // to in either direction. Naming the vertical axis alone leaves the
+    // horizontal one at the box's own `auto`, which draws a bar along the
+    // bottom on a platform whose text measures a fraction past the box.
+    const rule = /\.jp-AdvancedMd-notesForm textarea \{([^}]*)\}/.exec(
+      readCss()
+    );
+    expect(rule).not.toBeNull();
+    expect(/\boverflow: hidden;/.test(rule![1])).toBe(true);
+    expect(/\boverflow-[xy]:/.test(rule![1])).toBe(false);
+  });
+
   it('writes what was typed', async () => {
     press(rows()[0], 'Comment');
     type('needs a number');
@@ -2805,6 +2819,13 @@ describe('the mark colours in the stylesheet', () => {
   const DARK: [number, number, number] = [17, 17, 17];
 
   /**
+   * The property carrying a mark's wash. The colour rules declare it and
+   * everything that lays the wash reads it, so a colour is read from the
+   * rule through this name and not through the background it ends up on.
+   */
+  const WASH = '--jp-AdvancedMd-mark-wash';
+
+  /**
    * The value of one property of one rule, read from the shipped stylesheet.
    */
   function declaration(selector: string, property: string): string {
@@ -2935,7 +2956,7 @@ describe('the mark colours in the stylesheet', () => {
     for (const colour of MARK_COLOURS) {
       it(`keeps ${colour} readable under the ${theme.name} theme`, () => {
         const painted = over(
-          declaration(theme.rule(colour), 'background-color'),
+          declaration(theme.rule(colour), WASH),
           theme.background
         );
         expect(contrast(painted, theme.text)).toBeGreaterThanOrEqual(4.5);
@@ -2945,7 +2966,7 @@ describe('the mark colours in the stylesheet', () => {
     for (const colour of apart) {
       it(`keeps ${colour} apart from a change under the ${theme.name} theme`, () => {
         const painted = over(
-          declaration(theme.rule(colour), 'background-color'),
+          declaration(theme.rule(colour), WASH),
           theme.background
         );
         for (const change of theme.changes) {
@@ -3147,7 +3168,7 @@ describe('the mark colours in the stylesheet', () => {
       // The hue src/swatch.ts walks is the light-theme mark colour before
       // its alpha, so a swatch is the mark's own colour and no other.
       const painted = /^rgb\((\d+) (\d+) (\d+) \/ \d+%\)$/.exec(
-        declaration(`.${colourClass(colour)}`, 'background-color')
+        declaration(`.${colourClass(colour)}`, WASH)
       )!;
       const hex = [1, 2, 3]
         .map(index => Number(painted[index]).toString(16).padStart(2, '0'))
@@ -3175,10 +3196,7 @@ describe('the mark colours in the stylesheet', () => {
   it('keeps the colours apart from each other', () => {
     for (const theme of themes) {
       const painted = MARK_COLOURS.map(colour =>
-        over(
-          declaration(theme.rule(colour), 'background-color'),
-          theme.background
-        )
+        over(declaration(theme.rule(colour), WASH), theme.background)
       );
       for (let i = 0; i < painted.length; i++) {
         for (let j = i + 1; j < painted.length; j++) {
@@ -3204,8 +3222,20 @@ describe('the mark colours in the stylesheet', () => {
     expect(rule![1]).not.toContain('height');
   });
 
-  it('mutes a closed mark wherever it is drawn, the tick included (ACC-NOTES-155)', () => {
-    expect(css).toMatch(/notesTick\)\.jp-AdvancedMd-mark-closed/);
+  it('mutes a closed mark wherever it is drawn, the tick and the diagram included (ACC-NOTES-155)', () => {
+    // One rule per theme names every place the wash is laid, so a place
+    // added later and left out of it would keep its hue while closed.
+    const start = css.indexOf('\nbody\n  :is(\n    .jp-AdvancedMd-mark,');
+    expect(start).toBeGreaterThan(-1);
+    const rule = css.slice(start, css.indexOf('}', start));
+    for (const named of [
+      '.jp-AdvancedMd-mark,',
+      '.jp-AdvancedMd-notesTick,',
+      '.jp-AdvancedMd-markDiagram'
+    ]) {
+      expect(rule).toContain(named);
+    }
+    expect(rule).toContain(`${WASH}: rgb(`);
   });
 
   it('keeps the flash under reduced motion, and it ramps nothing but a colour', () => {
@@ -3227,7 +3257,8 @@ describe('the mark colours in the stylesheet', () => {
     expect(guard.test(css)).toBe(false);
     for (const [keyframes, ramped] of [
       ['jp-AdvancedMd-mark-flash', '    background-color:'],
-      ['jp-AdvancedMd-caret-flash', '    box-shadow:']
+      ['jp-AdvancedMd-ring-flash', '    box-shadow:'],
+      ['jp-AdvancedMd-diagram-flash', '    box-shadow:']
     ]) {
       const start = css.indexOf(`@keyframes ${keyframes} {`);
       expect(start).toBeGreaterThan(-1);
@@ -3247,6 +3278,13 @@ describe('the mark colours in the stylesheet', () => {
     };
     const rule = ring('.jp-AdvancedMd-markCaret {', '}');
     expect(rule).toBe('0 0 0 2px');
+    // The diagram's ring is drawn inside its own box, the figure clipping
+    // anything outside it, and its geometry is held the same way.
+    const inside = ring('.jp-AdvancedMd-markDiagram::after {', '}');
+    expect(inside).toBe('inset 0 0 0 2px');
+    expect(ring('@keyframes jp-AdvancedMd-diagram-flash {', '\n}')).toBe(
+      inside
+    );
     // A background declared in a stylesheet is painted the page's own canvas
     // colour under forced colours, which leaves the bar seven transparent
     // pixels carrying a cursor and a tooltip; it is the one mark decoration
@@ -3254,7 +3292,7 @@ describe('the mark colours in the stylesheet', () => {
     expect(declaration('.jp-AdvancedMd-markCaret', 'forced-color-adjust')).toBe(
       'none'
     );
-    expect(ring('@keyframes jp-AdvancedMd-caret-flash {', '\n}')).toBe(rule);
+    expect(ring('@keyframes jp-AdvancedMd-ring-flash {', '\n}')).toBe(rule);
   });
 
   it('hands the bar to the forced palette where the page is forced (ACC-NOTES-180)', () => {
@@ -3272,18 +3310,20 @@ describe('the mark colours in the stylesheet', () => {
     const block = css.slice(start, css.indexOf('\n}', start));
     expect(block).toContain('background-color: CanvasText;');
     expect(block).toContain('background-color: GrayText;');
-    expect(block).toContain('--jp-AdvancedMd-caret-ring: Highlight;');
+    expect(block).toContain('--jp-AdvancedMd-flash-ring: Highlight;');
     // Mark is the token a highlight reaches for first, and it is refused: it
     // is the same yellow in both palettes and measures 1.07 to 1 on a white
     // canvas, which loses the bar again on the pairing this rule is for.
     expect(block).not.toContain('Mark;');
     // The ring travels through a property of its own, which is what lets the
     // query retarget it without a second set of frames.
-    expect(
-      declaration('.jp-AdvancedMd-markCaret', '--jp-AdvancedMd-caret-ring')
-    ).toBe('var(--jp-content-font-color1)');
+    // One name for every decoration that draws a ring, so the query hands
+    // all of them to the palette at once.
+    expect(declaration(':root', '--jp-AdvancedMd-flash-ring')).toBe(
+      'var(--jp-content-font-color1)'
+    );
     expect(css).toContain(
-      'box-shadow: 0 0 0 2px var(--jp-AdvancedMd-caret-ring);'
+      'box-shadow: 0 0 0 2px var(--jp-AdvancedMd-flash-ring);'
     );
   });
 
@@ -3308,7 +3348,7 @@ describe('the mark colours in the stylesheet', () => {
       expect(contrast(flashed, theme.text)).toBeGreaterThan(4.5);
       for (const colour of MARK_COLOURS) {
         const marked = over(
-          declaration(theme.rule(colour), 'background-color'),
+          declaration(theme.rule(colour), WASH),
           theme.background
         );
         expect(
@@ -3318,17 +3358,74 @@ describe('the mark colours in the stylesheet', () => {
     }
   });
 
+  it('washes a drawn diagram over the picture, not behind it (ACC-NOTES-182)', () => {
+    // The picture is an opaque image of its own, so a colour on the figure
+    // would never be seen. The wash is a pseudo-element over it, which adds
+    // no node to the render, and it takes no pointer events so a press still
+    // reaches the picture and selects it.
+    expect(declaration('.jp-AdvancedMd-markDiagram', 'position')).toBe(
+      'relative'
+    );
+    const over = '.jp-AdvancedMd-markDiagram::after';
+    expect(declaration(over, 'background-color')).toBe(`var(${WASH})`);
+    expect(declaration(over, 'position')).toBe('absolute');
+    expect(declaration(over, 'inset')).toBe('0');
+    expect(declaration(over, 'pointer-events')).toBe('none');
+    // The wash is the whole showing of a marked diagram, so it keeps its
+    // colour where the platform forces a palette; every mark colour would
+    // otherwise be painted the one canvas colour.
+    expect(declaration(over, 'forced-color-adjust')).toBe('none');
+    // The flash a selected row runs is a ring on the same pseudo-element,
+    // not the grey the same flash lays over text: over a picture that grey
+    // hides the thing the reader asked to be shown. The figure's own
+    // animation is taken off, its colour being behind the picture.
+    expect(
+      declaration(`.jp-AdvancedMd-markDiagram.${FLASH_CLASS}`, 'animation-name')
+    ).toBe('none');
+    expect(
+      declaration(
+        `.jp-AdvancedMd-markDiagram.${FLASH_CLASS}::after`,
+        'animation'
+      )
+    ).toContain('jp-AdvancedMd-diagram-flash');
+    expect(declaration(over, 'box-shadow')).toBe('inset 0 0 0 2px transparent');
+  });
+
+  it('runs both flashes on the one envelope FLASH_MS mirrors', () => {
+    // The passage and the diagram flash for the same time, and the panel's
+    // own timeout is that time (src/notes-panel.ts). A beat or a count
+    // changed in the stylesheet alone would take the class off before or
+    // after the animation ended, which is the drift a shared name exists to
+    // stop and a shared name alone cannot catch.
+    const runs = (selector: string): string =>
+      declaration(selector, 'animation').replace(/\s+/g, ' ');
+    const envelope = 'var(--jp-AdvancedMd-flash-beat) ease-in-out 2';
+    expect(runs(`.${FLASH_CLASS}`)).toBe(
+      `jp-AdvancedMd-mark-flash ${envelope}`
+    );
+    expect(runs(`.jp-AdvancedMd-markDiagram.${FLASH_CLASS}::after`)).toBe(
+      `jp-AdvancedMd-diagram-flash ${envelope}`
+    );
+    const beat = /^(\d+)ms$/.exec(
+      declaration(':root', '--jp-AdvancedMd-flash-beat')
+    );
+    expect(FLASH_MS).toBe(2 * Number(beat?.[1] ?? 0));
+  });
+
   it('sets nothing but a background and a transition on a mark', () => {
     const start = css.indexOf('\n.jp-AdvancedMd-mark {');
     const shared = css.slice(start, css.indexOf('}', start));
+    expect(shared).toContain(`background-color: var(${WASH})`);
     expect(shared).toContain('transition: background-color');
-    expect(shared.match(/^ {2}[a-z-]+:/gm)).toHaveLength(1);
+    expect(shared.match(/^ {2}[a-z-]+:/gm)).toHaveLength(2);
+    // A colour rule declares the wash and nothing else, so the one hue
+    // reaches the passage, the tick and the diagram alike.
     for (const theme of themes) {
       for (const colour of MARK_COLOURS) {
         const at = css.indexOf(`\n${theme.rule(colour)} {`);
         const body = css.slice(at, css.indexOf('}', at));
-        expect(body).toContain('background-color: rgb(');
-        expect(body.match(/^ {2}[a-z-]+:/gm)).toHaveLength(1);
+        expect(body).toContain(`${WASH}: rgb(`);
+        expect(body.match(/^ {2}[-\w]+:/gm)).toHaveLength(1);
       }
     }
   });

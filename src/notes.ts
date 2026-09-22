@@ -34,6 +34,7 @@ import {
   inTableRow,
   IRenderedRange,
   ISourceScan,
+  markerText,
   markerToRendered,
   passageToRendered,
   renderedToDomRange,
@@ -52,8 +53,10 @@ import {
 import {
   CARET_CLASS,
   colourClass,
-  MARK_ATTRIBUTE,
+  DIAGRAM_CLASS,
+  FLASH_CLASS,
   MARK_CLASS,
+  markedBy,
   MARK_CLOSED_CLASS,
   markState,
   openingState,
@@ -69,6 +72,7 @@ import {
   INoteEntry,
   ISpan,
   known,
+  MARK_COLOURS,
   MarkColour,
   newId,
   NOTE_TYPE,
@@ -120,6 +124,21 @@ export const BREAK_SETTLE_MS = 750;
  * context-menu entry that needs one can be offered through its selector.
  */
 export const SELECTING_CLASS = 'jp-AdvancedMd-selecting';
+
+/**
+ * A drawn diagram in the rendered view.
+ *
+ * JupyterLab draws a mermaid fence as a picture, with the fence's own source
+ * kept beside it and hidden (`@jupyterlab/mermaid`). That hidden source is
+ * the block's text in the capture, so a mark put on the block anchors to the
+ * fence like any passage; the picture carries no words, so it is washed in
+ * the mark's colour rather than wrapped (ACC-NOTES-182).
+ *
+ * A fence the renderer could not draw is not one of these: it shows its own
+ * source on the page, which the reader selects and this paints as the text
+ * it is.
+ */
+const DIAGRAM_SELECTOR = '.jp-RenderedMermaid:not(.jp-mod-warning)';
 
 /**
  * Handle written on a note line while the author setting is empty.
@@ -690,6 +709,56 @@ function firstWord(span: ITextSpan): number {
 }
 
 /**
+ * Wash a drawn diagram in the colour of the marks over its fence.
+ *
+ * The wash goes on the figure the picture is in rather than on the block
+ * around it, which is as wide as the text column while the picture is only
+ * as wide as it was drawn.
+ *
+ * A picture has one wash to give, so several marks over one fence share it:
+ * it takes the colour and the state of the last of them, which is the one
+ * that would lie on top were the diagram text, and the title reads their
+ * notes in order. The identifier of every one of them is named, so each
+ * mark's row still scrolls to the diagram and flashes it.
+ */
+function washDiagram(box: HTMLElement, marks: IMark[]): void {
+  const last = marks[marks.length - 1];
+  box.classList.add(DIAGRAM_CLASS, colourClass(last.colour));
+  if (last.closed) {
+    box.classList.add(MARK_CLOSED_CLASS);
+  }
+  box.dataset.mark = marks.map(mark => mark.id).join(' ');
+  // A blank line between the threads, so the first reply of the second
+  // mark does not read as one more reply to the first.
+  const title = marks
+    .map(tooltip)
+    .filter(text => text !== '')
+    .join('\n\n');
+  if (title) {
+    box.title = title;
+  }
+}
+
+/**
+ * Take a wash off a drawn diagram, leaving the block as the renderer built
+ * it.
+ */
+function unwashDiagram(box: HTMLElement): void {
+  // The flash comes off with the rest. A painted passage takes its flash
+  // away with the span it was on; a figure is the renderer's own element and
+  // survives, so a flash left on it would go on running against the rule
+  // that makes a diagram flash a ring rather than a wash.
+  box.classList.remove(
+    DIAGRAM_CLASS,
+    FLASH_CLASS,
+    MARK_CLOSED_CLASS,
+    ...MARK_COLOURS.map(colourClass)
+  );
+  delete box.dataset.mark;
+  box.removeAttribute('title');
+}
+
+/**
  * Paint the marked passages of a render.
  *
  * Each text node the passages reach is rebuilt once from its own slices, so
@@ -716,6 +785,7 @@ function paintMarks(
     Text,
     Array<{ start: number; end: number; mark: IMark }>
   >();
+  const washes = new Map<HTMLElement, IMark[]>();
   for (const item of anchored) {
     for (const span of snapshot.spans) {
       if (span.end <= item.range.start || span.start >= item.range.end) {
@@ -724,6 +794,17 @@ function paintMarks(
       // Whitespace between two blocks sits directly under the root, and
       // wrapping it would add a direct child there.
       if (span.node.parentElement === root) {
+        continue;
+      }
+      // A diagram is drawn, not written: the words in the range are the
+      // source JupyterLab hides beside the picture, so wrapping them paints
+      // nothing the reader can see. The figure is washed instead, once for
+      // however many marks reach it (ACC-NOTES-182).
+      const box = span.node.parentElement
+        ?.closest(DIAGRAM_SELECTOR)
+        ?.querySelector<HTMLElement>(':scope > figure');
+      if (box) {
+        washes.set(box, [...(washes.get(box) ?? []), item.mark]);
         continue;
       }
       const start = Math.max(item.range.start, span.start) - span.start;
@@ -735,6 +816,10 @@ function paintMarks(
       covers.push({ start, end, mark: item.mark });
       work.set(span.node, covers);
     }
+  }
+
+  for (const [box, marks] of washes) {
+    washDiagram(box, marks);
   }
 
   const bars = new Map<Text, Array<{ at: number; caret: ICaret }>>();
@@ -806,9 +891,15 @@ function paintMarks(
  * Take every mark span out of a render, putting back the text it wrapped.
  *
  * A bar wraps nothing, so the same unwrapping removes it and leaves the text
- * around it alone.
+ * around it alone. A washed diagram wraps nothing either and is not a span
+ * at all, so its classes come off the block first.
  */
 function unpaintMarks(root: HTMLElement): void {
+  for (const box of Array.from(
+    root.querySelectorAll<HTMLElement>(`.${DIAGRAM_CLASS}`)
+  )) {
+    unwashDiagram(box);
+  }
   for (const element of Array.from(
     root.querySelectorAll(`.${MARK_CLASS}, .${CARET_CLASS}`)
   )) {
@@ -843,6 +934,7 @@ export class NotesController implements IDisposable {
     MessageLoop.installMessageHook(this._widget.content, this._dropRender);
     this._widget.disposed.connect(this._onWidgetDisposed, this);
     this._widget.node.addEventListener('click', this._onClick, true);
+    this._widget.node.addEventListener('mousedown', this._onMouseDown, true);
     // Chromium reports a selection change a frame or more after the
     // selection is made, and a right click can come first; the menu is built
     // on the document's contextmenu handler, so the record, and the class the
@@ -974,6 +1066,7 @@ export class NotesController implements IDisposable {
     this._clearSettle();
     this._forgetWritten();
     this._widget.node.removeEventListener('click', this._onClick, true);
+    this._widget.node.removeEventListener('mousedown', this._onMouseDown, true);
     this._widget.node.removeEventListener(
       'contextmenu',
       this._onSelectionChange,
@@ -1036,19 +1129,10 @@ export class NotesController implements IDisposable {
       if (!range) {
         return [];
       }
+      const written = markerText(range, opening, closing);
       return [
-        {
-          start: range.start,
-          end: range.start,
-          text: range.startOwnLine
-            ? `${opening}\n`
-            : `${range.startPrefix}${opening}`
-        },
-        {
-          start: range.end,
-          end: range.end,
-          text: range.endOwnLine ? `\n${closing}` : closing
-        }
+        { start: range.start, end: range.start, text: written.opening },
+        { start: range.end, end: range.end, text: written.closing }
       ];
     });
     // The painted mark now shows the passage, so the selection it was made
@@ -1060,7 +1144,7 @@ export class NotesController implements IDisposable {
     if (written && this._selection === used) {
       this._setSelection(null);
       const live = window.getSelection();
-      const painted = root.querySelectorAll(`[${MARK_ATTRIBUTE}="${id}"]`);
+      const painted = root.querySelectorAll(markedBy(id));
       const last = painted[painted.length - 1];
       if (last) {
         live?.collapse(last, last.childNodes.length);
@@ -1317,6 +1401,41 @@ export class NotesController implements IDisposable {
   private _onWidgetDisposed(): void {
     this.dispose();
   }
+
+  /**
+   * Select a drawn diagram the reader presses on.
+   *
+   * A picture holds no words, so a drag across one selects nothing: the
+   * browser starts to drag the picture instead. A press puts the selection
+   * over the whole block, which is the unit a note goes on, and it is the
+   * press rather than the click so the context menu a right button opens is
+   * offered the selection its Mark entry needs (ACC-NOTES-182). The press
+   * selects whether or not the diagram is already marked, as a press on a
+   * painted passage does; the note on it is read from its row in the panel.
+   *
+   * The browser's own answer to the press is left alone. It focuses the
+   * viewer, which the marking shortcut's selector needs, and it lets the
+   * picture be dragged, which every other picture in the preview allows.
+   *
+   * This reads `mousedown` where the rest of the extension reads
+   * `pointerdown`. A pointer press is raised by a finger as well, and a
+   * finger resting on a picture to scroll it would select the diagram
+   * every time; a long press raises the context menu with no mouse press
+   * before it, which is the touch gap ACC-NOTES-182 records.
+   */
+  private _onMouseDown = (event: MouseEvent): void => {
+    if (!this._settings.notes) {
+      return;
+    }
+    const root = this._root;
+    const target = event.target as Element | null;
+    const diagram = target?.closest?.(DIAGRAM_SELECTOR) ?? null;
+    const selection = window.getSelection();
+    if (!root || !diagram || !root.contains(diagram) || !selection) {
+      return;
+    }
+    selection.selectAllChildren(diagram);
+  };
 
   /**
    * The reader clicked in the preview: a click on a marked passage, or on the

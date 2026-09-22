@@ -2,6 +2,26 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.22] - 2026-09-22
+
+A drawn Mermaid diagram, and text a character reference holds together, can now carry a mark and a note.
+
+### Added
+
+- Right-click a drawn Mermaid diagram and pick a colour under Mark, or choose Add note: the whole picture takes the mark's colour. The diagram keeps drawing, and the mark's row in the notes panel scrolls the picture into view and rings it
+- A passage whose words a character reference holds together, such as `In&nbsp;Scope` in a raw HTML chip, can be marked. The words of the file are now read through the browser's own character table, the one the renderer itself decodes with, so the words on the page and the words in the file are the same words
+
+### Changed
+
+- The three beats of a removal, the rise, the strike and the drain, keep their order at every highlight duration rather than only above one second, and a highlight a further change carries gives up its rise and its strike instead of restarting them
+
+### Fixed
+
+- Marking a diagram inside a GitHub alert, such as `> [!NOTE]`, wrote the opening marker into the fence's own first line, and the diagram stopped drawing
+- A marker written on a line of its own now carries the blockquote markers and the indentation of the block it belongs to, so it stays inside the same quote or list item
+- A line of inline code spans, and a backtick in a fence's info string, were read as opening a fenced block, which put markers inside the reader's own text
+- The note box in the notes panel no longer draws a scrollbar along its bottom edge on macOS
+
 ## [1.0.21] - 2026-09-21
 
 The colour squares in the notes panel stop glaring in the dark theme, and Shift Enter saves a note.

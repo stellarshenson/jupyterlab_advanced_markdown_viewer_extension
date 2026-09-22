@@ -802,8 +802,9 @@ test.describe('the reader position', () => {
 
 test.describe('change animation', () => {
   // 20 characters per second: the third paragraph (27 characters) types for
-  // 1350 ms and the ghost 'apples.' is held for its 500 ms rise then deleted
-  // over 350 ms, both long enough to sample every 20 ms.
+  // 1350 ms and the ghost 'apples.' is held for its 500 ms rise and the
+  // 250 ms strike over it, then deleted over 350 ms, all long enough to
+  // sample every 20 ms.
   test.use({ mockSettings: settings({ animationSpeed: 20 }) });
 
   const THIRD = 'A third paragraph appeared.';
@@ -900,10 +901,11 @@ test.describe('change animation', () => {
 
     const ghost = await page.evaluate(() => (window as any).__ghost);
     expect(ghost.whole).toBe('apples.'.length);
-    // Whole for the 500 ms rise, a frame or two either way; the 750 ms hold
-    // of earlier builds falls outside.
-    expect(ghost.shrank - ghost.created).toBeGreaterThanOrEqual(450);
-    expect(ghost.shrank - ghost.created).toBeLessThan(650);
+    // Whole for the 500 ms rise and the 250 ms strike drawn over it, a frame
+    // or two either way; the 500 ms hold of earlier builds, which started the
+    // deletion in the same frame the strike arrived, falls outside.
+    expect(ghost.shrank - ghost.created).toBeGreaterThanOrEqual(700);
+    expect(ghost.shrank - ghost.created).toBeLessThan(900);
     // The paragraph was still typing when the ghost began to go: side by
     // side, not one after the other.
     expect(ghost.typed).toBeGreaterThan(0);
@@ -923,7 +925,7 @@ test.describe('change animation', () => {
       'line-through'
     );
 
-    // Sampling starts some way into the 500 ms hold, after the two polls
+    // Sampling starts some way into the 750 ms hold, after the two polls
     // above returned. Without a hold the 7 characters would be gone within
     // 350 ms at 20 cps, so five full-length samples (100 ms) prove the ghost
     // stood before its deletion started; the hold's length is measured by

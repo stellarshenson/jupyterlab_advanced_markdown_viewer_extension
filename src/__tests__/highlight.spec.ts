@@ -81,6 +81,35 @@ describe('captureText', () => {
     expect(captureText(root).text).toBe('before\nhtml');
   });
 
+  it('reads a drawn diagram by its hidden source and skips what no source holds (ACC-NOTES-182)', () => {
+    // JupyterLab draws a mermaid fence as a picture, keeps the fence's own
+    // source beside it hidden, and writes the diagram's accessible
+    // description under it. The source is in the Markdown and anchors a mark
+    // to the fence; the description is in no Markdown and would anchor
+    // nothing, so it is read past.
+    const drawn = render(
+      '<p>before</p><div class="jp-RenderedMermaid"><figure>' +
+        '<img alt="a flow chart">' +
+        '<pre><code class="mermaid">graph TD</code></pre>' +
+        '<figcaption class="jp-sr-only">two boxes and an arrow</figcaption>' +
+        '</figure></div>'
+    );
+    expect(captureText(drawn).text).toBe('before\ngraph TD');
+
+    // A fence the renderer could not draw shows its own source with the
+    // parser's message under it. The message is in no Markdown either, and
+    // it sits in the same block as the source, so read it would make the
+    // last word of the fence a word the file does not hold.
+    document.body.innerHTML = '';
+    const failed = render(
+      '<p>before</p><div class="jp-RenderedMermaid jp-mod-warning">' +
+        '<details class="jp-RenderedMermaid-Details"><summary>' +
+        '<pre><code class="mermaid">graph TD</code></pre></summary>' +
+        '<pre>Parse error on line 2</pre></details></div>'
+    );
+    expect(captureText(failed).text).toBe('before\ngraph TD');
+  });
+
   it('skips decorations left from an earlier change', () => {
     const root = render(
       `<p>keep<span class="jp-AdvancedMd-decoration ${REMOVED_CLASS}">ghost</span></p>`
