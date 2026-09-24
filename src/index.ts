@@ -422,7 +422,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
     });
 
     app.commands.addCommand(COMMANDS.addNote, {
-      label: trans.__('Add note'),
+      label: trans.__('Add Comment'),
       icon: NOTE_ICON,
       describedBy: { args: { type: 'object', properties: {} } },
       isVisible: () => marking() !== null,

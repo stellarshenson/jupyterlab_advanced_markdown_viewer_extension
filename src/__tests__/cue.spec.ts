@@ -107,6 +107,11 @@ function makeWidget() {
     context: { path: CAPTION },
     content: Object.assign(content, {
       rendered: new Signal<any, void>(content),
+      renderer: {
+        node: root,
+        markdownParser: null,
+        setFragment: () => undefined
+      },
       update: () => undefined
     })
   };

@@ -2,6 +2,24 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.23] - 2026-09-24
+
+The preview no longer jumps when a document with pictures is rendered again, and a comment keeps its list item, quote or paragraph intact.
+
+### Changed
+
+- The text in view stays where it is when the file is rewritten on disk or typed in beside the preview, also across rewrites in quick succession. The preview keeps the first block of text in view at its place instead of restoring a pixel offset after a delay
+- A picture is not downloaded again on every render. A changed picture file is downloaded in the background and shown once it has loaded, so the picture never shows empty and the text above or below it does not move; a deleted picture file shows as missing
+- A scroll you make while the preview renders again, with the wheel, the scrollbar or the keyboard, is kept instead of being pulled back
+- The context menu entry that opens a note reads **Add Comment**, and the note box reads Write a comment
+
+### Fixed
+
+- A comment on a list item whose first line is a fence or a heading, or on an item of a nested list, moved the item out of its list
+- A comment started right after a closing fence, a thematic break, a heading with closing hashes, a GitHub alert line or a hard line break changed what that line was
+- A note on a comment whose marker sits in a blockquote was printed on the page
+- A comment started right after a link reference definition broke the definition, and its links showed as plain text
+
 ## [1.0.22] - 2026-09-22
 
 A drawn Mermaid diagram, and text a character reference holds together, can now carry a mark and a note.

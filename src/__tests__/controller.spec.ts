@@ -66,6 +66,11 @@ function makeWidget() {
     context: { path: 'live.md' },
     content: Object.assign(content, {
       rendered: new Signal<any, void>(content),
+      renderer: {
+        node: root,
+        markdownParser: null,
+        setFragment: () => undefined
+      },
       update: () => undefined
     })
   };
@@ -260,82 +265,38 @@ describe('LiveViewController', () => {
     });
   });
 
-  describe('scroll position', () => {
-    let scrollTop: number;
-
-    /**
-     * jsdom lays nothing out, so the render root is given a scroll position
-     * that behaves like a browser's: settable, clamped, and reported back.
-     */
-    beforeEach(() => {
-      scrollTop = 0;
+  describe("the reader's place", () => {
+    it('writes no scroll position on a timer after a render, as the pixel restore did', () => {
+      let writes = 0;
       Object.defineProperty(root, 'scrollTop', {
         configurable: true,
-        get: () => scrollTop,
-        set: (value: number) => {
-          scrollTop = Math.max(0, Math.min(value, 1500));
+        get: () => 800,
+        set: () => {
+          writes += 1;
         }
       });
-      Object.defineProperty(root, 'scrollHeight', { value: 2000 });
-      Object.defineProperty(root, 'clientHeight', { value: 500 });
-    });
-
-    const scrollEvent = () =>
-      root.dispatchEvent(new Event('scroll', { bubbles: true }));
-    const readerScrollsTo = (value: number) => {
+      render('<p>alpha</p>');
       root.dispatchEvent(new Event('wheel', { bubbles: true }));
-      scrollTop = value;
-      scrollEvent();
-    };
-
-    it('overrides a scroll another extension made on the same render', () => {
-      render('<p>alpha</p>');
-      readerScrollsTo(800);
-      jest.advanceTimersByTime(1000);
+      root.dispatchEvent(new Event('scroll'));
       applied();
       render('<p>alpha beta</p>');
-      // Another extension scrolls to an anchor shortly after the render.
-      jest.advanceTimersByTime(100);
-      scrollTop = 0;
-      scrollEvent();
-      jest.advanceTimersByTime(100);
-      expect(scrollTop).toBe(800);
-      // The restore's own scroll event is not taken for the reader's.
-      scrollEvent();
       jest.advanceTimersByTime(1000);
-      expect(scrollTop).toBe(800);
+      expect(writes).toBe(0);
     });
 
-    it('keeps a reader who scrolled back to the top at the top', () => {
-      render('<p>alpha</p>');
-      readerScrollsTo(800);
-      readerScrollsTo(0);
-      jest.advanceTimersByTime(1000);
-      applied();
-      render('<p>alpha beta</p>');
-      jest.advanceTimersByTime(100);
-      scrollTop = 600;
-      scrollEvent();
-      jest.advanceTimersByTime(100);
-      expect(scrollTop).toBe(0);
-      scrollEvent();
-      jest.advanceTimersByTime(1000);
-      applied();
-      render('<p>alpha beta gamma</p>');
-      jest.advanceTimersByTime(300);
-      expect(scrollTop).toBe(0);
-    });
-
-    it('stands down when the reader scrolls during the restore', () => {
-      render('<p>alpha</p>');
-      readerScrollsTo(800);
-      jest.advanceTimersByTime(1000);
-      applied();
-      render('<p>alpha beta</p>');
-      jest.advanceTimersByTime(50);
-      readerScrollsTo(300);
-      jest.advanceTimersByTime(200);
-      expect(scrollTop).toBe(300);
+    it("hands the preview's parser to the place layer and gives it back when disposed", () => {
+      const parser = { render: async (source: string) => source };
+      const made = makeWidget();
+      made.widget.content.renderer.markdownParser = parser;
+      const other = new LiveViewController({
+        widget: made.widget,
+        contents: {} as any,
+        channel: {} as any,
+        settings
+      });
+      expect(made.widget.content.renderer.markdownParser).not.toBe(parser);
+      other.dispose();
+      expect(made.widget.content.renderer.markdownParser).toBe(parser);
     });
   });
 

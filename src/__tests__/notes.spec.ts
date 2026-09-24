@@ -168,7 +168,11 @@ function harness(initial: string) {
     }
   };
 
-  const content: any = { update: jest.fn(), processMessage: jest.fn() };
+  const content: any = {
+    update: jest.fn(),
+    processMessage: jest.fn(),
+    renderer: { node: root, markdownParser: null, setFragment: () => undefined }
+  };
   content.rendered = new Signal<any, void>(content);
   const widget: any = {
     node,
@@ -1245,6 +1249,39 @@ describe('NotesController', () => {
       expect(h.source()).not.toContain('\n-->');
     });
 
+    it('writes the note on one line when the marker sits on a line of a blockquote (DEF-NOTES-118)', async () => {
+      const h = open(
+        `> [!NOTE]\n> See the flow.\n>\n> <!-- mark:${ONE} note colour=yellow -->\n> \`\`\`mermaid\n> graph TD\n> \`\`\`\n> <!-- /mark:${ONE} -->\n`
+      );
+      await ready();
+
+      await h.controller.addNote(ONE, 'first line\nsecond line');
+
+      const [mark] = parseMarks(h.source());
+      expect(mark.notes[0].text).toBe('first line\nsecond line');
+      // Every line of the quote still carries its quote marker.
+      expect(
+        h
+          .source()
+          .split('\n')
+          .filter(line => line.trim())
+          .every(line => line.startsWith('>'))
+      ).toBe(true);
+    });
+
+    it('writes the note on one line when the blockquote sits inside a list item (DEF-NOTES-118)', async () => {
+      const h = open(
+        `9. nine\n10. ten\n\n    > [!NOTE]\n    > <!-- mark:${ONE} note colour=orange -->\n    > \`\`\`mermaid\n    > graph TD\n    > \`\`\`\n    > <!-- /mark:${ONE} -->\n`
+      );
+      await ready();
+
+      await h.controller.addNote(ONE, 'first line\nsecond line');
+
+      const [mark] = parseMarks(h.source());
+      expect(mark.notes[0].text).toBe('first line\nsecond line');
+      expect(h.source()).not.toContain('\n-->');
+    });
+
     it('writes the note on one line when the table follows a text line with no blank between (ACC-NOTES-154)', async () => {
       const h = open(
         `Fruit stock:\n| Fruit | Count |\n| --- | --- |\n| <!-- mark:${ONE} note colour=yellow -->beta gamma<!-- /mark:${ONE} --> | 3 |\n`
@@ -1601,6 +1638,151 @@ describe('NotesController', () => {
       await h.controller.remove(ONE);
 
       expect(h.source()).toBe('# Title here\n\nBody text follows.\n');
+    });
+
+    it('puts the first content of a list item back beside its bullet when the marker written after the bullet goes (DEF-NOTES-114)', async () => {
+      const h = open(
+        `- alpha\n- <!-- mark:${ONE} note colour=blue -->\n  ## Heading two\n  <!-- /mark:${ONE} -->\n- eps\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('- alpha\n- ## Heading two\n- eps\n');
+    });
+
+    it('leaves the block after a broken mark whole when its markers sit on consecutive lines after a bullet', async () => {
+      const h = open(
+        `- <!-- mark:${ONE} note colour=blue -->\n  <!-- /mark:${ONE} -->\n\nNext paragraph\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('- \n\nNext paragraph\n');
+    });
+
+    it('restores the source when two comments starting at one list item are removed one after the other', async () => {
+      const bare = '1. ## Heading two\n\n2. eps\n';
+      const h = open(
+        `1. <!-- mark:${ONE} note colour=blue -->\n   <!-- mark:${TWO} note colour=yellow -->\n   ## Heading two\n   <!-- /mark:${TWO} -->\n   <!-- /mark:${ONE} -->\n\n2. eps\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+      await h.controller.remove(TWO);
+
+      expect(h.source()).toBe(bare);
+    });
+
+    it('keeps the text after a closing marker on the line below a bullet', async () => {
+      const h = open(
+        `- <!-- mark:${ONE} note colour=blue -->\n  <!-- /mark:${ONE} --> rest here\n- second\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('-  rest here\n- second\n');
+    });
+
+    it('puts the rest of the item back beside its bullet when an emptied comment there is removed', async () => {
+      const h = open(
+        `- <!-- mark:${ONE} note colour=blue -->\n  <!-- /mark:${ONE} -->\n  more item\n- next\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('- more item\n- next\n');
+    });
+
+    it('removes a marker line inside a blockquote with its quote markers', async () => {
+      const h = open(
+        `> <!-- mark:${ONE} note colour=blue -->\n> quoted text here<!-- /mark:${ONE} -->\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('> quoted text here\n');
+    });
+
+    it('removes a marker line under the alert line of a GitHub alert', async () => {
+      const h = open(
+        `> [!NOTE]\n> <!-- mark:${ONE} note colour=blue -->\n> alert body<!-- /mark:${ONE} --> words\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('> [!NOTE]\n> alert body words\n');
+    });
+
+    it('removes a marker line after a blank quote line, keeping the blank line', async () => {
+      const h = open(
+        `> para1\n>\n> <!-- mark:${ONE} note colour=blue -->\n> para2 text<!-- /mark:${ONE} -->\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('> para1\n>\n> para2 text\n');
+    });
+
+    it('removes both marker lines around a fence in a blockquote', async () => {
+      const h = open(
+        `> para\n>\n> <!-- mark:${ONE} note colour=blue -->\n> \`\`\`\n> code\n> \`\`\`\n> <!-- /mark:${ONE} -->\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('> para\n>\n> ```\n> code\n> ```\n');
+    });
+
+    it('keeps the blank quote line a marker of 1.0.22 was appended to, with its trailing space', async () => {
+      const h = open(
+        `> para1\n> <!-- mark:${ONE} note colour=blue -->\n> para2 text<!-- /mark:${ONE} -->\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('> para1\n> \n> para2 text\n');
+    });
+
+    it('keeps the quote line a marker stands on between paragraph text and an indented code line', async () => {
+      const h = open(
+        `> para1\n> <!-- mark:${ONE} note colour=blue -->\n>     code line\n> <!-- /mark:${ONE} -->\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('> para1\n> \n>     code line\n');
+    });
+
+    it('keeps the blank quote line a marker of 1.0.22 was appended to, with no space', async () => {
+      const h = open(
+        `> para1\n><!-- mark:${ONE} note colour=blue -->\n> para2 text<!-- /mark:${ONE} -->\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('> para1\n>\n> para2 text\n');
+    });
+
+    it('puts it back inside a blockquote as well (DEF-NOTES-114)', async () => {
+      const h = open(
+        `> - a\n>\n> - <!-- mark:${ONE} note colour=blue -->\n>   b c<!-- /mark:${ONE} --> d\n`
+      );
+      await ready();
+
+      await h.controller.remove(ONE);
+
+      expect(h.source()).toBe('> - a\n>\n> - b c d\n');
     });
 
     it('forgets a mark the reader removed', async () => {
@@ -2308,6 +2490,34 @@ describe('NotesController', () => {
 
       expect(h.controller.marks).toEqual([]);
       expect(h.source()).toBe(PLAIN);
+    });
+
+    it('deletes two broken marks that start at one list item without touching the next paragraph', async () => {
+      const opening =
+        `- <!-- mark:${ONE} note colour=blue -->\n` +
+        `  <!-- mark:${TWO} note colour=yellow -->\n`;
+      const h = open(
+        `${opening}  ## Heading two\n  <!-- /mark:${TWO} -->\n  <!-- /mark:${ONE} -->\n\nNext paragraph\n`
+      );
+      await ready();
+
+      await rewrite(h, `${opening}\nNext paragraph\n`);
+
+      expect(h.source()).toBe('- \n\nNext paragraph\n');
+    });
+
+    it('puts the item text back beside its bullet when two broken marks opened at that item', async () => {
+      const opening =
+        `- <!-- mark:${ONE} note colour=blue -->\n` +
+        `  <!-- mark:${TWO} note colour=yellow -->\n`;
+      const h = open(
+        `Steps:\n${opening}  Item text<!-- /mark:${TWO} --><!-- /mark:${ONE} -->\n- next\n`
+      );
+      await ready();
+
+      await rewrite(h, `Steps:\n${opening}  Item text\n- next\n`);
+
+      expect(h.source()).toBe('Steps:\n- Item text\n- next\n');
     });
 
     it('deletes both markers of a passage a rewrite emptied', async () => {

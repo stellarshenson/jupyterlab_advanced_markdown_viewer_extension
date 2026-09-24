@@ -244,6 +244,11 @@ function activate(source: string, composite: Record<string, unknown> = {}) {
   const widget = new Document(source);
   widget.rendered.className = 'jp-RenderedMarkdown';
   widget.content.rendered = new Signal<any, void>(widget.content);
+  widget.content.renderer = {
+    node: widget.rendered,
+    markdownParser: null,
+    setFragment: () => undefined
+  };
 
   // The hit test walks up from the node the context menu was opened over, as
   // the lab's does. A test says which node that was, or none for a menu
@@ -1215,6 +1220,11 @@ describe('the plugin', () => {
   });
 
   describe('the context menu', () => {
+    it('names the entry that opens a note Add Comment (ACC-NOTES-184)', async () => {
+      const lab = await start(SOURCE);
+      expect(lab.commands.label(COMMANDS.addNote)).toBe('Add Comment');
+    });
+
     it('offers a Mark submenu of the six colours, the note, the two copies and the three states', async () => {
       const lab = await start(SOURCE);
       expect(

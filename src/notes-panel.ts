@@ -1341,8 +1341,8 @@ export class NotesPanel extends Widget {
     form.className = FORM_CLASS;
     const text = document.createElement('textarea');
     text.rows = 4;
-    text.placeholder = 'Write a note';
-    text.setAttribute('aria-label', this._trans.__('Note'));
+    text.placeholder = this._trans.__('Write a comment');
+    text.setAttribute('aria-label', this._trans.__('Comment'));
     // The browser's own menu (paste, spelling) stays inside the field;
     // JupyterLab honours this attribute (ACC-NOTES-157).
     text.setAttribute('data-jp-suppress-context-menu', '');

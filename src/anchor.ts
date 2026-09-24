@@ -69,12 +69,6 @@ export interface IProtectedSpan {
   start: number;
   /** Offset just past the span's last character. */
   end: number;
-  /**
-   * Whether a code block is one indentation made rather than one a fence
-   * opened. The indentation is what makes it code, so it is not the
-   * container a marker written beside it can sit inside.
-   */
-  indented?: boolean;
 }
 
 /**
@@ -83,6 +77,36 @@ export interface IProtectedSpan {
 export interface ISourceScan {
   tokens: ISourceToken[];
   protectedSpans: IProtectedSpan[];
+  /** What was read of each line for a marker beside it, keyed by its start. */
+  lines: Map<number, ISourceLine>;
+}
+
+/**
+ * What a marker written beside a line needs of it (DEF-NOTES-114).
+ *
+ * A marker on a line of its own sits inside the blockquotes and list items
+ * around it only by carrying what their own lines carry: the quote markers,
+ * then spaces to the content column of the innermost list item. How much of
+ * a line's indentation is a list item's and how much is the block's own is
+ * decided while the line is read, so it is recorded then rather than guessed
+ * again from the line's text.
+ */
+export interface ISourceLine {
+  /** What a marker line written just above this one carries. */
+  above: string;
+  /**
+   * What a marker line written just below this one carries: a list item this
+   * line opens is still open at its end.
+   */
+  below: string;
+  /** Where the content of a list item this line opens begins, or -1. */
+  item: number;
+  /**
+   * Where a marker appended to this line goes, or -1 for a line that is not
+   * paragraph text: a marker after a closing fence, a thematic break or a
+   * heading's closing hashes would stop them being what they are.
+   */
+  tail: number;
 }
 
 /**
@@ -112,6 +136,13 @@ export interface ISourceRange {
    * same prefix for the same reason. Empty where the marker stays inline.
    */
   endPrefix: string;
+  /**
+   * Text written after the opening marker's own line break, ahead of the
+   * block's first content: the prefix of a line continuing the list item
+   * whose bullet the marker was written after, where the block is the first
+   * thing in the item (DEF-NOTES-114). Empty everywhere else.
+   */
+  startBreak: string;
 }
 
 /**
@@ -133,7 +164,9 @@ export function markerText(
   closing: string
 ): { opening: string; closing: string } {
   return {
-    opening: `${range.startPrefix}${opening}${range.startOwnLine ? '\n' : ''}`,
+    opening: `${range.startPrefix}${opening}${
+      range.startOwnLine ? `\n${range.startBreak}` : ''
+    }`,
     closing: range.endOwnLine ? `\n${range.endPrefix}${closing}` : closing
   };
 }
@@ -197,6 +230,10 @@ const HEADING = /^[ \t]{0,3}#{1,6}(?:[ \t]+|$)/;
 const CLOSING_HASHES = /[ \t]+#+[ \t]*$/;
 const BULLET = /^[ \t]{0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/;
 const ALERT = /^\[![A-Za-z]+\][ \t]*$/;
+// A link reference definition on one line: the label, the destination, and
+// an optional title, with nothing after them.
+const DEFINITION =
+  /^[ \t]{0,3}\[(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|[^\s<>]+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t]*$/;
 const SEPARATOR = /^[\s|:-]+$/;
 const AUTOLINK = /^<([A-Za-z][A-Za-z0-9+.-]*:[^<>\s]*|[^<>\s@]+@[^<>\s]+)>/;
 const TAG = /^<\/?[A-Za-z][^<>]*>/;
@@ -281,6 +318,60 @@ function closesFence(raw: string, char: string, length: number): boolean {
  */
 function isSeparator(raw: string): boolean {
   return SEPARATOR.test(raw) && raw.includes('|') && raw.includes('-');
+}
+
+/**
+ * How many levels of blockquote a matched quote prefix carries, one for
+ * each literal '>' it holds.
+ */
+function quoteDepth(prefix: string): number {
+  return (prefix.match(/>/g) ?? []).length;
+}
+
+/**
+ * The exact text of a line's first `depth` blockquote markers.
+ *
+ * Matched afresh against the line rather than reused from where a fence
+ * opened: the two are often written a little apart - an extra space after
+ * the '>', say - and reusing the opening text verbatim would either miss a
+ * line that does carry the required depth or, past a nested quote, take
+ * more of the line than the required depth calls for.
+ */
+function requiredQuotePrefix(raw: string, depth: number): string {
+  const match = new RegExp(`^(?:[ \\t]{0,3}>[ \\t]?){${depth}}`).exec(raw);
+  return match?.[0] ?? '';
+}
+
+/**
+ * How many characters of a run of spaces and tabs make up at least `target`
+ * columns, a tab standing to the next multiple of four.
+ *
+ * @param white - a run of only spaces and tabs
+ * @param target - the number of columns to reach
+ */
+function charsForColumns(white: string, target: number): number {
+  let at = 0;
+  for (let i = 0; i < white.length; i++) {
+    if (at >= target) {
+      return i;
+    }
+    at += white[i] === '\t' ? 4 - (at % 4) : 1;
+  }
+  return white.length;
+}
+
+/**
+ * A list item open on a line, carried from the line that opened it to every
+ * line that continues it.
+ */
+interface IOpenList {
+  /**
+   * Columns from just past the line's own quote markers to the item's
+   * content, the columns of every item it is nested in included.
+   */
+  column: number;
+  /** The blockquote depth of the line that opened the item. */
+  depth: number;
 }
 
 /**
@@ -547,61 +638,121 @@ export function tokeniseSource(source: string): ISourceScan {
     quote: string;
   } | null = null;
   let indented: { start: number; end: number } | null = null;
+  // The list items open on the line being read, outermost first, carried
+  // across the blank lines CommonMark tolerates inside one.
+  const lists: IOpenList[] = [];
+  const innermost = (): IOpenList | undefined => lists[lists.length - 1];
   let skipTo = 0;
+  // Whether the line skipTo was set on opens an HTML block with a comment,
+  // which ends on the line the comment closes on.
+  let htmlBlock = false;
+  const lines = new Map<number, ISourceLine>();
+  // The line before, which a fence a lost quote cuts short ends on.
+  let previous = { start: -1, end: 0 };
+
+  // What a line carries to stay inside the quote it was written in and the
+  // list items open on it.
+  const column = (depth: number): number =>
+    innermost()?.depth === depth ? innermost()!.column : 0;
+  const prefix = (quoteText: string): string =>
+    quoteText + ' '.repeat(column(quoteDepth(quoteText)));
 
   for (const line of lineRanges(source)) {
+    const before = previous;
+    previous = line;
     // A comment that began on an earlier line runs through this one.
     if (skipTo > line.start) {
-      if (skipTo >= line.end) {
+      if (skipTo > line.end) {
         continue;
       }
+      lines.set(line.start, {
+        above: prefix(''),
+        below: prefix(''),
+        item: -1,
+        tail: htmlBlock ? -1 : lineTail(source, line.start, line.end)
+      });
       skipTo = inline(skipTo, line.end, false);
+      if (htmlBlock && skipTo <= line.end) {
+        open = false;
+      }
       flush();
       continue;
     }
 
     const raw = source.slice(line.start, line.end);
     // A blockquote's markers belong to the line, not to what the line says,
-    // and a fence inside a quote is a fenced block like any other, so they
-    // are read off here rather than after the fence branch below.
+    // so they are read off here, ahead of every block test below: a fence,
+    // an indented block, a thematic break and a table's separator row are
+    // each what they are inside a quote as well (DEF-NOTES-114).
     const quote = QUOTE.exec(raw);
-    const content = line.start + (quote ? quote[0].length : 0);
-    const said = quote ? raw.slice(quote[0].length) : raw;
+    const quoteText = quote?.[0] ?? '';
+    const depth = quoteDepth(quoteText);
+    let at = line.start + quoteText.length;
+    let said = raw.slice(quoteText.length);
+    // The last line of a fence this line's lost quote ended.
+    let cut: ISourceLine | undefined;
 
     if (fence) {
       // A quote prefix is read off a line inside a fence only where the
-      // fence's own line carried one. A line of a code block can begin with
-      // a quote marker of its own - a callout in a Markdown sample, a shell
-      // or a git transcript - and that marker is the reader's text, not a
-      // container. The line's own prefix is what is read, not the one the
-      // fence opened with, because the two are written apart often enough
-      // that an exact match would leave the fence open to the end of the
-      // file; a quote nested inside a quoted fence gives up its inner
-      // marker to that, which is a line no document in hand writes.
-      const inner = fence.quote ? (quote?.[0] ?? '') : '';
-      const inside = line.start + inner.length;
-      if (
-        closesFence(source.slice(inside, line.end), fence.char, fence.length)
-      ) {
-        spans.push({ kind: 'code-block', start: fence.start, end: line.end });
-        fence = null;
-      } else {
-        plain(inside, line.end);
+      // fence's own line carried one, and only to the fence's own depth: a
+      // line of a code block can begin with a quote marker of its own - a
+      // callout in a Markdown sample, a shell or a git transcript - and that
+      // marker is the reader's text, not a container. A line carrying less
+      // quote than the fence's own line has left the quote, and the fence
+      // with it, since CommonMark gives a fenced block no lazy lines: the
+      // fence ends on the line before, and this line is read afresh below.
+      const required = quoteDepth(fence.quote);
+      if (depth >= required) {
+        const inner = required > 0 ? requiredQuotePrefix(raw, required) : '';
+        // Only the list item's own indentation is read off, so a closing
+        // line keeps the three columns of tolerance its opening line had.
+        const listWhite = charsForColumns(
+          /^[ \t]*/.exec(raw.slice(inner.length))![0],
+          column(required)
+        );
+        const inside = line.start + inner.length + listWhite;
+        const kept = prefix(fence.quote);
+        lines.set(line.start, { above: kept, below: kept, item: -1, tail: -1 });
+        if (
+          closesFence(source.slice(inside, line.end), fence.char, fence.length)
+        ) {
+          spans.push({
+            kind: 'code-block',
+            start: fence.start,
+            end: line.end
+          });
+          fence = null;
+        } else {
+          plain(inside, line.end);
+        }
+        flush();
+        continue;
       }
-      flush();
-      continue;
+      spans.push({
+        kind: 'code-block',
+        start: fence.start,
+        end: before.end
+      });
+      fence = null;
+      // A marker after that fence carries what this line carries: carrying
+      // the fence's own quote would put it back inside the fence, which
+      // never met a closing line of its own.
+      cut = lines.get(before.start);
     }
 
-    if (BLANK.test(raw)) {
+    // Blank past its own quote markers, which is what a blockquote's blank
+    // line is: "> " breaks a paragraph and ends an indented block inside a
+    // quote the way an empty line does outside one.
+    if (BLANK.test(said)) {
+      const kept = innermost()?.depth === depth ? prefix(quoteText) : quoteText;
+      lines.set(line.start, { above: kept, below: kept, item: -1, tail: -1 });
+      if (cut) {
+        cut.below = kept;
+      }
       flush();
       open = false;
       if (indented) {
-        spans.push({
-          kind: 'code-block',
-          start: indented.start,
-          end: indented.end,
-          indented: true
-        });
+        spans.push({ kind: 'code-block', ...indented });
         indented = null;
       }
       continue;
@@ -613,13 +764,76 @@ export function tokeniseSource(source: string): ISourceScan {
       open = true;
     }
 
+    // A list item open on an earlier line continues onto this one only at
+    // the blockquote depth it was opened at and indented to its content
+    // column. The items nested deeper than the line's indentation reaches
+    // end here, the ones around them go on, and the indentation of the
+    // innermost one left is its, not the line's own.
+    const white = /^[ \t]*/.exec(said)![0];
+    const listed = lists.length;
+    while (
+      lists.length &&
+      (innermost()!.depth > depth ||
+        (innermost()!.depth === depth &&
+          columns(white) < innermost()!.column) ||
+        (innermost()!.depth < depth &&
+          columns(
+            /^[ \t]*/.exec(
+              raw.slice(requiredQuotePrefix(raw, innermost()!.depth).length)
+            )![0]
+          ) < innermost()!.column))
+    ) {
+      lists.pop();
+    }
+    const chars = charsForColumns(white, column(depth));
+    at += chars;
+    said = said.slice(chars);
+
+    const record: ISourceLine = {
+      above: prefix(quoteText),
+      below: '',
+      item: -1,
+      tail: -1
+    };
+    if (cut) {
+      cut.below = record.above;
+    }
+
+    // A run of one character repeated with spaces between, such as "- - -",
+    // is the thematic break it can also be read as, not a bullet, which is
+    // what CommonMark prefers where both readings are open.
+    const bullet = THEMATIC.test(said) ? null : BULLET.exec(said);
+    if (bullet) {
+      at += bullet[0].length;
+      said = said.slice(bullet[0].length);
+      lists.push({
+        column: column(depth) + columns(bullet[0]),
+        depth
+      });
+      record.item = at;
+    }
+    // A comment opening the line's content opens an HTML block, which is
+    // not paragraph text and ends on the line the comment closes on. On a
+    // line that goes on a paragraph, marked opens one only from the first
+    // column, except inside a list item, whose lines it reads one at a time.
+    const previousLine = lines.get(before.start);
+    const continued =
+      !started &&
+      !bullet &&
+      lists.length === listed &&
+      innermost()?.depth !== depth &&
+      (previousLine?.tail ?? -1) >= 0;
+    htmlBlock = (continued ? /^<!--/ : /^ {0,3}<!--/).test(said);
+    record.below = prefix(quoteText);
+    lines.set(line.start, record);
+
     const fenced = FENCE.exec(said);
     if (fenced) {
       fence = {
         char: fenced[1][0],
         length: fenced[1].length,
         start: line.start,
-        quote: quote?.[0] ?? ''
+        quote: quoteText
       };
 
       flush();
@@ -628,40 +842,29 @@ export function tokeniseSource(source: string): ISourceScan {
 
     // An indented code block only starts a block; the same indentation inside
     // one is a continuation line of a list item and reads as ordinary text.
-    // Read off the raw line rather than past the quote markers: a fence
-    // inside a blockquote is read as the fenced block it is, an indented
-    // block inside one is not (DEF-NOTES-114).
-    if (INDENT.test(raw) && (indented || started)) {
+    if (INDENT.test(said) && (indented || started)) {
       indented = indented ?? { start: line.start, end: line.end };
       indented.end = line.end;
-      plain(line.start, line.end);
+      plain(at, line.end);
       flush();
       continue;
     }
     if (indented) {
-      spans.push({
-        kind: 'code-block',
-        start: indented.start,
-        end: indented.end,
-        indented: true
-      });
+      spans.push({ kind: 'code-block', ...indented });
       indented = null;
     }
 
-    if (THEMATIC.test(raw) || isSeparator(raw)) {
+    if (THEMATIC.test(said) || isSeparator(said)) {
       flush();
       continue;
     }
 
-    let at = content;
-    const rest = said;
-
-    if (ALERT.test(rest)) {
+    if (ALERT.test(said)) {
       flush();
       continue;
     }
 
-    const heading = HEADING.exec(rest);
+    const heading = HEADING.exec(said);
     if (heading) {
       spans.push({ kind: 'heading', start: line.start, end: line.end });
       at += heading[0].length;
@@ -671,11 +874,20 @@ export function tokeniseSource(source: string): ISourceScan {
       continue;
     }
 
-    const bullet = BULLET.exec(rest);
-    if (bullet) {
-      at += bullet[0].length;
+    // A link reference definition takes nothing after its destination. It
+    // can stand only where a block can start, not where a paragraph goes on
+    // (DEF-NOTES-120).
+    record.tail =
+      htmlBlock ||
+      (DEFINITION.test(said) &&
+        (started || !previousLine || previousLine.tail < 0))
+        ? -1
+        : lineTail(source, line.start, line.end);
+    skipTo = inline(at, line.end, /^[ \t]*\|/.test(said));
+    // The HTML block a comment opened ends on the line the comment closes on.
+    if (htmlBlock && skipTo <= line.end) {
+      open = false;
     }
-    skipTo = inline(at, line.end, /^[ \t]*\|/.test(rest));
     flush();
   }
 
@@ -683,16 +895,11 @@ export function tokeniseSource(source: string): ISourceScan {
     spans.push({ kind: 'code-block', start: fence.start, end: source.length });
   }
   if (indented) {
-    spans.push({
-      kind: 'code-block',
-      start: indented.start,
-      end: indented.end,
-      indented: true
-    });
+    spans.push({ kind: 'code-block', ...indented });
   }
   flush();
 
-  return { tokens, protectedSpans: spans };
+  return { tokens, protectedSpans: spans, lines };
 }
 
 /**
@@ -781,10 +988,9 @@ function widen(
   spans: IProtectedSpan[],
   offset: number,
   side: 'start' | 'end'
-): { at: number; ownLine: boolean; indented: boolean } {
+): { at: number; ownLine: boolean } {
   let at = offset;
   let ownLine = false;
-  let indented = false;
   let moved = true;
   while (moved) {
     moved = false;
@@ -802,12 +1008,11 @@ function widen(
         at = to;
         if (OWN_LINE.has(span.kind)) {
           ownLine = true;
-          indented = indented || span.indented === true;
         }
       }
     }
   }
-  return { at, ownLine, indented };
+  return { at, ownLine };
 }
 
 /**
@@ -816,8 +1021,13 @@ function widen(
 const LINE_PREFIX = /^[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)?$/;
 
 /**
- * How many columns a run of spaces and tabs takes, a tab standing to the
- * next multiple of four.
+ * The text a line holds before the content of a list item it opens.
+ */
+const OPENER = /^[ \t>]*(?:[-+*]|\d{1,9}[.)])[ \t]+$/;
+
+/**
+ * How many columns a run of text takes, a tab standing to the next multiple
+ * of four.
  */
 function columns(white: string): number {
   let at = 0;
@@ -828,38 +1038,45 @@ function columns(white: string): number {
 }
 
 /**
- * What the line at an offset carries before its content to put it inside the
- * blockquote or the list item it belongs to.
+ * What a line continuing a list item carries, from the text before the
+ * item's content on the line whose bullet opened it: its quote markers, then
+ * a space for every column the rest of it takes, bullet included. Null for
+ * text that opens no list item.
  *
- * A marker written on a line of its own beside a block carries the same, or
- * that line is a block of its own: inside a blockquote it ends the quote, and
- * after a blank line inside a list item it ends the list, either way taking
- * the block the mark is on out of where the reader put it.
+ * An opening marker written after a bullet moves the item's first content
+ * down to a line of this (DEF-NOTES-114), so what writes the marker and what
+ * deletes it again read the same answer here.
  *
- * The indentation of a block that indentation alone made code is not
- * carried, and nor is any run of four columns or more: either is what makes
- * a line code rather than what puts it inside a list item, and a marker
- * written under it would be printed as a line of the reader's own program.
- * A block deeper than that inside a list item is left at the left margin,
- * where the marker ends the list (DEF-NOTES-114).
- *
- * @param indented - whether the block beside the marker is a code block
- * indentation alone made, which {@link widen} reports
+ * @param opener - the line's text up to the item's content
  */
-/*
- * The flag is the tokeniser's own answer and the column count is the rule it
- * answered by, so the two agree wherever both are given: the flag is what a
- * caller that widened to a block bound passes, and the count is all the one
- * caller that did not has. They part the day the tokeniser learns where a
- * list item's content begins, which is what DEF-NOTES-114 asks for.
+export function itemContinuation(opener: string): string | null {
+  if (!OPENER.test(opener)) {
+    return null;
+  }
+  const quote = QUOTE.exec(opener)?.[0] ?? '';
+  return quote + ' '.repeat(columns(opener.slice(quote.length)));
+}
+
+/**
+ * Where a marker appended to a line of paragraph text goes: at its end, but
+ * ahead of the spaces or the backslash that end it in a hard line break,
+ * which break the line only while they end it. A backslash the marker lands
+ * after would escape the marker's own first character, so one that is not
+ * itself escaped stays after the marker as well.
  */
-function blockPrefix(source: string, offset: number, indented = false): string {
-  const start = source.lastIndexOf('\n', offset - 1) + 1;
-  const newline = source.indexOf('\n', start);
-  const line = source.slice(start, newline < 0 ? source.length : newline);
-  const quote = QUOTE.exec(line)?.[0] ?? '';
-  const white = /^[ \t]*/.exec(line.slice(quote.length))?.[0] ?? '';
-  return indented || columns(white) >= 4 ? quote : quote + white;
+function lineTail(source: string, start: number, end: number): number {
+  let tail = end;
+  while (
+    tail > start &&
+    (source[tail - 1] === ' ' || source[tail - 1] === '\t')
+  ) {
+    tail--;
+  }
+  let slashes = 0;
+  while (tail - slashes > start && source[tail - slashes - 1] === '\\') {
+    slashes++;
+  }
+  return slashes % 2 === 1 ? tail - 1 : tail;
 }
 
 /**
@@ -905,60 +1122,64 @@ export function inTableRow(source: string, offset: number): boolean {
  *
  * CommonMark reads `<!--` at the start of a line as an HTML block and takes
  * the rest of the line into it, which splits the paragraph. A marker that
- * would land there goes at the end of the previous line, or, when the line is
- * the first of its block and has no previous line to go to, on a line of its
- * own before the block.
+ * would land there goes at the end of the line before, where that line is
+ * paragraph text the marker can join; else on a line of its own above the
+ * block, inside whatever the block is inside (DEF-NOTES-114).
+ *
+ * A block that is the first thing in a list item has no line of the item
+ * above it: the bullet opens the item on the block's own line, and a marker
+ * line above the bullet would stand outside the item and end the list. The
+ * marker goes right after the bullet instead, and the block moves down to a
+ * line continuing the item.
  *
  * @param source - the Markdown source
+ * @param lines - {@link ISourceScan.lines} of that source
  * @param offset - where the marker would go
- * @param ownLine - whether the widening already put it on its own line
+ * @param ownLine - whether the widening already put it on its own line, at
+ * the start of the block's first line
  */
 function placeOpening(
   source: string,
+  lines: Map<number, ISourceLine>,
   offset: number,
-  ownLine: boolean,
-  indented: boolean
-): { at: number; ownLine: boolean; prefix: string } {
-  if (ownLine) {
-    return {
-      at: offset,
-      ownLine,
-      prefix: blockPrefix(source, offset, indented)
-    };
+  ownLine: boolean
+): { at: number; ownLine: boolean; prefix: string; startBreak: string } {
+  let lineStart = offset;
+  if (!ownLine) {
+    lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+    if (!LINE_PREFIX.test(source.slice(lineStart, offset))) {
+      return { at: offset, ownLine: false, prefix: '', startBreak: '' };
+    }
+    // A line of its own inside a table would end the table, and so would a
+    // marker at the start of a row without a leading pipe, which opens an
+    // HTML block; a leading pipe of its own keeps the row a row.
+    // LINE_PREFIX has already excluded a pipe from what precedes the marker,
+    // so the row never has one.
+    if (inTableRow(source, offset)) {
+      return { at: offset, ownLine: false, prefix: '| ', startBreak: '' };
+    }
+    const previous =
+      lineStart > 0
+        ? lines.get(source.lastIndexOf('\n', lineStart - 2) + 1)
+        : undefined;
+    if (previous && previous.tail >= 0) {
+      return { at: previous.tail, ownLine: false, prefix: '', startBreak: '' };
+    }
   }
-  const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
-  const before = source.slice(lineStart, offset);
-  if (!LINE_PREFIX.test(before)) {
-    return { at: offset, ownLine: false, prefix: '' };
+  const line = lines.get(lineStart);
+  const continued =
+    line && line.item >= 0
+      ? itemContinuation(source.slice(lineStart, line.item))
+      : null;
+  if (line && continued !== null) {
+    return { at: line.item, ownLine: true, prefix: '', startBreak: continued };
   }
-  // A line of its own inside a table would end the table, and so would a
-  // marker at the start of a row without a leading pipe, which opens an HTML
-  // block: that row gets the pipe, which changes no cell (ACC-NOTES-154).
-  // LINE_PREFIX has already excluded a pipe from what precedes the marker, so
-  // the row never has one.
-  if (inTableRow(source, offset)) {
-    return { at: offset, ownLine: false, prefix: '| ' };
-  }
-  // The marker goes on a line of its own ahead of the block's line, where it
-  // opens the block rather than standing beside it: a quote it starts is
-  // opened by the marker line, not entered by it, so the markers of the
-  // quote itself are not carried.
-  if (lineStart === 0) {
-    return { at: lineStart, ownLine: true, prefix: '' };
-  }
-  const previousStart = source.lastIndexOf('\n', lineStart - 2) + 1;
-  const previous = source.slice(previousStart, lineStart - 1);
-  if (BLANK.test(previous)) {
-    // The marker stands beside the block on the line above it, inside
-    // whatever the block is inside: at the left margin after a blank line it
-    // would end the list the block sits in and lift the block out of it.
-    return {
-      at: lineStart,
-      ownLine: true,
-      prefix: blockPrefix(source, lineStart)
-    };
-  }
-  return { at: lineStart - 1, ownLine: false, prefix: '' };
+  return {
+    at: lineStart,
+    ownLine: true,
+    prefix: line?.above ?? '',
+    startBreak: ''
+  };
 }
 
 /**
@@ -1140,12 +1361,7 @@ export function renderedToSource(
 
   const opening = widen(scan.protectedSpans, startToken.start, 'start');
   const closing = widen(scan.protectedSpans, endToken.end, 'end');
-  const placed = placeOpening(
-    source,
-    opening.at,
-    opening.ownLine,
-    opening.indented
-  );
+  const placed = placeOpening(source, scan.lines, opening.at, opening.ownLine);
   if (closing.at <= placed.at) {
     return null;
   }
@@ -1154,9 +1370,11 @@ export function renderedToSource(
     end: closing.at,
     startOwnLine: placed.ownLine,
     startPrefix: placed.prefix,
+    startBreak: placed.startBreak,
     endOwnLine: closing.ownLine,
     endPrefix: closing.ownLine
-      ? blockPrefix(source, closing.at, closing.indented)
+      ? (scan.lines.get(source.lastIndexOf('\n', closing.at - 1) + 1)?.below ??
+        '')
       : ''
   };
 }

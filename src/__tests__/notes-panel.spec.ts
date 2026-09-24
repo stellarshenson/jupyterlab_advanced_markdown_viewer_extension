@@ -1439,7 +1439,7 @@ describe('writing a note', () => {
     press(rows()[0], 'Comment');
     expect(
       panel.node.querySelector('textarea')!.getAttribute('aria-label')
-    ).toBe('Note');
+    ).toBe('Comment');
   });
 
   it('keeps the browser menu inside the note field (ACC-NOTES-157)', () => {
@@ -1465,7 +1465,7 @@ describe('writing a note', () => {
     expect(
       Array.from(buttons.querySelectorAll('button')).map(b => b.className)
     ).toEqual(['jp-AdvancedMd-notesButton', 'jp-AdvancedMd-notesButton']);
-    expect(box.placeholder).toBe('Write a note');
+    expect(box.placeholder).toBe('Write a comment');
     expect(form.querySelectorAll('button')).toHaveLength(2);
   });
 

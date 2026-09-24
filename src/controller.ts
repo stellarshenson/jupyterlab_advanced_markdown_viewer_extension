@@ -3,8 +3,8 @@
  *
  * One controller is attached to each open Markdown preview. It owns the file
  * watcher, remembers the text of the previous render so the next one can be
- * compared against it, restores the scroll position the render destroys, and
- * marks the document tab when something arrives.
+ * compared against it, keeps the reader's place and the preview's images
+ * across a render, and marks the document tab when something arrives.
  */
 
 import { DocumentRegistry } from '@jupyterlab/docregistry';
@@ -30,6 +30,8 @@ import {
   ITextSnapshot,
   undecorate
 } from './highlight';
+import { ImageReuse } from './imagereuse';
+import { IPlaceRenderer, ReadingPlace } from './place';
 import { BlockedReason, FileWatcher } from './watcher';
 
 /**
@@ -90,26 +92,6 @@ const CONFLICT_CAPTION =
  * them, which would hide a change to this value instead of reporting it.
  */
 export const QUIET_MS = 3000;
-
-/**
- * Attribute the switch-tab scrolling fix puts on the document widget while it
- * holds the scroll position. While it is there, that extension owns the
- * position and this controller stays passive.
- */
-const FOREIGN_SCROLL_GUARD_ATTRIBUTE = 'data-jp-scroll-guard';
-
-/**
- * Delay of the second scroll restore, chosen to land after the Markdown viewer
- * table-of-contents fix scrolls to a heading anchor on the same signal.
- */
-const LATE_SCROLL_RESTORE_MS = 150;
-
-/**
- * How long after a wheel, pointer or key event a scroll still counts as the
- * reader's own. A scroll event later than that, while a restore is in flight,
- * came from script: this controller's own restore or another extension.
- */
-const INPUT_SCROLL_WINDOW_MS = 500;
 
 /**
  * How opaque the two change highlights are, low being the faintest.
@@ -210,6 +192,20 @@ export class LiveViewController implements IDisposable {
     this._watcher.blocked.connect(this._onBlocked, this);
     this._watcher.unblocked.connect(this._onUnblocked, this);
 
+    // Both run whether or not live updates are on: typing in the same file
+    // re-renders the preview too.
+    const renderer = this._widget.content.renderer as unknown as IPlaceRenderer;
+    this._place = new ReadingPlace({
+      widgetNode: this._widget.node,
+      renderer,
+      busy: img => this._images.busy(img)
+    });
+    this._images = new ImageReuse({
+      host: renderer.node,
+      stat: paths => options.channel.stat(paths),
+      listener: this._place
+    });
+
     this._widget.content.rendered.connect(this._onRendered, this);
     this._widget.disposed.connect(this._onWidgetDisposed, this);
     this._widget.title.changed.connect(this._onTitleChanged, this);
@@ -220,7 +216,6 @@ export class LiveViewController implements IDisposable {
     node.addEventListener('pointerdown', this._onAttention, true);
     node.addEventListener('keydown', this._onAttention, true);
     node.addEventListener('wheel', this._onAttention, true);
-    node.addEventListener('scroll', this._onScroll, true);
   }
 
   get isDisposed(): boolean {
@@ -300,10 +295,6 @@ export class LiveViewController implements IDisposable {
       return;
     }
     this._disposed = true;
-    if (this._lateScrollTimer !== null) {
-      window.clearTimeout(this._lateScrollTimer);
-      this._lateScrollTimer = null;
-    }
     if (this._quietTimer !== null) {
       window.clearTimeout(this._quietTimer);
       this._quietTimer = null;
@@ -316,7 +307,8 @@ export class LiveViewController implements IDisposable {
     node.removeEventListener('pointerdown', this._onAttention, true);
     node.removeEventListener('keydown', this._onAttention, true);
     node.removeEventListener('wheel', this._onAttention, true);
-    node.removeEventListener('scroll', this._onScroll, true);
+    this._images.dispose();
+    this._place.dispose();
     this._clearDecorations();
     this._setTabState(null);
     this._watcher.dispose();
@@ -338,39 +330,7 @@ export class LiveViewController implements IDisposable {
    * The reader acted on the document, so an updated marker has done its job.
    */
   private _onAttention = (): void => {
-    this._lastInputAt = Date.now();
     this._clearUpdatedCue();
-  };
-
-  /**
-   * Track where the reader is, because the render replaces the content and
-   * takes the scroll position with it.
-   *
-   * Scroll events arrive after the assignment that caused them, so the
-   * controller's own restore is recognised by where it lands rather than by
-   * a flag around the assignment. While a restore is in flight, a scroll that
-   * no input preceded is another extension's - the late pass overrides it.
-   */
-  private _onScroll = (event: Event): void => {
-    const target = event.target as HTMLElement | null;
-    if (!target || !target.classList?.contains('jp-RenderedMarkdown')) {
-      return;
-    }
-    if (
-      this._restoreTarget !== null &&
-      target.scrollTop === this._restoreTarget
-    ) {
-      this._restoreTarget = null;
-      return;
-    }
-    const restoring = this._lateScrollTimer !== null;
-    if (restoring && Date.now() - this._lastInputAt > INPUT_SCROLL_WINDOW_MS) {
-      return;
-    }
-    this._scrollTop = target.scrollTop;
-    if (restoring) {
-      this._userScrolledDuringRestore = true;
-    }
   };
 
   private _onApplied(): void {
@@ -463,8 +423,8 @@ export class LiveViewController implements IDisposable {
   }
 
   /**
-   * A render finished. Compare it against the previous one, decorate the
-   * difference, and put the scroll position back.
+   * A render finished. Compare it against the previous one and decorate the
+   * difference.
    */
   private _onRendered(): void {
     if (this._disposed) {
@@ -588,63 +548,6 @@ export class LiveViewController implements IDisposable {
     if (this._fadeTimer === null) {
       this._previousText = snapshot.text;
     }
-
-    this._restoreScroll(root);
-  }
-
-  /**
-   * Put the scroll position back after the renderer replaced the content.
-   *
-   * Two attempts: one on the next frame, and one after a short delay, because
-   * another extension scrolls to a heading anchor on this same signal. Both
-   * stand down as soon as the reader scrolls for themselves. Neither is armed
-   * while the switch-tab scrolling fix owns the scroll position; the guard is
-   * read once here, so a guard that goes up after that still leaves the two
-   * attempts of this render to run, and a timer an earlier render armed is
-   * not cleared at either early return above and fires with that render's
-   * target. ACC-COMPAT-108 records both as declined.
-   */
-  private _restoreScroll(root: HTMLElement): void {
-    const target = this._scrollTop;
-    // A document nobody has acted in yet yields to whatever navigation the
-    // first render brings; a reader who scrolled back to the top keeps it.
-    if (target <= 0 && this._lastInputAt === 0) {
-      return;
-    }
-    if (this._foreignScrollGuard()) {
-      return;
-    }
-    this._userScrolledDuringRestore = false;
-    this._restoreTarget = null;
-    const restore = () => {
-      if (this._disposed || this._userScrolledDuringRestore) {
-        return;
-      }
-      if (root.scrollTop !== target && root.scrollHeight > root.clientHeight) {
-        root.scrollTop = target;
-        this._restoreTarget = root.scrollTop;
-      }
-    };
-    requestAnimationFrame(restore);
-    if (this._lateScrollTimer !== null) {
-      window.clearTimeout(this._lateScrollTimer);
-    }
-    this._lateScrollTimer = window.setTimeout(() => {
-      this._lateScrollTimer = null;
-      restore();
-    }, LATE_SCROLL_RESTORE_MS);
-  }
-
-  /**
-   * Whether another extension owns the scroll position right now.
-   *
-   * The switch-tab scrolling fix marks the widget while its guard is live and
-   * takes the marker off as soon as it releases. The marker alone decides: a
-   * widget nobody marked is nobody's but the reader's, however recently its
-   * tab came to the front.
-   */
-  private _foreignScrollGuard(): boolean {
-    return this._widget.node.hasAttribute(FOREIGN_SCROLL_GUARD_ATTRIBUTE);
   }
 
   /**
@@ -881,14 +784,11 @@ export class LiveViewController implements IDisposable {
   private _disposed = false;
   private _fadeTimer: number | null = null;
   private _fadeEndsAt = 0;
-  private _lateScrollTimer: number | null = null;
   private _quietTimer: number | null = null;
   private _cueTimer: number | null = null;
   private _documentCaption: string | null = null;
   private _stateCaption: string | null = null;
-  private _scrollTop = 0;
-  private _restoreTarget: number | null = null;
-  private _lastInputAt = 0;
-  private _userScrolledDuringRestore = false;
+  private _images: ImageReuse;
+  private _place: ReadingPlace;
   private _settled = new Signal<this, void>(this);
 }

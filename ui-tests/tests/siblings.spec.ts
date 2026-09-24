@@ -205,37 +205,34 @@ test.describe('the forced render', () => {
     const failures: string[] = [];
     page.on('pageerror', (error: Error) => failures.push(String(error)));
 
-    // Two listeners on the rendered signal: a plain counter, and the motion
-    // of the table-of-contents fix, which scrolls to the heading in the URL
-    // hash 100 ms after every render. The second render must not take the
-    // reader back to the anchor they scrolled away from.
+    // A counter on the rendered signal, beside the table-of-contents fix,
+    // which scrolls to the heading in the URL hash after a render. An
+    // in-document link sets the hash; the fix scrolls to its heading, which
+    // shows it is watching this hash.
     await page.evaluate(() => {
       const w = window as any;
-      const content = w.jupyterapp.shell.currentWidget.content;
       w.__renders = 0;
-      w.__anchorScrolls = 0;
-      content.rendered.connect(() => {
+      w.jupyterapp.shell.currentWidget.content.rendered.connect(() => {
         w.__renders += 1;
-        setTimeout(() => {
-          const root = document.querySelector('.jp-RenderedMarkdown');
-          // By tag, not by id: the headings this lab renders carry no id, so
-          // a lookup by anchor name finds nothing and the stand-in would sit
-          // still while claiming to have scrolled.
-          const heading = root?.querySelector('h1') as HTMLElement | null;
-          if (root && heading) {
-            w.__anchorScrolls += 1;
-            root.scrollTo({ top: heading.offsetTop, behavior: 'smooth' });
-          }
-        }, 100);
       });
     });
-
     await page.locator('.jp-RenderedMarkdown').hover();
+    await page.mouse.wheel(0, 1000);
+    await expect.poll(() => previewScrollTop(page)).toBeGreaterThan(300);
+    await page.evaluate(() => {
+      const { pathname, search } = window.location;
+      history.replaceState(history.state, '', `${pathname}${search}#Report`);
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    await expect.poll(() => previewScrollTop(page)).toBeLessThan(50);
+
+    // The reader scrolls away from the heading. The second render must not
+    // take them back to it (ACC-COMPAT-108, DEF-COMPAT-110).
     await page.mouse.wheel(0, 2000);
     await expect.poll(() => previewScrollTop(page)).toBeGreaterThan(500);
-    const before = await previewScrollTop(page);
     // Past the window in which the switch-tab scrolling fix owns the position.
     await page.waitForTimeout(3500);
+    const place = await readerPlace(page);
     const renders = await page.evaluate(() => (window as any).__renders);
 
     await page.contents.uploadContent(ALERT_REWRITTEN, 'text', path);
@@ -244,7 +241,7 @@ test.describe('the forced render', () => {
       { timeout: 20000 }
     );
     // Long enough for the viewer's own render, about a second behind the
-    // forced one, and for the anchor scroll that follows it.
+    // forced one, and for an anchor scroll 100 ms after it.
     await page.waitForTimeout(2500);
 
     // One change, two renders: the forced one that puts it on screen at once
@@ -252,13 +249,11 @@ test.describe('the forced render', () => {
     expect(await page.evaluate(() => (window as any).__renders)).toBe(
       renders + 2
     );
-    // The stand-in found its heading and scrolled to the anchor after each of
-    // them: the counter counts scrolls made, not callbacks run.
-    expect(await page.evaluate(() => (window as any).__anchorScrolls)).toBe(
-      renders + 2
-    );
-    // Neither render moved the reader.
-    expect(Math.abs((await previewScrollTop(page)) - before)).toBeLessThan(50);
+    // Neither render moved the reader: the alert above them grew, and the
+    // paragraph they were reading is where it was (ACC-APPLY-14).
+    expect(
+      Math.abs((await offsetOf(page, place.text)) - place.offset)
+    ).toBeLessThan(1);
     // The alerts sibling rebuilt its markup on both renders rather than
     // losing it on the second.
     await expect(page.locator('.markdown-alert')).toHaveCount(1);
@@ -300,6 +295,47 @@ async function activateTab(page: any, label: string): Promise<void> {
   await expect(
     page.locator('.jp-RenderedMarkdown:visible').first()
   ).toBeVisible();
+}
+
+/**
+ * The first paragraph of the document in front whose top is in view, and its
+ * distance from the top of the view: the text the reader is looking at.
+ */
+async function readerPlace(
+  page: any
+): Promise<{ text: string; offset: number }> {
+  return page.evaluate(() => {
+    const root = (
+      window as any
+    ).jupyterapp.shell.currentWidget.node.querySelector(
+      '.jp-RenderedMarkdown'
+    ) as HTMLElement;
+    const top = root.getBoundingClientRect().top;
+    const block = Array.from(root.querySelectorAll('p')).find(
+      p => p.getBoundingClientRect().top >= top
+    ) as HTMLElement;
+    return {
+      text: block.textContent ?? '',
+      offset: block.getBoundingClientRect().top - top
+    };
+  });
+}
+
+/**
+ * How far that paragraph now is from the top of the view.
+ */
+async function offsetOf(page: any, text: string): Promise<number> {
+  return page.evaluate((needle: string) => {
+    const root = (
+      window as any
+    ).jupyterapp.shell.currentWidget.node.querySelector(
+      '.jp-RenderedMarkdown'
+    ) as HTMLElement;
+    const block = Array.from(root.querySelectorAll('p')).find(
+      p => p.textContent === needle
+    ) as HTMLElement;
+    return block.getBoundingClientRect().top - root.getBoundingClientRect().top;
+  }, text);
 }
 
 test.describe('the refresh view sibling', () => {
@@ -543,6 +579,16 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     )
   ].join('\n');
 
+  /**
+   * The document with a paragraph put in near its top, above where the reader
+   * is parked, and `marker` at its end.
+   */
+  const insertedAbove = (marker: string): string =>
+    IMAGED.replace(
+      '![A picture](picture.png)\n',
+      '![A picture](picture.png)\n\nA paragraph put in above the reader.\n'
+    ) + `\n${marker}\n`;
+
   const FIRST_MARKER = 'The first change arrived.';
   const SECOND_MARKER = 'The second change arrived.';
 
@@ -661,10 +707,10 @@ test.describe('the switch-tab scrolling fix sibling', () => {
   const ANCHOR_HOLD_MS = 300;
 
   /**
-   * Stand in for the table-of-contents fix, holding the anchor rather than
-   * scrolling to it once: scroll to the heading 100 ms after every render and
-   * put the position back on the heading for the next 300 ms whenever the
-   * sibling guard takes it away.
+   * A second party moving the view while the sibling guard holds it: scroll to
+   * the heading 100 ms after a render made under the guard and put the
+   * position back on the heading for the next 300 ms whenever the sibling
+   * takes it away.
    *
    * The hold is what gives this extension something to correct - while the
    * anchor is held, a restore of the reader's own position is a write this
@@ -690,8 +736,10 @@ test.describe('the switch-tab scrolling fix sibling', () => {
       });
       widget.content.rendered.connect(() => {
         window.setTimeout(() => {
-          heldUntil = Date.now() + holdMs;
-          root.scrollTop = anchor();
+          if (widget.node.hasAttribute('data-jp-scroll-guard')) {
+            heldUntil = Date.now() + holdMs;
+            root.scrollTop = anchor();
+          }
         }, 100);
       });
     }, ANCHOR_HOLD_MS);
@@ -757,7 +805,7 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     await page.locator('#main').waitFor();
   }
 
-  test('DEF-COMPAT-43 restores the scroll of an unguarded image document however recently its tab came to the front', async ({
+  test('DEF-COMPAT-43 keeps the place in an unguarded image document however recently its tab came to the front', async ({
     page,
     tmpPath
   }) => {
@@ -807,7 +855,7 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     expect((await currentWidgetState(page)).scrollTop).toBe(parked);
   });
 
-  test('holds its scroll restore exactly as long as the sibling guard holds', async ({
+  test('stands aside exactly as long as the sibling guard holds', async ({
     page,
     tmpPath
   }) => {
@@ -843,26 +891,6 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     expect(longestDeviation(held, parked)).toBeLessThanOrEqual(5);
     expect(held[held.length - 1].top).toBe(parked);
 
-    // The table-of-contents fix scrolls to the heading in the URL hash after
-    // every render. It is stood in for here, for the reason this suite gives
-    // above, and it is what makes the viewer's own scroll restore visible:
-    // whoever moves last decides where the reader ends up.
-    await page.evaluate(() => {
-      const w = window as any;
-      const content = w.jupyterapp.shell.currentWidget.content;
-      content.rendered.connect(() => {
-        setTimeout(() => {
-          const root = w.jupyterapp.shell.currentWidget.node.querySelector(
-            '.jp-RenderedMarkdown'
-          );
-          const heading = root?.querySelector('h1');
-          if (root && heading) {
-            root.scrollTop = heading.offsetTop;
-          }
-        }, 100);
-      });
-    });
-
     // A change that arrives after the guard let go, still inside the three
     // seconds it may hold for.
     await startSampling(page, path, SECOND_MARKER);
@@ -874,10 +902,12 @@ test.describe('the switch-tab scrolling fix sibling', () => {
         timeout: 5000
       })
       .toBe(false);
-    const before = (await currentWidgetState(page)).scrollTop;
-    expect(before).toBe(parked);
+    expect((await currentWidgetState(page)).scrollTop).toBe(parked);
+    // A paragraph put in above the reader is what makes the viewer's place
+    // keeping visible: left alone, the text in view would drop by its height.
+    const place = await readerPlace(page);
     await page.contents.uploadContent(
-      `${IMAGED}\n${SECOND_MARKER}\n`,
+      insertedAbove(SECOND_MARKER),
       'text',
       path
     );
@@ -899,9 +929,11 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     const lastGuarded = released.filter(sample => sample.guarded).pop();
     expect(lastGuarded!.t).toBeLessThan(changed!.t);
     expect(changed!.t - activated!.t).toBeLessThan(3000);
-    // With the guard gone the viewer restores again, so the reader is put
-    // back where they were rather than left at the heading.
-    expect(released[released.length - 1].top).toBe(parked);
+    // With the guard gone the viewer keeps the reader's place again: the
+    // paragraph they were reading has not moved.
+    expect(
+      Math.abs((await offsetOf(page, place.text)) - place.offset)
+    ).toBeLessThan(1);
   });
 
   test('writes no scroll position of its own while the sibling guard holds', async ({
@@ -946,12 +978,33 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     expect(writes.filter(write => write.guarded).length).toBeGreaterThan(0);
     // This extension wrote nothing in it.
     expect(writes.filter(write => write.viewer && write.guarded)).toEqual([]);
-    // Once the guard let go it put the reader back over an anchor scroll
-    // nobody holds any more, which is what says a write of its own is visible
-    // to the watch at all.
-    const restored = writes.filter(write => write.viewer && !write.guarded);
-    expect(restored.length).toBeGreaterThan(0);
-    expect(restored[restored.length - 1].value).toBe(parked);
     expect((await currentWidgetState(page)).scrollTop).toBe(parked);
+
+    // Once the guard let go, a paragraph put in above the reader is corrected
+    // by a write of this extension's own, which is what says such a write is
+    // visible to the watch at all.
+    await expect
+      .poll(async () => (await currentWidgetState(page)).guarded, {
+        timeout: 5000
+      })
+      .toBe(false);
+    const place = await readerPlace(page);
+    await page.contents.uploadContent(
+      insertedAbove(SECOND_MARKER),
+      'text',
+      path
+    );
+    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+      SECOND_MARKER,
+      { timeout: 20000 }
+    );
+    await page.waitForTimeout(2500);
+    const after = await scrollWrites(page);
+    expect(
+      after.filter(write => write.viewer && !write.guarded).length
+    ).toBeGreaterThan(0);
+    expect(
+      Math.abs((await offsetOf(page, place.text)) - place.offset)
+    ).toBeLessThan(1);
   });
 });

@@ -380,12 +380,14 @@ test.describe('marking a passage', () => {
     );
 
     await openMenu(page, await select(page, 'Ostateczny', 'rygor:'));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'Nie motywuje.');
 
     const text = await fileWhen(path, holds => holds.includes('Nie motywuje.'));
+    // The opening marker goes after the bullet, so the item stays one item
+    // (DEF-NOTES-114).
     expect(text).toMatch(
-      /-->\n3\. \*\*Ostateczny rygor:\*\*<!-- \/mark:[0-9a-f-]{36} -->  \n   W przypadku/
+      /3\. <!-- mark:[0-9a-f-]{36}[^]*?-->\n   \*\*Ostateczny rygor:\*\*<!-- \/mark:[0-9a-f-]{36} -->  \n   W przypadku/
     );
     await expect(rows(page)).toHaveCount(1);
     await expect(
@@ -412,7 +414,7 @@ test.describe('marking a passage', () => {
     );
 
     await openMenu(page, await select(page, 'Alpha'));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'Before the break.');
 
     const text = await fileWhen(path, holds =>
@@ -453,7 +455,7 @@ test.describe('marking a passage', () => {
     );
 
     await openMenu(page, await select(page, 'Hard', 'criteria'));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'On the heading.');
 
     const text = await fileWhen(path, holds =>
@@ -496,7 +498,7 @@ test.describe('marking a passage', () => {
     const point = await select(page, 'Hard', 'criteria');
     await page.mouse.click(point.x, point.y, { clickCount: 3 });
     await openMenu(page, point);
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'Only the heading.');
 
     const text = await fileWhen(path, holds =>
@@ -514,7 +516,7 @@ test.describe('marking a passage', () => {
     tmpPath
   }) => {
     await openMenu(page, await select(page, P1));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
 
     await writeNote(page, 'This needs a source.');
 
@@ -535,7 +537,7 @@ test.describe('marking a passage', () => {
   }) => {
     await openMenu(page, await select(page, P1));
     // Every entry this extension offers: the Mark entry opening the submenu,
-    // Add note, Copy Content, the two panel states the panel is not in, and
+    // Add Comment, Copy Content, the two panel states the panel is not in, and
     // the six colours inside the submenu; the document note has no entry
     // (ACC-NOTES-139).
     await expect(
@@ -1226,10 +1228,10 @@ test.describe('marking a passage', () => {
     await openMenuOnPreview(page);
     // The Mark entry is offered through a selector that needs a selection, so
     // without one it is not in the menu at all. A Lumino command item that is
-    // not visible stays in the DOM, so what says Add note is not offered is
+    // not visible stays in the DOM, so what says Add Comment is not offered is
     // the class on it.
     await expect(entry(page, 'Mark')).toHaveCount(0);
-    await expect(entry(page, 'Add note')).toHaveClass(/lm-mod-hidden/);
+    await expect(entry(page, 'Add Comment')).toHaveClass(/lm-mod-hidden/);
     // The panel entries are offered without a selection, which is the control
     // saying the menu itself was built.
     await expect(entry(page, 'Show notes')).not.toHaveClass(/lm-mod-hidden/);
@@ -1239,7 +1241,7 @@ test.describe('marking a passage', () => {
     await openMenu(page, await select(page, P1));
     await expect(entry(page, 'Mark')).toHaveCount(1);
     await expect(entry(page, 'Mark')).not.toHaveClass(/lm-mod-hidden/);
-    await expect(entry(page, 'Add note')).not.toHaveClass(/lm-mod-hidden/);
+    await expect(entry(page, 'Add Comment')).not.toHaveClass(/lm-mod-hidden/);
   });
 
   test('ACC-NOTES-123 keeps the colours in a Mark submenu', async ({
@@ -1281,7 +1283,7 @@ test.describe('marking a passage', () => {
     tmpPath
   }) => {
     await openMenu(page, await select(page, P1));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'The source is missing.');
 
     const text = await fileWhen(`${tmpPath}/${FILE}`, holds =>
@@ -1494,7 +1496,7 @@ test.describe('marking a passage', () => {
     await panelButton(page, 'Comment').click();
     const field = page.locator('.jp-AdvancedMd-notesForm textarea');
     await expect(field).toBeFocused();
-    await expect(field).toHaveAttribute('placeholder', 'Write a note');
+    await expect(field).toHaveAttribute('placeholder', 'Write a comment');
 
     // A theme colour as the browser resolves it, read from a probe element
     // so the case holds in any theme.
@@ -2427,7 +2429,7 @@ test.describe('marking a passage', () => {
     // Marked and noted, which is the shape the defect was reported in: the
     // panel held the passage and the note the rewrite is about to take away.
     await openMenu(page, await select(page, P1));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'Worth checking.');
     const text = await fileWhen(target, holds =>
       holds.includes('Worth checking.')
@@ -2546,7 +2548,7 @@ test.describe('marking a passage', () => {
   }) => {
     const target = `${tmpPath}/${FILE}`;
     await openMenu(page, await select(page, P1));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'Worth checking.');
     const text = await fileWhen(target, holds =>
       holds.includes('Worth checking.')
@@ -2576,7 +2578,7 @@ test.describe('marking a passage', () => {
   }) => {
     const target = `${tmpPath}/${FILE}`;
     await openMenu(page, await select(page, P1));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'This contradicts the intro.');
     const text = await fileWhen(target, holds =>
       holds.includes('This contradicts the intro.')
@@ -2607,7 +2609,7 @@ test.describe('marking a passage', () => {
   }) => {
     const target = `${tmpPath}/${FILE}`;
     await openMenu(page, await select(page, P1));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'Needs a source.');
     const text = await fileWhen(target, holds =>
       holds.includes('Needs a source.')
@@ -3468,7 +3470,7 @@ test.describe('revealing a mark from the panel', () => {
 });
 
 test.describe('adding a note from a passage far down the document', () => {
-  test('ACC-NOTES-122 neither renders nor scrolls the preview from Add note through Save', async ({
+  test('ACC-NOTES-122 neither renders nor scrolls the preview from Add Comment through Save', async ({
     page,
     tmpPath
   }) => {
@@ -3496,7 +3498,7 @@ test.describe('adding a note from a passage far down the document', () => {
     expect(await held()).toBe(true);
 
     await openMenu(page, at);
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await expect(
       page.locator('.jp-AdvancedMd-notesForm textarea')
     ).toBeVisible();
@@ -3619,7 +3621,7 @@ async function noteOnFreshDocument(
   await page.contents.uploadContent(DOC, 'text', target);
   await openPreview(page, target, FIRST);
   await openMenu(page, await select(page, P1));
-  await choose(page, 'Add note');
+  await choose(page, 'Add Comment');
   await writeNote(page, text);
   if (handle !== undefined) {
     await answerHandle(page, handle);
@@ -3737,7 +3739,7 @@ test.describe('a lab that names its user', () => {
     await answerHandle(page, 'kjp');
 
     await openMenu(page, await select(page, P1));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'From the palette.');
     // The handle is set, so no question stands between the note and the save.
     const text = await fileWhen(target, holds =>
@@ -3856,7 +3858,7 @@ test.describe('notes turned off', () => {
       page.locator('.lm-Menu-item:not(.lm-mod-hidden)', {
         has: page.locator('.lm-Menu-itemLabel', {
           hasText:
-            /^(Mark \w+|Add note|Show notes|Show notes minimap|Hide notes|Hide minimap)$/
+            /^(Mark \w+|Add Comment|Show notes|Show notes minimap|Hide notes|Hide minimap)$/
         })
       })
     ).toHaveCount(0);
@@ -4941,7 +4943,7 @@ test.describe('the first note of a long document', () => {
     });
 
     await openMenu(page, await select(page, P1));
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await expect(panel(page).locator('textarea')).toBeVisible();
 
     const placed = await page.evaluate(() => {
@@ -5296,7 +5298,7 @@ test.describe('a note on a drawn diagram (ACC-NOTES-182)', () => {
       x: box.x + box.width / 2,
       y: box.y + box.height / 2
     });
-    await choose(page, 'Add note');
+    await choose(page, 'Add Comment');
     await writeNote(page, 'Redraw this as a sequence.');
 
     await expect(rows(page)).toHaveCount(1);

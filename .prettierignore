@@ -7,3 +7,4 @@ jupyterlab_advanced_markdown_viewer_extension
 eslint.config.mjs
 .venv
 .claude
+tmp

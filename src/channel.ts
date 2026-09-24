@@ -54,7 +54,7 @@ export interface IChange {
 /**
  * What the server reports about a file without reading it.
  */
-interface IStat {
+export interface IStat {
   mtime: number;
   size: number;
 }
@@ -344,6 +344,18 @@ export class ChangeChannel implements IDisposable {
   }
 
   /**
+   * mtime and size of each path, null for a file that is not there, and no
+   * entry for a path that could not be answered; null when the request as a
+   * whole failed. One request through the server extension, or one per path
+   * through the contents API where the server extension is absent.
+   */
+  stat(paths: string[]): Promise<Record<string, IStat | null> | null> {
+    return this._serverAbsent
+      ? this._statContents(paths)
+      : this._statBatched(paths);
+  }
+
+  /**
    * Compare every path against the revision last seen and report what moved.
    *
    * A path the request could not answer for is left out of the comparison
@@ -353,9 +365,7 @@ export class ChangeChannel implements IDisposable {
     if (!paths.length || this._disposed) {
       return;
     }
-    const stats = this._serverAbsent
-      ? await this._statContents(paths)
-      : await this._statBatched(paths);
+    const stats = await this.stat(paths);
     if (stats === null || this._disposed) {
       return;
     }

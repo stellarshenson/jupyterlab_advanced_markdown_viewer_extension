@@ -13,7 +13,24 @@ import {
   selectionOffsets,
   tokeniseSource
 } from '../anchor';
+import { marked } from 'marked';
+
 import { captureText } from '../highlight';
+
+/**
+ * The HTML the Markdown parser JupyterLab renders with makes of a source,
+ * with every HTML comment removed and the whitespace between two tags
+ * collapsed: two sources that agree here show the reader the same thing,
+ * whatever comments mark them.
+ */
+function renderedWithoutComments(source: string): string {
+  return (marked.parse(source) as string)
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/>\s+</g, '><')
+    .replace(/<li>\s+/g, '<li>')
+    .replace(/\s+<\/li>/g, '</li>')
+    .trim();
+}
 
 /**
  * The two reads a mark is written through, taken together over one live
@@ -329,16 +346,13 @@ describe('tokeniseSource', () => {
     });
   });
 
-  it('protects an indented code block, and says indentation made it', () => {
+  it('protects an indented code block', () => {
     const source = 'Intro.\n\n    const x = 1;\n    const y = 2;\n\nTail.';
     const { protectedSpans } = tokeniseSource(source);
-    // Indentation made this block, which the span says: the indentation is
-    // what makes it code, so a marker beside it cannot be written under it.
     expect(protectedSpans).toContainEqual({
       kind: 'code-block',
       start: source.indexOf('    const x'),
-      end: source.indexOf('\n\nTail'),
-      indented: true
+      end: source.indexOf('\n\nTail')
     });
   });
 
@@ -608,7 +622,7 @@ describe('selectionToSource', () => {
     );
     const range = sourceRange(root, source, 'Ostateczny', 'rygor:');
     expect(applyMarkers(source, range)).toBe(
-      '<!-- mark:m note -->\n3. **Ostateczny rygor:**<!-- /mark:m -->  \n' +
+      '3. <!-- mark:m note -->\n   **Ostateczny rygor:**<!-- /mark:m -->  \n' +
         '   W przypadku niewydania dokumentu:'
     );
   });
@@ -897,13 +911,17 @@ describe('selectionToSource', () => {
     );
   });
 
-  it('places the marker before a blockquote it starts, not after its marker', () => {
+  it('places the marker on a line of its own inside a blockquote it starts, not after the quote marker', () => {
     const source = '> quoted text here';
     const root = render('<blockquote><p>quoted text here</p></blockquote>');
     const range = sourceRange(root, source, 'quoted', 'here');
     expect(range.startOwnLine).toBe(true);
-    expect(applyMarkers(source, range)).toBe(
-      '<!-- mark:m note -->\n> quoted text here<!-- /mark:m -->'
+    const withMarkers = applyMarkers(source, range);
+    expect(withMarkers).toBe(
+      '> <!-- mark:m note -->\n> quoted text here<!-- /mark:m -->'
+    );
+    expect(renderedWithoutComments(withMarkers)).toBe(
+      renderedWithoutComments(source)
     );
   });
 
@@ -1062,6 +1080,253 @@ describe('selectionToSource', () => {
     );
   });
 
+  it('keeps a fence indented past the four columns that alone would make it code inside a list item, under its bullet (DEF-NOTES-114 shape 1)', () => {
+    // Four columns of raw indentation used to read as a naked indented code
+    // block regardless of the list item it sat inside, ending the list and
+    // turning the fence's own backticks into literal code text.
+    const source =
+      '- item one\n\n    ```mermaid\n    graph TD\n    ```\n\n- item two\n';
+    const root = render(
+      '<ul>\n<li><p>item one</p>\n' +
+        '<div class="jp-RenderedMermaid"><figure><img alt="a flow chart">' +
+        '<pre><code class="mermaid">graph TD</code></pre>' +
+        '</figure></div>\n</li>\n<li><p>item two</p>\n</li>\n</ul>'
+    );
+    const block = root.querySelector('.jp-RenderedMermaid') as HTMLElement;
+    const range = selectionToSource(
+      selection(
+        { node: block, offset: 0 },
+        { node: block, offset: block.childNodes.length }
+      ),
+      root,
+      source
+    );
+    expect(range).not.toBeNull();
+    // "- " is two columns wide, so that is what the marker's own line
+    // carries - not the block's own four, which would read as code itself.
+    expect(range!.startPrefix).toBe('  ');
+    const withMarkers = applyMarkers(source, range!);
+    expect(withMarkers).toBe(
+      '- item one\n\n  <!-- mark:m note -->\n    ```mermaid\n    graph TD\n' +
+        '    ```\n  <!-- /mark:m -->\n\n- item two\n'
+    );
+    expect(renderedWithoutComments(withMarkers)).toBe(
+      renderedWithoutComments(source)
+    );
+  });
+
+  it('reads a fence written on the bullet line itself, past the bullet, protecting the whole fence (DEF-NOTES-114 shape 2)', () => {
+    // The bullet used to stand between the line's start and the backticks,
+    // so the fence test never read past it: the line was read as prose, the
+    // "closing" backticks a line below opened a fence of their own, and
+    // every later line was swallowed as that fence's content.
+    const source = '- ```mermaid\n  graph TD\n  ```\n\n- item two\n';
+    const { protectedSpans } = tokeniseSource(source);
+    const code = protectedSpans.filter(span => span.kind === 'code-block');
+    expect(code).toEqual([
+      { kind: 'code-block', start: 0, end: source.indexOf('```\n\n') + 3 }
+    ]);
+  });
+
+  it('writes the opening marker of a fence on a later bullet line right after the bullet, not above it (DEF-NOTES-114 shape 2)', () => {
+    // A marker above the bullet, after the blank line the reader wrote to
+    // separate this item from the one before it, ends that item's list
+    // there and starts a second one for this item alone.
+    const source =
+      '- item zero\n\n- ```mermaid\n  graph TD\n  ```\n\n- item two\n';
+    const root = render(
+      '<ul>\n<li><p>item zero</p>\n</li>\n<li>' +
+        '<div class="jp-RenderedMermaid"><figure><img alt="a flow chart">' +
+        '<pre><code class="mermaid">graph TD</code></pre>' +
+        '</figure></div>\n</li>\n<li><p>item two</p>\n</li>\n</ul>'
+    );
+    const block = root.querySelector('.jp-RenderedMermaid') as HTMLElement;
+    const range = selectionToSource(
+      selection(
+        { node: block, offset: 0 },
+        { node: block, offset: block.childNodes.length }
+      ),
+      root,
+      source
+    );
+    expect(range).not.toBeNull();
+    expect(range!.startOwnLine).toBe(true);
+    const withMarkers = applyMarkers(source, range!);
+    expect(withMarkers).toBe(
+      '- item zero\n\n- <!-- mark:m note -->\n  ```mermaid\n  graph TD\n' +
+        '  ```\n  <!-- /mark:m -->\n\n- item two\n'
+    );
+    expect(renderedWithoutComments(withMarkers)).toBe(
+      renderedWithoutComments(source)
+    );
+  });
+
+  it('keeps a mark on the first line of a later list item under its bullet, rather than ending the list above it (DEF-NOTES-114 shape 3)', () => {
+    // A marker on the line above the bullet, after the blank line the reader
+    // wrote to separate the two items, used to end the list there and start
+    // a second one, restarting an ordered list's numbering.
+    const source = '1. item one\n\n2. item two\n';
+    const root = render('<ol>\n<li>item one</li>\n<li>item two</li>\n</ol>');
+    const second = root.querySelectorAll('li')[1];
+    const range = selectionToSource(
+      selection(
+        { node: second, offset: 0 },
+        { node: second, offset: second.childNodes.length }
+      ),
+      root,
+      source
+    );
+    expect(range).not.toBeNull();
+    expect(range!.startOwnLine).toBe(true);
+    expect(range!.startPrefix).toBe('');
+    const withMarkers = applyMarkers(source, range!);
+    expect(withMarkers).toBe(
+      '1. item one\n\n2. <!-- mark:m note -->\n   item two<!-- /mark:m -->\n'
+    );
+    expect(renderedWithoutComments(withMarkers)).toBe(
+      renderedWithoutComments(source)
+    );
+  });
+
+  it('protects an indented code block inside a blockquote, so its marker is not printed into the code (DEF-NOTES-114 shape 4)', () => {
+    // Read off the raw line, which starts with the quote's own marker
+    // rather than four columns of space, the indented block inside a
+    // blockquote was never recognised as code at all: a marker closing it
+    // stayed inline, printed as a line of the reader's own program.
+    const source =
+      '> Prose before it.\n' +
+      '>\n' +
+      '>     total = one\n' +
+      '>     print(total)\n' +
+      '>\n' +
+      '> Prose after it.\n';
+    const { protectedSpans } = tokeniseSource(source);
+    expect(protectedSpans).toContainEqual({
+      kind: 'code-block',
+      start: source.indexOf('>     total'),
+      end: source.indexOf('\n>\n> Prose after')
+    });
+
+    const root = render(
+      '<blockquote>\n<p>Prose before it.</p>\n' +
+        '<pre><code>total = one\nprint(total)\n</code></pre>\n' +
+        '<p>Prose after it.</p>\n</blockquote>'
+    );
+    const range = sourceRange(root, source, 'total', 'print(total)');
+    expect(range.startOwnLine).toBe(true);
+    expect(range.endOwnLine).toBe(true);
+    expect(range.startPrefix).toBe('> ');
+    expect(range.endPrefix).toBe('> ');
+    const withMarkers = applyMarkers(source, range);
+    expect(withMarkers).toBe(
+      '> Prose before it.\n>\n> <!-- mark:m note -->\n>     total = one\n' +
+        '>     print(total)\n> <!-- /mark:m -->\n>\n> Prose after it.\n'
+    );
+    expect(renderedWithoutComments(withMarkers)).toBe(
+      renderedWithoutComments(source)
+    );
+  });
+
+  it('reads a table inside a blockquote as the table it is, not the separator row as words with the quote markers still on it (DEF-NOTES-114 shape 5)', () => {
+    // The separator row was tested with the quote's own markers still on the
+    // line, which the character class the test reads by does not allow, so
+    // the row was read as ordinary text and its dashes and pipes became
+    // words a marker could land among, printing the whole table as literal
+    // pipes.
+    const source =
+      '> Fruit stock:\n' +
+      '>\n' +
+      '> | Fruit | Count |\n' +
+      '> | --- | --- |\n' +
+      '> | apples | 3 |\n';
+    const { tokens } = tokeniseSource(source);
+    expect(tokens.map(token => token.text)).toEqual([
+      'Fruit',
+      'stock:',
+      'Fruit',
+      'Count',
+      'apples',
+      '3'
+    ]);
+
+    const root = render(
+      '<blockquote>\n<p>Fruit stock:</p>\n<table>\n<thead>\n<tr>\n' +
+        '<th>Fruit</th>\n<th>Count</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n' +
+        '<td>apples</td>\n<td>3</td>\n</tr>\n</tbody>\n</table>\n</blockquote>'
+    );
+    const range = sourceRange(root, source, 'appl', 'es');
+    // The row already carries its own leading pipe, so no marker of a
+    // missing one is needed - the point proved here is that the row is read
+    // as a row at all, not as literal words the separator's dashes joined.
+    expect(range.startOwnLine).toBe(false);
+    expect(range.startPrefix).toBe('');
+    const withMarkers = applyMarkers(source, range);
+    expect(withMarkers).toBe(
+      '> Fruit stock:\n>\n> | Fruit | Count |\n> | --- | --- |\n' +
+        '> | <!-- mark:m note -->apples<!-- /mark:m --> | 3 |\n'
+    );
+    expect(renderedWithoutComments(withMarkers)).toBe(
+      renderedWithoutComments(source)
+    );
+  });
+
+  it('ends a quote and the fence inside it where a line drops the quote marker, reading that line fresh (DEF-NOTES-114 shape 6)', () => {
+    // A fence inside a quote used to read a later line's own quote prefix,
+    // whatever it carried, rather than the depth the fence itself opened
+    // with, so a line dropping the marker entirely still read as more of the
+    // same fence: the fence ran on past where the quote had already ended,
+    // printing its closing marker inside a code block the real parser never
+    // opens that far.
+    const source = '> ```\n> total = one\nnot quoted line\n> ```\n';
+    const { tokens, protectedSpans } = tokeniseSource(source);
+    expect(tokens.map(token => token.text)).toEqual([
+      'total',
+      '=',
+      'one',
+      'not',
+      'quoted',
+      'line'
+    ]);
+    const code = protectedSpans.filter(span => span.kind === 'code-block');
+    expect(code).toEqual([
+      // Ends at the end of the last line the quote still held, not at the
+      // start of the line that dropped it - the two are a newline apart.
+      {
+        kind: 'code-block',
+        start: 0,
+        end: source.indexOf('not quoted line') - 1
+      },
+      {
+        kind: 'code-block',
+        start: source.lastIndexOf('> ```'),
+        // One short of the source's own length: the source ends in a
+        // newline, which a span never counts as part of its own last line.
+        end: source.length - 1
+      }
+    ]);
+
+    const root = render(
+      '<blockquote><pre><code>total = one\n</code></pre></blockquote>' +
+        '<p>not quoted line</p>' +
+        '<blockquote><pre><code></code></pre></blockquote>'
+    );
+    const range = sourceRange(root, source, 'total', 'one');
+    expect(range.startOwnLine).toBe(true);
+    expect(range.endOwnLine).toBe(true);
+    // The closing marker carries what the line that left the quote
+    // carries, nothing: carrying the quote would put it back in the fence.
+    expect(range.startPrefix).toBe('> ');
+    expect(range.endPrefix).toBe('');
+    const withMarkers = applyMarkers(source, range);
+    expect(withMarkers).toBe(
+      '> <!-- mark:m note -->\n> ```\n> total = one\n<!-- /mark:m -->\n' +
+        'not quoted line\n> ```\n'
+    );
+    expect(renderedWithoutComments(withMarkers)).toBe(
+      renderedWithoutComments(source)
+    );
+  });
+
   it('keeps a marked paragraph under the bullet it was written in', () => {
     // A marker at the left margin after a blank line ends the list, which
     // splits one two-item list into two one-item lists with the paragraph
@@ -1145,6 +1410,287 @@ function inRender(
     renderedWords(captureText(root).text)
   );
 }
+
+describe('marker placement, read against the renderer', () => {
+  // Each source is rendered by the parser JupyterLab renders with, the
+  // passage from the first word to the last is selected in that render, and
+  // the markers are written where the mark would write them. The render of
+  // the marked source must show the reader exactly what the bare source did.
+  const cases: [string, string, string, string, string][] = [
+    [
+      'a fence on the bullet line of a tight list (DEF-NOTES-114)',
+      '- a\n- ```js\n  code line\n  ```\n- c\n',
+      'code',
+      'line',
+      '- a\n- <!-- mark:m note -->\n  ```js\n  code line\n  ```\n' +
+        '  <!-- /mark:m -->\n- c\n'
+    ],
+    [
+      'a heading on the bullet line of a tight list (DEF-NOTES-114)',
+      '- alpha\n- ## Heading two\n- eps\n',
+      'Heading',
+      'two',
+      '- alpha\n- <!-- mark:m note -->\n  ## Heading two\n' +
+        '  <!-- /mark:m -->\n- eps\n'
+    ],
+    [
+      'a heading on the bullet line of a loose ordered list (DEF-NOTES-114)',
+      '1. alpha\n\n2. ## Heading two\n\n3. eps\n',
+      'Heading',
+      'two',
+      '1. alpha\n\n2. <!-- mark:m note -->\n   ## Heading two\n' +
+        '   <!-- /mark:m -->\n\n3. eps\n'
+    ],
+    [
+      'the first line of a list item inside a blockquote (DEF-NOTES-114)',
+      '> - a\n>\n> - b c d\n',
+      'b',
+      'c',
+      '> - a\n>\n> - <!-- mark:m note -->\n>   b c<!-- /mark:m --> d\n'
+    ],
+    [
+      'the first line of an item after a fenced item (DEF-NOTES-114)',
+      '1. ```\n   x\n   ```\n2. next item words\n3. z\n',
+      'next',
+      'item',
+      '1. ```\n   x\n   ```\n2. <!-- mark:m note -->\n' +
+        '   next item<!-- /mark:m --> words\n3. z\n'
+    ],
+    [
+      'a fence in a list item after a list nested in it ends (DEF-NOTES-114)',
+      '1. step\n\n   - a\n   - b\n\n   ```\n   x = 1\n   ```\n\n2. next\n',
+      'x',
+      '1',
+      '1. step\n\n   - a\n   - b\n\n   <!-- mark:m note -->\n   ```\n   x = 1\n' +
+        '   ```\n   <!-- /mark:m -->\n\n2. next\n'
+    ],
+    [
+      'a paragraph of a list item after a GitHub alert nested in it',
+      '1. Step one\n\n   > [!NOTE]\n   > note text\n\n   Continue step one here.\n2. Step two\n',
+      'Continue',
+      'step',
+      '1. Step one\n\n   > [!NOTE]\n   > note text\n\n   <!-- mark:m note -->\n   Continue step<!-- /mark:m --> one here.\n2. Step two\n'
+    ],
+    [
+      'a paragraph of a list item after a quote nested in it',
+      '- item\n\n  > quoted words\n\n  para after quote\n\n- item two\n',
+      'para',
+      'after',
+      '- item\n\n  > quoted words\n\n  <!-- mark:m note -->\n  para after<!-- /mark:m --> quote\n\n- item two\n'
+    ],
+    [
+      'a fence of a list item after a quote nested in it',
+      '- item\n\n  > quoted words\n\n  ```\n  code x\n  ```\n\n- item two\n',
+      'code',
+      'x',
+      '- item\n\n  > quoted words\n\n  <!-- mark:m note -->\n  ```\n  code x\n  ```\n  <!-- /mark:m -->\n\n- item two\n'
+    ],
+    [
+      'a paragraph after a quote nested in a list item inside a quote',
+      '> - item\n>\n>   > nested words\n>\n>   more text\n',
+      'more',
+      'text',
+      '> - item\n>\n>   > nested words\n>\n>   <!-- mark:m note -->\n>   more text<!-- /mark:m -->\n'
+    ],
+    [
+      'the line after an earlier comment whose notes end inside it',
+      'Alpha beta <!-- mark:a note colour=yellow\n@AB 2026-09-24T10:00: my comment\n-->gamma delta<!-- /mark:a --> epsilon\nzeta eta theta iota kappa\nlambda mu nu xi omicron\n',
+      'zeta',
+      'eta',
+      'Alpha beta <!-- mark:a note colour=yellow\n@AB 2026-09-24T10:00: my comment\n-->gamma delta<!-- /mark:a --> epsilon<!-- mark:m note -->\nzeta eta<!-- /mark:m --> theta iota kappa\nlambda mu nu xi omicron\n'
+    ],
+    [
+      'the line after an earlier comment whose notes end at the end of a line',
+      'Alpha beta gamma epsilon<!-- mark:a note colour=yellow\n@AB 2026-09-24T10:00: my comment\n-->\nzeta eta<!-- /mark:a --> theta iota kappa\nlambda mu\n',
+      'zeta',
+      'eta',
+      'Alpha beta gamma epsilon<!-- mark:a note colour=yellow\n@AB 2026-09-24T10:00: my comment\n--><!-- mark:m note -->\nzeta eta<!-- /mark:m --><!-- /mark:a --> theta iota kappa\nlambda mu\n'
+    ],
+    [
+      'an indented code block after an alert written outside the list item',
+      '1. Install\n\n> [!NOTE]\n> Needs Python\n\n    pip install foo\n',
+      'install',
+      'foo',
+      '1. Install\n\n> [!NOTE]\n> Needs Python\n\n<!-- mark:m note -->\n    pip install foo\n<!-- /mark:m -->\n'
+    ],
+    [
+      'an indented code block after a quote written outside a nested list',
+      '- a\n  - b\n\n> quote\n\n    code line here\n',
+      'line',
+      'here',
+      '- a\n  - b\n\n> quote\n\n<!-- mark:m note -->\n    code line here\n<!-- /mark:m -->\n'
+    ],
+    [
+      'an indented code block that already carries a comment',
+      'Para.\n\n<!-- mark:a note -->\n    code line here\n<!-- /mark:a -->\n',
+      'line',
+      'here',
+      'Para.\n\n<!-- mark:a note -->\n<!-- mark:m note -->\n    code line here\n<!-- /mark:m -->\n<!-- /mark:a -->\n'
+    ],
+    [
+      'an indented code block that already carries a noted comment',
+      'Para.\n\n<!-- mark:a note colour=yellow\n@AB 2026-09-24T10:00: my comment\n-->\n    code line here\n<!-- /mark:a -->\n',
+      'line',
+      'here',
+      'Para.\n\n<!-- mark:a note colour=yellow\n@AB 2026-09-24T10:00: my comment\n-->\n<!-- mark:m note -->\n    code line here\n<!-- /mark:m -->\n<!-- /mark:a -->\n'
+    ],
+    [
+      'a paragraph right after a closing fence (DEF-NOTES-117)',
+      '```\ncode\n```\nnext para here\n',
+      'next',
+      'para',
+      '```\ncode\n```\n<!-- mark:m note -->\nnext para<!-- /mark:m --> here\n'
+    ],
+    [
+      'a paragraph right after a link reference definition (DEF-NOTES-120)',
+      '[ref]: https://example.com\nnext para here\n',
+      'next',
+      'para',
+      '[ref]: https://example.com\n<!-- mark:m note -->\nnext para<!-- /mark:m --> here\n'
+    ],
+    [
+      'a paragraph whose first line only looks like a definition (DEF-NOTES-120)',
+      '[1]: see note\nnext para here\n',
+      'next',
+      'para',
+      '[1]: see note<!-- mark:m note -->\nnext para<!-- /mark:m --> here\n'
+    ],
+    [
+      'a paragraph line that follows a definition-shaped paragraph line (DEF-NOTES-120)',
+      'para\n[ref]: https://x.com\nmore words here\n',
+      'more',
+      'words',
+      'para\n[ref]: https://x.com<!-- mark:m note -->\nmore words<!-- /mark:m --> here\n'
+    ],
+    [
+      'a paragraph right after a thematic break (DEF-NOTES-117)',
+      'intro\n\n***\nnext para here\n',
+      'next',
+      'para',
+      'intro\n\n***\n<!-- mark:m note -->\nnext para<!-- /mark:m --> here\n'
+    ],
+    [
+      'a paragraph right after a heading with closing hashes (DEF-NOTES-117)',
+      '## Head ##\nnext para here\n',
+      'next',
+      'para',
+      '## Head ##\n<!-- mark:m note -->\nnext para<!-- /mark:m --> here\n'
+    ],
+    [
+      'a line after a hard break of two spaces (DEF-NOTES-117)',
+      'first one  \nsecond two words\n',
+      'second',
+      'two',
+      'first one<!-- mark:m note -->  \nsecond two<!-- /mark:m --> words\n'
+    ],
+    [
+      'a line after a hard break of a backslash (DEF-NOTES-117)',
+      'first one\\\nsecond two words\n',
+      'second',
+      'two',
+      'first one<!-- mark:m note -->\\\nsecond two<!-- /mark:m --> words\n'
+    ],
+    [
+      'a line after an escaped backslash, which is no hard break',
+      'first one\\\\\nsecond two words\n',
+      'second',
+      'two',
+      'first one\\\\<!-- mark:m note -->\nsecond two<!-- /mark:m --> words\n'
+    ],
+    [
+      'a paragraph line after a comment indented inside the paragraph',
+      'Para text here\n  <!-- c -->\n    more words here\n',
+      'words',
+      'here',
+      'Para text here\n  <!-- c -->\n    more <!-- mark:m note -->words here<!-- /mark:m -->\n'
+    ],
+    [
+      'a paragraph line after a comment indented inside a quoted paragraph',
+      '> Para text here\n>   <!-- c -->\n>     more words here\n',
+      'words',
+      'here',
+      '> Para text here\n>   <!-- c -->\n' +
+        '>     more <!-- mark:m note -->words here<!-- /mark:m -->\n'
+    ],
+    [
+      'a code line after an indented comment inside a list item',
+      '- item\n\n  para\n   <!-- c -->\n      more words here\n',
+      'words',
+      'here',
+      '- item\n\n  para\n   <!-- c -->\n  <!-- mark:m note -->\n' +
+        '      more words here\n  <!-- /mark:m -->\n'
+    ],
+    [
+      'a code line after an indented comment that ends a list',
+      '- item\n <!-- c -->\n    more words here\n',
+      'words',
+      'here',
+      '- item\n <!-- c -->\n<!-- mark:m note -->\n    more words here\n' +
+        '<!-- /mark:m -->\n'
+    ]
+  ];
+
+  it.each(cases)('keeps %s', (_, source, from, to, expected) => {
+    const root = render(marked.parse(source) as string);
+    const withMarkers = applyMarkers(
+      source,
+      sourceRange(root, source, from, to)
+    );
+    expect(withMarkers).toBe(expected);
+    expect(renderedWithoutComments(withMarkers)).toBe(
+      renderedWithoutComments(source)
+    );
+  });
+
+  it.each([
+    [
+      'a comment whose note stands on lines of its own',
+      '<!-- mark:a note colour=yellow\n@AB 2026-09-24T10:00: first\n-->'
+    ],
+    ['a comment with no note yet on a line of its own', '<!-- mark:a note -->']
+  ])(
+    'keeps a paragraph whole when a noted comment starts where %s ends',
+    (_, first) => {
+      // The second comment's note is written over several lines, as a noted
+      // opening marker is; appended to the first comment's line, it would end
+      // the HTML block that line opens and hide the paragraph.
+      const source = `Para one.\n\n${first}\nPara two starts here and goes on.<!-- /mark:a -->\n`;
+      const root = render(marked.parse(source) as string);
+      const range = sourceRange(root, source, 'Para two', 'here');
+      const marker = markerText(
+        range,
+        '<!-- mark:m note colour=yellow\n@AB 2026-09-24T10:00: second\n-->',
+        '<!-- /mark:m -->'
+      );
+      const withMarkers =
+        source.slice(0, range.start) +
+        marker.opening +
+        source.slice(range.start, range.end) +
+        marker.closing +
+        source.slice(range.end);
+      expect(applyMarkers(source, range)).toBe(
+        `Para one.\n\n${first}\n<!-- mark:m note -->\nPara two starts here<!-- /mark:m --> and goes on.<!-- /mark:a -->\n`
+      );
+      expect(renderedWithoutComments(withMarkers)).toBe(
+        renderedWithoutComments(source)
+      );
+    }
+  );
+
+  it('keeps the first body line of a GitHub alert under its alert line (DEF-NOTES-117)', () => {
+    // The alerts extension reads an alert only from a line holding the
+    // alert tag alone, so a marker appended to that line ends the alert.
+    const source = '> [!NOTE]\n> alert body words\n';
+    const root = render(
+      '<blockquote><p>[!NOTE]\nalert body words</p></blockquote>'
+    );
+    expect(
+      applyMarkers(source, sourceRange(root, source, 'alert', 'body'))
+    ).toBe(
+      '> [!NOTE]\n> <!-- mark:m note -->\n> alert body<!-- /mark:m --> words\n'
+    );
+  });
+});
 
 describe('passageToRendered', () => {
   it('finds the passage of a mark in the rendered text', () => {

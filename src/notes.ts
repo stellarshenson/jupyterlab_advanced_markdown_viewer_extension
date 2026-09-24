@@ -34,6 +34,7 @@ import {
   inTableRow,
   IRenderedRange,
   ISourceScan,
+  itemContinuation,
   markerText,
   markerToRendered,
   passageToRendered,
@@ -253,6 +254,9 @@ const BEFORE_MARKER = /^[ \t]*$/;
 /** Everything a marker's own line may hold after it. */
 const AFTER_MARKER = /^[ \t]*\r?\n?$/;
 
+/** A line indented as far as an indented code block starts. */
+const CODE_INDENT = /^(?: {4}| {0,3}\t)[ \t]*\S/;
+
 /** Characters a note handle can carry. */
 const HANDLE = /[^A-Za-z0-9_.-]+/g;
 
@@ -307,21 +311,100 @@ function frontMatterEnd(source: string): number {
 }
 
 /**
+ * Whether a marker sits on a line of a blockquote. Only that line carries
+ * the quote marker, so notes written on lines of their own after it would
+ * stand outside the quote and be printed on the page (DEF-NOTES-118): they go
+ * on the marker's one line instead, as in a table row.
+ */
+function inQuote(source: string, offset: number): boolean {
+  const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+  return /^[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*>/.test(
+    source.slice(lineStart, offset)
+  );
+}
+
+/**
+ * Whether the quote markers and spaces ahead of a marker are the prefix the
+ * writer gave the marker's own line: the prefix the tokeniser records for
+ * the line after it or the line before it. Such a line goes with the marker,
+ * unless it stands between paragraph text and a line that would go on that
+ * paragraph once the marker line is gone: more text, or a line indented four
+ * columns, which reads as code only after a break. There a marker 1.0.22
+ * appended to a blank quote line would take that break with it.
+ */
+function ownPrefix(
+  source: string,
+  lineStart: number,
+  lineEnd: number,
+  before: string
+): boolean {
+  const lines = tokeniseSource(source).lines;
+  const next = lines.get(lineEnd);
+  const prev =
+    lineStart > 0
+      ? lines.get(source.lastIndexOf('\n', lineStart - 2) + 1)
+      : undefined;
+  const joins =
+    (next?.tail ?? -1) >= 0 ||
+    (source.startsWith(before, lineEnd) &&
+      CODE_INDENT.test(source.slice(lineEnd + before.length)));
+  return (
+    (before === next?.above || before === prev?.below) &&
+    !((prev?.tail ?? -1) >= 0 && joins)
+  );
+}
+
+/**
  * The offsets a marker is deleted or rewritten over.
  *
  * A marker that has a line to itself takes the line with it, so removing it
- * leaves no blank line where the block structure had none.
+ * leaves no blank line where the block structure had none. A marker written
+ * after a bullet, which moved the item's first content down a line
+ * (DEF-NOTES-114), takes that line break and the continuation with it, so
+ * the content goes back up beside its bullet.
  */
 function markerSpan(source: string, span: ISpan): ISourceEdit {
   const lineStart = source.lastIndexOf('\n', span.start - 1) + 1;
   const newline = source.indexOf('\n', span.end);
   const lineEnd = newline < 0 ? source.length : newline + 1;
-  const alone =
-    BEFORE_MARKER.test(source.slice(lineStart, span.start)) &&
-    AFTER_MARKER.test(source.slice(span.end, lineEnd));
-  return alone
-    ? { start: lineStart, end: lineEnd, text: '' }
-    : { start: span.start, end: span.end, text: '' };
+  const before = source.slice(lineStart, span.start);
+  if (AFTER_MARKER.test(source.slice(span.end, lineEnd))) {
+    if (
+      BEFORE_MARKER.test(before) ||
+      ownPrefix(source, lineStart, lineEnd, before)
+    ) {
+      return { start: lineStart, end: lineEnd, text: '' };
+    }
+    const continued = itemContinuation(before);
+    if (
+      continued !== null &&
+      newline >= 0 &&
+      source.startsWith(continued, lineEnd)
+    ) {
+      return { start: span.start, end: lineEnd + continued.length, text: '' };
+    }
+  }
+  return { start: span.start, end: span.end, text: '' };
+}
+
+/**
+ * The edits that delete several markers in one write.
+ *
+ * Each edit is computed on the source with the batch's later markers already
+ * deleted, so a marker written after a bullet, which takes the line break and
+ * the continuation below it with it, sees the line that follows once those
+ * markers are gone. The edits come out from the end backwards, the order the
+ * write applies them in.
+ */
+function markerEdits(source: string, spans: ISpan[]): ISourceEdit[] {
+  let text = source;
+  return [...spans]
+    .sort((a, b) => b.start - a.start)
+    .map(span => {
+      const edit = markerSpan(text, span);
+      text = applyEdits(text, [edit]);
+      return edit;
+    });
 }
 
 /**
@@ -1309,9 +1392,10 @@ export class NotesController implements IDisposable {
     }
     const written = await this._write(current => {
       const found = parseMarks(current).find(each => each.id === id);
-      return [found?.open, found?.close]
-        .filter((span): span is ISpan => !!span)
-        .map(span => markerSpan(current, span));
+      return markerEdits(
+        current,
+        [found?.open, found?.close].filter((span): span is ISpan => !!span)
+      );
     });
     if (!written) {
       this._changed.emit();
@@ -1932,18 +2016,18 @@ export class NotesController implements IDisposable {
         if (!this._settings.notes || this._context.model.dirty) {
           return [];
         }
-        const edits: ISourceEdit[] = [];
+        const spans: ISpan[] = [];
         for (const mark of parseMarks(source)) {
           if (!settled.has(mark.id) || !this._isBroken(mark, source)) {
             continue;
           }
           for (const span of [mark.open, mark.close]) {
             if (span) {
-              edits.push(markerSpan(source, span));
+              spans.push(span);
             }
           }
         }
-        return edits;
+        return markerEdits(source, spans);
       }, false);
       // Nothing was written: the pass refused inside the write, or the served
       // route would not take it. The read that follows arms the settle again,
@@ -2139,7 +2223,11 @@ export class NotesController implements IDisposable {
         {
           start: mark.open.start,
           end: mark.open.end,
-          text: serialiseOpening(changed, inTableRow(source, mark.open.start))
+          text: serialiseOpening(
+            changed,
+            inTableRow(source, mark.open.start) ||
+              inQuote(source, mark.open.start)
+          )
         }
       ];
     });

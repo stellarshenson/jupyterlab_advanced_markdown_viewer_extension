@@ -19,8 +19,10 @@ Names are `<kind>-<id>[<letter>][-<scope>].log`: `<id>` is the criterion or defe
 | `galata-*-proof-*.log`    | browser cases against an older bundle    |
 | `galata-*-siblings*.log`  | the sibling-extension browser cases      |
 | `galata-*-repeat-<n>.log` | one browser case repeated, for a flake   |
+| `galata-*-research.log`   | a spec under `ui-tests/research/`        |
 | `e2e-*.log`               | the Playwright Python driver             |
 | `probe-*.log`             | a browser measurement outside JupyterLab |
 | `mutation-*.log`          | mutation attacks, then the suite totals  |
+| `corpus-*.log`            | marker placement over workspace Markdown |
 | `review-*-round<N>.log`   | one adversarial review round             |
 | `*chain*.log`             | a scripted sequence of the above         |

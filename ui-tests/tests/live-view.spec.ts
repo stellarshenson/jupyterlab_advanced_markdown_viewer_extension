@@ -98,6 +98,17 @@ const previewScrollTop = (page: any): Promise<number> =>
   );
 
 /**
+ * Put a hash in the URL the way an in-document link does: the address
+ * changes and the page is told, with no reload.
+ */
+const navigateToHash = (page: any, hash: string): Promise<void> =>
+  page.evaluate((target: string) => {
+    const { pathname, search } = window.location;
+    history.replaceState(history.state, '', `${pathname}${search}${target}`);
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  }, hash);
+
+/**
  * Sample the text length of the last element matching a selector at a fixed
  * interval, inside the page so the samples are evenly spaced. A sample is
  * null when nothing matches.
@@ -741,62 +752,50 @@ test.describe('a preview opened over unsaved edits', () => {
 test.describe('the reader position', () => {
   test.use({ mockSettings: settings() });
 
-  test('stays where the reader scrolled to when another extension scrolls to the URL hash', async ({
+  test('stays where the reader scrolled to when the URL hash names a heading (ACC-COMPAT-37)', async ({
     page,
     tmpPath
   }) => {
     const path = `${tmpPath}/${FILE}`;
     await page.contents.uploadContent(LONG, 'text', path);
     await openPreview(page, path, 'Paragraph 1 of the long report');
-
-    // The table-of-contents fix smooth-scrolls the rendered view to the
-    // heading in the URL hash 100 ms after every render. This lab's URL
-    // carries the reset query, which JupyterLab rewrites within seconds and
-    // the hash goes with it, so the trigger is stood in for here: the same
-    // motion, 100 ms after the same signal, on the same element. The scroll
-    // is made directly rather than through setFragment, whose stock version
-    // re-renders the document and would re-arm this trigger on every render.
-    // The reader then scrolls well away from the heading.
     await page.evaluate(() => {
       const w = window as any;
-      const content = w.jupyterapp.shell.currentWidget.content;
-      w.__anchorScrolls = 0;
-      content.rendered.connect(() => {
-        setTimeout(() => {
-          w.__anchorScrolls += 1;
-          const root = document.querySelector('.jp-RenderedMarkdown');
-          const heading = root?.querySelector('#Report') as HTMLElement | null;
-          if (root && heading) {
-            root.scrollTo({ top: heading.offsetTop, behavior: 'smooth' });
-          }
-        }, 100);
+      w.__renders = 0;
+      w.jupyterapp.shell.currentWidget.content.rendered.connect(() => {
+        w.__renders += 1;
       });
     });
+
+    // An in-document link sets the hash; the table-of-contents fix scrolls
+    // to its heading, which shows it is watching this hash.
     await page.locator('.jp-RenderedMarkdown').hover();
+    await page.mouse.wheel(0, 1500);
+    await expect.poll(() => previewScrollTop(page)).toBeGreaterThan(500);
+    await navigateToHash(page, '#Report');
+    await expect.poll(() => previewScrollTop(page)).toBeLessThan(50);
+
+    // The reader then scrolls well away from the heading.
     await page.mouse.wheel(0, 3000);
     await expect.poll(() => previewScrollTop(page)).toBeGreaterThan(1000);
-    const before = await previewScrollTop(page);
     // Past the window in which the switch-tab scrolling fix owns the position.
     await page.waitForTimeout(3500);
+    const before = await previewScrollTop(page);
+    const renders = await page.evaluate(() => (window as any).__renders);
 
     await page.contents.uploadContent(LONG_REWRITTEN, 'text', path);
     await expect(page.locator('.jp-AdvancedMd-added').first()).toBeAttached({
       timeout: 20000
     });
     // A change renders twice: at once when it is applied, and again when the
-    // viewer's own render timeout runs; the stand-in fires on both. This
-    // waits for the second rather than for a duration chosen to contain it.
+    // viewer's own render timeout runs.
     await expect
-      .poll(() => page.evaluate(() => (window as any).__anchorScrolls))
-      .toBe(2);
-    // A third render is a non-event, and only a duration can show one did not
-    // come: past the viewer's own render timeout of 1000 ms and the stand-in's
-    // 100 ms delay, with margin. The position is read after it, so a late
-    // scroll would be in the number this compares.
+      .poll(() => page.evaluate(() => (window as any).__renders))
+      .toBe(renders + 2);
+    // The fix scrolls 100 ms after a render with a new hash; past that, with
+    // margin, a scroll back to the heading would be in the number compared.
     await page.waitForTimeout(1500);
-    expect(await page.evaluate(() => (window as any).__anchorScrolls)).toBe(2);
-    const after = await previewScrollTop(page);
-    expect(Math.abs(after - before)).toBeLessThan(50);
+    expect(Math.abs((await previewScrollTop(page)) - before)).toBeLessThan(1);
   });
 });
 
