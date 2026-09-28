@@ -31,7 +31,6 @@ import { IMessageHandler, Message, MessageLoop } from '@lumino/messaging';
 import { ISignal, Signal } from '@lumino/signaling';
 
 import {
-  inTableRow,
   IRenderedRange,
   ISourceScan,
   itemContinuation,
@@ -311,15 +310,20 @@ function frontMatterEnd(source: string): number {
 }
 
 /**
- * Whether a marker sits on a line of a blockquote. Only that line carries
- * the quote marker, so notes written on lines of their own after it would
- * stand outside the quote and be printed on the page (DEF-NOTES-118): they go
- * on the marker's one line instead, as in a table row.
+ * Whether an opening marker stands alone on its line from the first column.
+ * Only there are its note lines the HTML block it opens, read up to `-->`
+ * whatever they say. Anywhere else - in a paragraph, a heading, a list item,
+ * a blockquote (DEF-NOTES-118) or a table row (ACC-NOTES-154) - a note line
+ * that starts like a block, such as a bullet or heading hashes, ends the
+ * block the marker sits in and prints the note (DEF-NOTES-121), so the notes
+ * go on the marker's one line.
  */
-function inQuote(source: string, offset: number): boolean {
-  const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
-  return /^[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*>/.test(
-    source.slice(lineStart, offset)
+function standsAlone(source: string, open: ISpan): boolean {
+  const newline = source.indexOf('\n', open.end);
+  const rest = source.slice(open.end, newline < 0 ? source.length : newline);
+  return (
+    (open.start === 0 || source[open.start - 1] === '\n') &&
+    AFTER_MARKER.test(rest)
   );
 }
 
@@ -2223,11 +2227,7 @@ export class NotesController implements IDisposable {
         {
           start: mark.open.start,
           end: mark.open.end,
-          text: serialiseOpening(
-            changed,
-            inTableRow(source, mark.open.start) ||
-              inQuote(source, mark.open.start)
-          )
+          text: serialiseOpening(changed, !standsAlone(source, mark.open))
         }
       ];
     });

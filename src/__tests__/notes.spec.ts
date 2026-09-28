@@ -51,6 +51,8 @@ jest.mock('../highlight', () => {
  */
 jest.mock('../request', () => ({ fetchAPI: jest.fn() }));
 
+import { marked as markdown } from 'marked';
+
 import { ISelectionRange, tokeniseSource } from '../anchor';
 import { DEFAULT_SETTINGS, LiveViewController } from '../controller';
 import { ADDED_CLASS, captureText } from '../highlight';
@@ -471,6 +473,14 @@ function press(node: Node, button = 0): MouseEvent {
   node.dispatchEvent(event);
   return event;
 }
+
+/** The page a source renders, without its comments or layout whitespace. */
+const page = (source: string): string =>
+  (markdown.parse(source) as string)
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/ ?(<[^>]*>) ?/g, '$1')
+    .trim();
 
 /** A document holding one bare yellow mark over `beta gamma`. */
 const marked = (id = ONE, attributes = 'colour=yellow') =>
@@ -1249,6 +1259,49 @@ describe('NotesController', () => {
       expect(h.source()).not.toContain('\n-->');
     });
 
+    it.each([
+      ['a paragraph', 'Alpha BETA delta.\n'],
+      ['a heading', '## Alpha BETA delta\n\nText.\n'],
+      ['a list item', '- one\n- Alpha BETA delta.\n'],
+      ['a line the marker is appended to', 'First line\nBETA delta.\n']
+    ])(
+      'keeps %s whole when a note line starts like a block (DEF-NOTES-121)',
+      async (_, bare) => {
+        // A mark that starts a line has its opening marker at the end of
+        // the line above, where the writer puts it.
+        const at = bare.indexOf('BETA');
+        const cut = bare[at - 1] === '\n' ? at - 1 : at;
+        const h = open(
+          bare.slice(0, cut) +
+            `<!-- mark:${ONE} note colour=yellow -->` +
+            bare.slice(cut).replace('BETA', `beta gamma<!-- /mark:${ONE} -->`)
+        );
+        await ready();
+        const note = 'first line\n- a point\n# not a heading\n> not a quote';
+
+        await h.controller.addNote(ONE, note);
+
+        expect(parseMarks(h.source())[0].notes[0].text).toBe(note);
+        expect(page(h.source())).toBe(page(bare.replace('BETA', 'beta gamma')));
+      }
+    );
+
+    it('writes the note on lines of its own under a marker that stands alone on its line', async () => {
+      const bare = 'Intro.\n\nbeta gamma delta.\n';
+      const h = open(
+        `Intro.\n\n<!-- mark:${ONE} note colour=yellow -->\nbeta gamma<!-- /mark:${ONE} --> delta.\n`
+      );
+      await ready();
+
+      await h.controller.addNote(ONE, 'first line\n- a point');
+
+      expect(h.source()).toContain(
+        `<!-- mark:${ONE} note colour=yellow\n@user `
+      );
+      expect(h.source()).toContain('\n- a point\n-->\n');
+      expect(page(h.source())).toBe(page(bare));
+    });
+
     it('writes the note on one line when the marker sits on a line of a blockquote (DEF-NOTES-118)', async () => {
       const h = open(
         `> [!NOTE]\n> See the flow.\n>\n> <!-- mark:${ONE} note colour=yellow -->\n> \`\`\`mermaid\n> graph TD\n> \`\`\`\n> <!-- /mark:${ONE} -->\n`
@@ -1376,7 +1429,7 @@ describe('NotesController', () => {
       await h.controller.addNote(ONE, 'Answer me.');
 
       expect(h.source()).toContain(
-        `<!-- mark:${ONE} note colour=blue owner=agent due=2026-09-30\n`
+        `<!-- mark:${ONE} note colour=blue owner=agent due=2026-09-30 @`
       );
     });
 
@@ -1583,9 +1636,10 @@ describe('NotesController', () => {
 
       await h.controller.addNote(ONE, 'Agreed.');
 
-      // The agent's line is carried through the rewrite byte for byte, and
-      // only the line written here is signed with the handle.
-      expect(h.source()).toContain(`\n${written}\n`);
+      // The agent's line is carried through the rewrite byte for byte, onto
+      // the marker's one line, and only the line written here is signed with
+      // the handle.
+      expect(h.source()).toContain(` ${written}\\n@user `);
       expect(parseMarks(h.source())[0].notes.map(note => note.author)).toEqual([
         'claude',
         'user'

@@ -147,7 +147,10 @@ test.describe('the colourful tab sibling', () => {
 
     // The sibling colours the tab the reader right-clicked, so the right-click
     // is what tells it which tab this is.
-    const tab = page.locator('#jp-main-dock-panel .lm-TabBar-tab').first();
+    // By name: another extension may open a tab of its own first.
+    const tab = page.locator('#jp-main-dock-panel .lm-TabBar-tab', {
+      hasText: FILE
+    });
     await tab.click({ button: 'right' });
     await page.keyboard.press('Escape');
     await page.evaluate(async () => {

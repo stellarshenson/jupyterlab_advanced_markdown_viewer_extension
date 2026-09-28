@@ -931,6 +931,14 @@ Marks, note lines and the notes panel
   - root-cause: 2026-09-23T21:51:06Z @kj tokeniseSource in src/anchor.ts records a definition line as paragraph text, so placeOpening appends the marker to it
   - log: 2026-09-23T21:51:06Z @kj added
   - log: 2026-09-23T23:27:35Z @kj closed
+- [x] `DEF-NOTES-121` **A note line that starts like a list, a heading or a quote prints the note on the page** - MAJOR; A note with more than one line, on a mark inside a paragraph, is written with its later lines as they are. The opening marker there is inline HTML in the paragraph, so a later line that starts with a list bullet, heading hashes, a quote marker or an ordered number ends the paragraph in marked: the page shows the marker and the note text, and the marked words fall into the new block
+  - evidence: 4 DEF-NOTES-121 cases in src/__tests__/notes.spec.ts fail before, pass after; jest 991/991; Galata full 218 passed 2 skipped, 2 failures fixed in test (logs/galata-121-motd.log 21/21)
+  - test-tags: UNIT
+  - repro: Mark "beta gamma" in "Alpha beta gamma delta.", write the note "first line", Shift Enter, "- a point", save: the page reads "Alpha <!-- mark:... first line" and a list item "a point -->beta gamma delta."
+  - root-cause: 2026-09-28T12:45:22Z @kj noteLines in src/marks.ts escapes only a leading @ on a continuation line; serialiseOpening writes the multi-line form for a mark inside a paragraph (probe 2026-09-28 through NotesController.addNote, rendered with marked 17.0.6)
+  - log: 2026-09-28T12:45:22Z @kj added; reason: The repro and root cause name the exact write path and the renderer result, which a fixer needs
+  - log: 2026-09-28T12:45:36Z @kj edited test-tags added "UNIT"
+  - log: 2026-09-28T14:05:17Z @kj closed: fixed: notes of a marker not alone at column 0 go on its one line (standsAlone in src/notes.ts)
 
 ## Change detection `DETECT`
 

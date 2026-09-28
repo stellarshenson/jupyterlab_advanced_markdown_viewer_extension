@@ -60,13 +60,14 @@ const onDisk = (apiPath: string): string =>
   path.join(__dirname, '..', ...apiPath.split('/'));
 
 /**
- * The ids of the widgets currently in the main area, in tab order.
+ * The ids of the document widgets currently in the main area, in tab order.
+ * Another extension may open a tab of its own, such as a message of the day.
  */
 const mainWidgetIds = (page: any): Promise<string[]> =>
   page.evaluate(() =>
-    Array.from((window as any).jupyterapp.shell.widgets('main')).map(
-      (widget: any) => widget.id
-    )
+    Array.from((window as any).jupyterapp.shell.widgets('main'))
+      .filter((widget: any) => widget.context)
+      .map((widget: any) => widget.id)
   );
 
 /**

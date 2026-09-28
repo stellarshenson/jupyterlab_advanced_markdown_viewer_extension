@@ -421,7 +421,7 @@ test.describe('marking a passage', () => {
       holds.includes('Before the break.')
     );
     expect(text).toMatch(
-      /One <!-- mark:[0-9a-f-]{36} note colour=\w+\n@[^\n]*: Before the break\.\n-->Alpha<!-- \/mark:[0-9a-f-]{36} --><br>Beta and more words here\./
+      /One <!-- mark:[0-9a-f-]{36} note colour=\w+ @[^\n]*: Before the break\. -->Alpha<!-- \/mark:[0-9a-f-]{36} --><br>Beta and more words here\./
     );
     await expect(rows(page)).toHaveCount(1);
     await expect(
@@ -1291,7 +1291,7 @@ test.describe('marking a passage', () => {
     );
     const [id] = openingIds(text);
     expect(id).toMatch(UUID);
-    expect(text).toContain(`<!-- mark:${id} note colour=yellow\n`);
+    expect(text).toContain(`<!-- mark:${id} note colour=yellow @`);
     expect(text).toContain(closing(id));
     expect(text).toMatch(
       /@[A-Za-z0-9_.-]+ \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: The source is missing\./
@@ -1905,8 +1905,8 @@ test.describe('marking a passage', () => {
     const closed = await fileWhen(file, holds =>
       holds.includes('status=closed')
     );
-    // The marker holds a note, so the attributes end its first line.
-    expect(closed).toMatch(/note colour=\w+ status=closed\n/);
+    // The marker sits in a paragraph, so the note follows the attributes.
+    expect(closed).toMatch(/note colour=\w+ status=closed @/);
     expect(closed).toContain('Settled.');
     await expect(painted(page)).toHaveCount(0);
     await expect(rows(page)).toHaveCount(0);
@@ -1945,7 +1945,7 @@ test.describe('marking a passage', () => {
       file,
       holds => !holds.includes('status=closed')
     );
-    expect(reopened).toMatch(/note colour=\w+\n@/);
+    expect(reopened).toMatch(/note colour=\w+ @/);
     expect(reopened).not.toContain('status=');
     expect(reopened).toContain('Settled.');
     await expect(painted(page)).toHaveCount(1);
@@ -2142,7 +2142,7 @@ test.describe('marking a passage', () => {
     // The passage between the markers is byte for byte what it was, and the
     // closing marker is untouched.
     expect(text).toContain(`-->${P1}${closing(id)}`);
-    expect(text).toContain(`<!-- mark:${id} note colour=yellow\n`);
+    expect(text).toContain(`<!-- mark:${id} note colour=yellow @`);
     expect(closingIds(text)).toEqual([id]);
     expect(text).toContain('The second paragraph mentions oranges and plums.');
   });
@@ -2585,13 +2585,15 @@ test.describe('marking a passage', () => {
     );
     const id = openingIds(text)[0];
 
-    // The agent answers by editing the file, which is the whole protocol.
+    // The agent answers by editing the file, which is the whole protocol. A
+    // marker inside a paragraph holds its notes on its one line (DEF-NOTES-121),
+    // so the answer joins them there after a literal backslash and n.
     await writeExternally(
       page,
       target,
       text.replace(
-        '\n-->',
-        '\n@claude 2026-09-06T16:05:12Z: Agreed, I will rewrite it.\n-->'
+        'This contradicts the intro. -->',
+        'This contradicts the intro.\\n@claude 2026-09-06T16:05:12Z: Agreed, I will rewrite it. -->'
       )
     );
 
@@ -2617,18 +2619,19 @@ test.describe('marking a passage', () => {
     // Every note line opens with the handle of whoever wrote it. Which handle
     // that is belongs to the two identity tests below.
     expect(text).toMatch(
-      /\n@[A-Za-z0-9_.-]+ \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Needs a source\.\n/
+      / @[A-Za-z0-9_.-]+ \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Needs a source\. -->/
     );
 
     // A line inside the marker that does not open an entry continues the one
-    // above it, so a note runs over two lines under one author.
+    // above it, so a note runs over two lines under one author. On the
+    // marker's one line the lines are joined by a literal backslash and n.
     await writeExternally(
       page,
       target,
       text.replace(
-        '\n-->',
-        '\n@claude 2026-09-06T16:05:12Z: The first line of the answer,\n' +
-          'and the second line of the same answer.\n-->'
+        'Needs a source. -->',
+        'Needs a source.\\n@claude 2026-09-06T16:05:12Z: The first line of the answer,\\n' +
+          'and the second line of the same answer. -->'
       )
     );
 
@@ -3066,7 +3069,7 @@ test.describe('a document that already carries marks', () => {
       holds.includes('Answering the agent.')
     );
     expect(text).toContain(
-      `<!-- mark:${TWO} note colour=blue owner=agent due=2026-09-30\n`
+      `<!-- mark:${TWO} note colour=blue owner=agent due=2026-09-30 @`
     );
   });
 
@@ -3655,7 +3658,7 @@ test.describe('a lab that names its user', () => {
     );
 
     expect(text).toMatch(
-      /\n@user \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: The setting is empty\.\n/
+      / @user \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: The setting is empty\. -->/
     );
     expect(text).not.toContain('@kj');
     await expect(
@@ -3675,7 +3678,7 @@ test.describe('a lab that names its user', () => {
     );
 
     expect(text).toMatch(
-      /\n@kjx \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Signed by the answer\.\n/
+      / @kjx \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Signed by the answer\. -->/
     );
     await expect(
       rows(page).first().locator('.jp-AdvancedMd-notesAuthor')
@@ -3691,7 +3694,7 @@ test.describe('a lab that names its user', () => {
     );
     await expect(page.locator('.jp-Dialog')).toHaveCount(0);
     expect(both).toMatch(
-      /\n@kjx \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: And again\.\n/
+      /\\n@kjx \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: And again\. -->/
     );
   });
 
@@ -3710,7 +3713,7 @@ test.describe('a lab that names its user', () => {
     );
     await expect(page.locator('.jp-Dialog')).toHaveCount(0);
     expect(text).toMatch(
-      /\n@user \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Dismissed twice\.\n/
+      /\\n@user \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Dismissed twice\. -->/
     );
   });
 
@@ -3732,9 +3735,11 @@ test.describe('a lab that names its user', () => {
     const search = page.locator('.lm-CommandPalette-input');
     await expect(search).toBeVisible();
     await search.fill('Set note handle');
+    // By command: another extension may list an entry of the same name.
     await page
-      .locator('.lm-CommandPalette-item', { hasText: 'Set note handle' })
-      .first()
+      .locator(
+        '.lm-CommandPalette-item[data-command="advanced-markdown-viewer:set-note-handle"]'
+      )
       .click();
     await answerHandle(page, 'kjp');
 
@@ -3747,7 +3752,7 @@ test.describe('a lab that names its user', () => {
     );
     await expect(page.locator('.jp-Dialog')).toHaveCount(0);
     expect(text).toMatch(
-      /\n@kjp \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: From the palette\.\n/
+      / @kjp \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: From the palette\. -->/
     );
   });
 
@@ -3769,7 +3774,7 @@ test.describe('a lab that names its user', () => {
     // byte, and only the line written here is signed with the handle.
     expect(text).toContain(AGENT_NOTE);
     expect(text).toMatch(
-      /\n@user \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Agreed\.\n/
+      /\\n@user \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: Agreed\. -->/
     );
   });
 });
@@ -3797,7 +3802,7 @@ test.describe('the author setting', () => {
     );
 
     expect(text).toMatch(
-      /\n@kj \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: The setting names me\.\n/
+      / @kj \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: The setting names me\. -->/
     );
     expect(text).not.toContain('@someone-else');
     await expect(
@@ -4316,11 +4321,15 @@ test.describe('marking from the keyboard', () => {
       );
     });
 
-    const item = page.locator('.lm-CommandPalette-item', {
-      has: page.locator('.lm-CommandPalette-itemLabel', {
-        hasText: /^Mark the selected passage$/
-      })
-    });
+    // By command: another extension may list an entry of the same name.
+    const item = page.locator(
+      '.lm-CommandPalette-item[data-command="advanced-markdown-viewer:mark-selection"]',
+      {
+        has: page.locator('.lm-CommandPalette-itemLabel', {
+          hasText: /^Mark the selected passage$/
+        })
+      }
+    );
     await expect(item).toHaveCount(1);
     // The palette's input took the focus, which collapses the document's
     // selection; the command still knows the passage the reader selected.
@@ -4410,7 +4419,7 @@ test.describe('a note answered after the mark vanished', () => {
       holds.includes('After the mark went.')
     );
     expect(text).toMatch(
-      /\n@kj \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: After the mark went\.\n/
+      / @kj \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z: After the mark went\. -->/
     );
     await expect(page.locator('.jp-Dialog')).toHaveCount(0);
   });
@@ -4562,9 +4571,15 @@ test.describe('the comment thread of a mark', () => {
   const entries = (page: any) =>
     rows(page).first().locator('.jp-AdvancedMd-notesEntry');
 
-  /** The note lines of the file: every line that starts with an author. */
-  const noteLines = (text: string): string[] =>
-    text.split('\n').filter(line => line.startsWith('@'));
+  /**
+   * The note lines of the file's one mark. The mark sits in a paragraph, so
+   * its notes follow the attributes on the marker's line, one from the next
+   * by a written \n.
+   */
+  const noteLines = (text: string): string[] => {
+    const notes = / (@[^\n]*?) -->/.exec(text);
+    return notes ? notes[1].split('\\n') : [];
+  };
 
   test('ACC-NOTES-171, ACC-NOTES-164, ACC-NOTES-167 and ACC-NOTES-165 read the thread as a comment and its replies, edit and delete any entry, in the smaller font', async ({
     page,
@@ -4709,7 +4724,7 @@ test.describe('the comment thread of a mark', () => {
       lines[0].replace('First thought.', 'First thought, revised.'),
       lines[1]
     ]);
-    expect(edited).not.toContain('First thought.\n');
+    expect(edited).not.toContain('First thought.\\n');
     await expect(entries(page).nth(0)).toContainText('First thought, revised.');
 
     // An empty Save changes nothing and closes the field.
