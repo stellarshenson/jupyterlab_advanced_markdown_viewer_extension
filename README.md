@@ -44,6 +44,21 @@ Notes beside the preview: a note on the whole document, then three marked passag
 - Right-click the preview and choose **Copy Content** to put the selected passage on the clipboard as basic HTML, or the whole rendered document when nothing is selected: headings, lists, tables, links and code, with no colours or styling, ready to paste into an email. A selected table row keeps the table its cells sit in, and a selected fenced block keeps the line breaks of its program. The same entry is in the command palette
 - Right-click a link in the preview and choose **Copy link address**. A link to another file gives that file's address on the server, and the paragraph mark beside a hovered heading gives the address of that heading
 
+## Agent skill
+
+The skill in `.agents/skills/jupyterlab-advanced-markdown-viewer-extension` teaches an AI assistant the marks this extension stores in the file. With it, the assistant can:
+
+- mark passages in the six colours
+- comment on a passage or on the whole document
+- answer and close your comments
+- watch a file for new comments, with the bundled `scripts/watch-marks.py`
+
+Agents that read `.agents/skills` find it in a clone of this repository. The skill is not part of the installed package. To use it in Claude Code, link it from the clone:
+
+```bash
+ln -s "$PWD/.agents/skills/jupyterlab-advanced-markdown-viewer-extension" ~/.claude/skills/jupyterlab-advanced-markdown-viewer-extension
+```
+
 ## Limitations
 
 - A file open only in an editor is not followed; open it in the Markdown Preview. A preview opened over unsaved edits after the file had already changed holds that change back, and a save then meets JupyterLab's own File Changed dialog
