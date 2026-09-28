@@ -2,6 +2,22 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.24] - 2026-09-28
+
+A comment of several lines no longer shows on the page, and an AI assistant can now mark, comment and watch through a skill in the repository.
+
+### Added
+
+- An agent skill in `.agents/skills/jupyterlab-advanced-markdown-viewer-extension` tells an AI assistant how to mark passages in the six colours, comment on a passage or on the whole document, answer and close your comments, and watch a file for new comments with the bundled `scripts/watch-marks.py`. The README gives the line that links it into Claude Code
+
+### Changed
+
+- The comments of a mark inside a paragraph, a heading or a list item are written on the marker's own line in the file, joined by `\n`, as they already were in quotes and table rows. A marker alone on its line keeps one comment per line
+
+### Fixed
+
+- A comment of several lines on a passage inside a paragraph, a heading or a list item was printed on the page when one of its lines started like a list bullet, heading hashes, a quote marker or a numbered item
+
 ## [1.0.23] - 2026-09-24
 
 The preview no longer jumps when a document with pictures is rendered again, and a comment keeps its list item, quote or paragraph intact.
