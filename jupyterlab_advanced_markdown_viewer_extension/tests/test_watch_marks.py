@@ -95,3 +95,24 @@ def test_a_comment_on_the_whole_document_is_reported():
     events, _ = watch_marks.scan({}, text, "claude")
 
     assert events == [f"new note {ID[:8]} | {USER}"]
+
+
+def test_a_read_that_comes_back_empty_does_not_report_the_thread_again():
+    # A save truncates the file before it writes, so one read can find it empty.
+    _, known = watch_marks.scan({}, marked(USER), "claude")
+    _, known = watch_marks.scan(known, "", "claude")
+
+    events, _ = watch_marks.scan(known, marked(USER), "claude")
+
+    assert events == []
+
+
+def test_a_line_the_user_adds_before_my_next_line_is_reported():
+    # The user writes while the assistant works, and both lines land between two passes.
+    _, known = watch_marks.scan({}, marked(USER, MINE), "claude")
+    line = "@kj 2026-09-28T09:20:00Z: And the heater?"
+    later = "@claude 2026-09-28T09:20:03Z: Checked table 3"
+
+    events, _ = watch_marks.scan(known, marked(USER, MINE, line, later), "claude")
+
+    assert events == [f"reply {ID[:8]} | {line}"]

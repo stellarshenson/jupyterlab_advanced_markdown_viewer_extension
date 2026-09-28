@@ -21,7 +21,7 @@ The cost is <!-- mark:0f8e5a52-3c1d-4b7a-9e2f-6a1b2c3d4e5f note colour=blue @kj 
 - **Comment line** - `@<handle> <YYYY-MM-DDTHH:MM:SSZ>: <text>`: UTC, whole seconds, `Z`, then a colon. A line of any other shape continues the line above it, so a stamp with milliseconds joins your text to the user's comment. Sign as `@claude` unless the user names another handle
 - **Comments on the marker's line** - an opening comment with text before or after it on its line holds its comments on that line: after the attributes, joined by a literal `\n`, a `|` written `\|`, a `\` written `\\`, then ` -->`. A comment on a line of its own there would end the paragraph, heading, list item, quote or table row, and print the comment on the page
 - **Comments on lines of their own** - only an opening comment alone on its line from the first column, such as the comment on the whole document, holds its comments one per line, with `-->` on its own line after the last
-- **Adding a comment** - keep the form the marker has: `\n@claude <stamp>: <text>` before ` -->` on the marker's line, or a new line before `-->`. Never spread a one-line marker over several lines: the extension then no longer reads the mark
+- **Adding a comment** - keep the form the marker has. On a marker with text on its line and no comment yet, the first comment follows the attributes after one space: ` @claude <stamp>: <text>` before ` -->`. Each later comment is `\n@claude <stamp>: <text>` before ` -->` on the marker's line, or a new line before `-->`. On a one-line marker that already holds a comment, never put the new comment on a new line: the extension then no longer reads the mark
 - **Text** - write `-->` as `-- >`; no blank lines
 - **Settings** - leave `<!-- marks:settings panel=... -->` as it is; the Notes panel writes it
 
@@ -75,7 +75,7 @@ The page must look the same with the markers as without them. The opening commen
 
 1. Choose a list file for this session only, for example `watch-list.txt` in the session's scratch directory
 2. `python3 <skill dir>/scripts/watch-marks.py add --list <list> <file> ...` - stops with an error on a file that does not exist
-3. Start one background process: `python3 <skill dir>/scripts/watch-marks.py run --list <list> --me claude`. Each line it prints is one event. In Claude Code, run it with the Monitor tool, `timeout_ms` 1800000, and start it again each time it expires
+3. Start one background process: `python3 <skill dir>/scripts/watch-marks.py run --list <list> --me <handle>`, where `<handle>` is the handle you sign with, without the `@`. Each line it prints is one event. In Claude Code, run it with the Monitor tool, `timeout_ms` 1800000, and start it again each time it expires
 4. To add a file later, run `add` again: the running process reads it within 5 seconds. `remove` takes a file out
 5. Keep a task that holds the absolute paths and both commands, so a new session can start the watch again
 
@@ -88,4 +88,5 @@ The page must look the same with the markers as without them. The opening commen
 
 - The first pass reports every open thread whose last line is not yours
 - Your own lines, a closed mark and a change of colour are not reported
+- A user's line is reported even when a line of yours follows it: when that line of yours already answers it, do nothing
 - To stop: end the background process, and name every mark that is still open

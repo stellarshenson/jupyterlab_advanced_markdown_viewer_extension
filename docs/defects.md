@@ -932,13 +932,42 @@ Marks, note lines and the notes panel
   - log: 2026-09-23T21:51:06Z @kj added
   - log: 2026-09-23T23:27:35Z @kj closed
 - [x] `DEF-NOTES-121` **A note line that starts like a list, a heading or a quote prints the note on the page** - MAJOR; A note with more than one line, on a mark inside a paragraph, is written with its later lines as they are. The opening marker there is inline HTML in the paragraph, so a later line that starts with a list bullet, heading hashes, a quote marker or an ordered number ends the paragraph in marked: the page shows the marker and the note text, and the marked words fall into the new block
-  - evidence: 4 DEF-NOTES-121 cases in src/__tests__/notes.spec.ts fail before, pass after; jest 991/991; Galata full 218 passed 2 skipped, 2 failures fixed in test (logs/galata-121-motd.log 21/21)
+  - evidence: 4 DEF-NOTES-121 cases in `src/__tests__/notes.spec.ts` fail before, pass after; jest 991/991; Galata full 218 passed 2 skipped, 2 failures fixed in test (`logs/galata-121-motd.log` 21/21)
   - test-tags: UNIT
   - repro: Mark "beta gamma" in "Alpha beta gamma delta.", write the note "first line", Shift Enter, "- a point", save: the page reads "Alpha <!-- mark:... first line" and a list item "a point -->beta gamma delta."
   - root-cause: 2026-09-28T12:45:22Z @kj noteLines in src/marks.ts escapes only a leading @ on a continuation line; serialiseOpening writes the multi-line form for a mark inside a paragraph (probe 2026-09-28 through NotesController.addNote, rendered with marked 17.0.6)
   - log: 2026-09-28T12:45:22Z @kj added; reason: The repro and root cause name the exact write path and the renderer result, which a fixer needs
   - log: 2026-09-28T12:45:36Z @kj edited test-tags added "UNIT"
   - log: 2026-09-28T14:05:17Z @kj closed: fixed: notes of a marker not alone at column 0 go on its one line (standsAlone in src/notes.ts)
+  - log: 2026-09-28T16:20:02Z @kj edited evidence "4 DEF-NOTES-121 cases in src/__tests__/notes.spec.ts fail before, pass after; jest 991/991; Galata full 218 passed 2 skipped, 2 failures fixed in test (logs/galata-121-motd.log 21/21)" -> "4 DEF-NOTES-121 cases in `src/__tests__/notes.spec.ts` fail before, pass after; jest 991/991; Galata full 218 passed 2 skipped, 2 failures fixed in test (`logs/galata-121-motd.log` 21/21)"
+- [x] `DEF-NOTES-122` **Watcher reports a comment twice or not at all** - MAJOR; `watch-marks.py` forgot a mark when one read came back short, so a save that truncates the file re-reported every open thread; a user line followed by the assistant line within one 5 s poll was never reported
+  - evidence: test_a_read_that_comes_back_empty_does_not_report_the_thread_again and test_a_line_the_user_adds_before_my_next_line_is_reported fail before, pass after; pytest 42 passed; review rounds 4-5 clean
+  - repro: scan a thread, scan an empty read, scan the thread again: reported twice
+  - test-tags: UNIT
+  - root-cause: 2026-09-28T16:21:00Z @kj scan() kept only the marks of the last read and skipped a thread whose last line was signed by --me
+  - log: 2026-09-28T16:21:00Z @kj added
+  - log: 2026-09-28T16:21:09Z @kj closed: fixed: scan() keeps marks absent from a read and reports every new line not signed by --me
+- [x] `DEF-NOTES-123` **Watcher stops on a cut or unencodable character** - MAJOR; a read cut inside a multibyte character by an in-place save raised UnicodeDecodeError; on Windows a comment outside the ANSI code page raised UnicodeEncodeError on a piped stdout; either ended the watch
+  - evidence: a Polish and emoji comment prints under PYTHONIOENCODING=cp1250; review round 5 clean
+  - repro: run with PYTHONIOENCODING=cp1250 on a file holding a Polish comment: exit 1
+  - test-tags: MANUAL
+  - root-cause: 2026-09-28T16:21:00Z @kj the read caught only OSError, and stdout used the locale encoding
+  - log: 2026-09-28T16:21:00Z @kj added
+  - log: 2026-09-28T16:21:09Z @kj closed: fixed: the read uses errors='replace' and main() sets stdout to UTF-8
+- [x] `DEF-NOTES-124` **Skill first comment drops the mark** - MAJOR; SKILL.md said to add every comment as a written \n then the comment, before the closing; on a marker with no comment the extension then reads no mark and the colour as yellow
+  - evidence: parseMarks replay: the space form reads 1 comment in green, the \n form reads no mark; review rounds 4-5 clean
+  - repro: append \n@claude <stamp>: Hi before the closing of a marker with no comment in a paragraph: parseMarks returns no mark
+  - test-tags: MANUAL
+  - root-cause: 2026-09-28T16:21:00Z @kj the Adding a comment bullet did not say that the first comment follows the attributes after one space
+  - log: 2026-09-28T16:21:00Z @kj added
+  - log: 2026-09-28T16:21:09Z @kj closed: fixed: the bullet says the first comment follows the attributes after one space
+- [x] `DEF-NOTES-125` **Skill watch command and link line fail** - MINOR; SKILL.md step 3 fixed --me claude while line 21 allows another handle, so the assistant own lines came back as events; the README link line failed without ~/.claude/skills and, run twice, made a link inside the clone
+  - evidence: the link line run twice in a scratch HOME leaves one link and none inside the clone; review round 5 clean
+  - repro: run the README link line twice on a machine without ~/.claude/skills
+  - test-tags: MANUAL
+  - root-cause: 2026-09-28T16:21:00Z @kj the command named a fixed handle; ln -s without mkdir -p and -fn
+  - log: 2026-09-28T16:21:00Z @kj added
+  - log: 2026-09-28T16:21:09Z @kj closed: fixed: --me <handle>; mkdir -p ~/.claude/skills && ln -sfn
 
 ## Change detection `DETECT`
 

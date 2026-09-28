@@ -7,17 +7,19 @@ restart. It prints one line per event, flushed at once:
 
   <file name> | watching
   <file name> | missing
-  <file name> | new note <mark id, 8 chars> | <last line of the thread>
-  <file name> | reply <mark id, 8 chars> | <last line of the thread>
+  <file name> | new note <mark id, 8 chars> | <last new line not signed by --me>
+  <file name> | reply <mark id, 8 chars> | <last new line not signed by --me>
 
-A thread is reported when its comment lines change and its last line is not signed by
---me. A closed mark (status=closed) and a change of colour are not reported. The first
-pass over a file reports every open thread whose last line is not signed by --me.
+A thread is reported when a line not signed by --me is added to it or changed, even when
+a line signed by --me follows it. A closed mark (status=closed) and a change of colour
+are not reported. The first pass over a file reports every open thread whose last line
+is not signed by --me. A file added again after `remove` keeps the threads already seen
+and reports only those that changed.
 """
 import argparse
-import hashlib
 import os
 import re
+import sys
 import time
 
 MARK = re.compile(r'<!-- mark:([0-9a-f-]{36})(.*?)-->', re.S)
@@ -37,13 +39,16 @@ def thread(body):
     if newline:
         return first, rest
     head = FIRST_HEAD.search(first)
-    return (first[:head.start()], first[head.start():]) if head else (first, '')
+    if not head:
+        return first, ''
+    notes = re.sub(r'\\([\\n|])', lambda m: '\n' if m[1] == 'n' else m[1], first[head.start():])
+    return first[:head.start()], notes
 
 
 def scan(known, text, me):
     """Compare the threads of one file's text with those seen before.
 
-    `known` maps a mark id to the digest of its comment lines at the last pass.
+    `known` maps a mark id to its comment lines not signed by `me` at the last pass.
     Returns the events of this pass and the map for the next one.
     """
     current, events = {}, []
@@ -52,18 +57,22 @@ def scan(known, text, me):
         if mark_id in current:
             continue  # a copied marker repeats an id; the first one is the mark
         attributes, notes = thread(body)
-        digest = hashlib.sha1(notes.encode()).hexdigest()[:8]
-        current[mark_id] = digest
-        if known.get(mark_id) == digest or CLOSED.search(attributes):
+        author, theirs = None, []
+        for line in notes.splitlines():
+            line = line.strip()
+            head = AUTHOR.match(line)
+            author = head.group(1) if head else author
+            if line and author != me:
+                theirs.append(line)
+        current[mark_id] = theirs
+        added = [line for line in theirs if line not in known.get(mark_id, [])]
+        if not added or CLOSED.search(attributes):
             continue
-        authors = AUTHOR.findall(notes)
-        if not authors or authors[-1] == me:
-            continue  # a mark with no comment, or my own line last
+        if mark_id not in known and author == me:
+            continue  # first sight of a thread whose last line is mine
         kind = 'new note' if mark_id not in known else 'reply'
-        lines = [line.strip() for line in notes.replace('\\n', '\n').splitlines()]
-        last = [line for line in lines if line][-1][:200]
-        events.append(f'{kind} {mark_id[:8]} | {last}')
-    return events, current
+        events.append(f'{kind} {mark_id[:8]} | {added[-1][:200]}')
+    return events, {**known, **current}
 
 
 def read_list(list_path):
@@ -84,12 +93,10 @@ def run(list_path, me):
     state, missing = {}, set()
     while True:
         paths = read_list(list_path)
-        for gone in [path for path in state if path not in paths]:
-            del state[gone]
         for path in paths:
             name = os.path.basename(path)
             try:
-                with open(path, encoding='utf8') as handle:
+                with open(path, encoding='utf8', errors='replace') as handle:
                     text = handle.read()
             except OSError:
                 if path not in missing:
@@ -107,6 +114,7 @@ def run(list_path, me):
 
 
 def main():
+    sys.stdout.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

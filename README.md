@@ -53,10 +53,10 @@ The skill in `.agents/skills/jupyterlab-advanced-markdown-viewer-extension` teac
 - answer and close your comments
 - watch a file for new comments, with the bundled `scripts/watch-marks.py`
 
-Agents that read `.agents/skills` find it in a clone of this repository. The skill is not part of the installed package. To use it in Claude Code, link it from the clone:
+Agents that read `.agents/skills` find it in a clone of this repository. The skill is not part of the installed package. To use it in Claude Code, run this from the root of the clone:
 
 ```bash
-ln -s "$PWD/.agents/skills/jupyterlab-advanced-markdown-viewer-extension" ~/.claude/skills/jupyterlab-advanced-markdown-viewer-extension
+mkdir -p ~/.claude/skills && ln -sfn "$PWD/.agents/skills/jupyterlab-advanced-markdown-viewer-extension" ~/.claude/skills/jupyterlab-advanced-markdown-viewer-extension
 ```
 
 ## Limitations
