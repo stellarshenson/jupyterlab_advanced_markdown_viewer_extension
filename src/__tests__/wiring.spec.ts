@@ -1225,7 +1225,7 @@ describe('the plugin', () => {
       expect(lab.commands.label(COMMANDS.addNote)).toBe('Add Comment');
     });
 
-    it('offers a Mark submenu of the six colours, the note, the two copies and the three states', async () => {
+    it('offers a Mark submenu of the six colours, the note, the three copies and the three states', async () => {
       const lab = await start(SOURCE);
       expect(
         lab.menu.map(item => [
@@ -1238,6 +1238,7 @@ describe('the plugin', () => {
         ['command', COMMANDS.addNote, undefined],
         ['command', COMMANDS.copyContent, undefined],
         ['command', COMMANDS.copyLinkAddress, undefined],
+        ['command', COMMANDS.copyImage, undefined],
         ['command', COMMANDS.panel, 'expanded'],
         ['command', COMMANDS.panel, 'minimap'],
         ['command', COMMANDS.panel, 'hidden'],
@@ -1266,12 +1267,16 @@ describe('the plugin', () => {
       expect(lab.menu[0].selector).toBe(
         '.jp-AdvancedMd-selecting .jp-MarkdownViewer .jp-RenderedMarkdown'
       );
-      // The address of a link is offered on a link inside it alone.
+      // The address of a link is offered on a link inside it alone, and a
+      // picture on a picture.
+      const inside: Record<string, string> = {
+        [COMMANDS.copyLinkAddress]: ' a[href]',
+        [COMMANDS.copyImage]: ' img'
+      };
       for (const item of lab.menu.slice(1, -1)) {
         expect(item.selector).toBe(
-          item.command === COMMANDS.copyLinkAddress
-            ? '.jp-MarkdownViewer .jp-RenderedMarkdown a[href]'
-            : '.jp-MarkdownViewer .jp-RenderedMarkdown'
+          '.jp-MarkdownViewer .jp-RenderedMarkdown' +
+            (inside[item.command] ?? '')
         );
       }
       // The identifier is offered on a row of the panel alone.
@@ -1344,6 +1349,71 @@ describe('the plugin', () => {
       expect(lab.commands.isVisible(COMMANDS.copyLinkAddress)).toBe(true);
       await lab.commands.execute(COMMANDS.copyLinkAddress);
       expect(copied).toHaveBeenCalledWith('https://example.com/a');
+    });
+
+    it('copies the picture the menu was opened on as PNG (ACC-COPY-198)', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render(
+        '<p>A <img src="/files/house.jpg"> and <img src="https://example.com/b.png"> and <img src="/files/gone.jpg">.</p>'
+      );
+      const [house, remote, gone] = Array.from(
+        lab.widget.rendered.querySelectorAll('img')
+      );
+      // jsdom loads no picture: the two that loaded say the size of their file.
+      for (const image of [house, remote]) {
+        Object.defineProperty(image, 'naturalWidth', { value: 640 });
+        Object.defineProperty(image, 'naturalHeight', { value: 480 });
+      }
+      const drawn = jest.fn();
+      const context = jest
+        .spyOn(HTMLCanvasElement.prototype, 'getContext')
+        .mockReturnValue({ drawImage: drawn } as any);
+      const png = new Blob(['png'], { type: 'image/png' });
+      const sizes: number[][] = [];
+      const toBlob = jest
+        .spyOn(HTMLCanvasElement.prototype, 'toBlob')
+        .mockImplementation(function (
+          this: HTMLCanvasElement,
+          done: BlobCallback
+        ) {
+          sizes.push([this.width, this.height]);
+          done(png);
+        });
+      const written: any[] = [];
+      (window as any).ClipboardItem = class {
+        constructor(readonly data: Record<string, Promise<Blob>>) {}
+      };
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { write: async (items: any[]) => written.push(...items) }
+      });
+      try {
+        lab.openedOver(house);
+        expect(lab.commands.isVisible(COMMANDS.copyImage)).toBe(true);
+        await lab.commands.execute(COMMANDS.copyImage);
+        expect(written).toHaveLength(1);
+        expect(Object.keys(written[0].data)).toEqual(['image/png']);
+        await expect(written[0].data['image/png']).resolves.toBe(png);
+        expect(drawn).toHaveBeenCalledWith(house, 0, 0);
+        expect(sizes).toEqual([[640, 480]]);
+        // A picture from another site, one that did not load and the words
+        // around them offer nothing.
+        for (const node of [
+          remote,
+          gone,
+          lab.widget.rendered.querySelector('p')
+        ]) {
+          lab.openedOver(node as HTMLElement);
+          expect(lab.commands.isVisible(COMMANDS.copyImage)).toBe(false);
+          await lab.commands.execute(COMMANDS.copyImage);
+        }
+        expect(written).toHaveLength(1);
+      } finally {
+        context.mockRestore();
+        toBlob.mockRestore();
+        delete (window as any).ClipboardItem;
+        delete (navigator as any).clipboard;
+      }
     });
 
     it('copies the rendered document as basic HTML and as text (ACC-COPY-160)', async () => {

@@ -266,3 +266,59 @@ test('ACC-COPY-163 copies the address a link opens, without the session token', 
   await expect(entry(page, 'Copy link address')).toHaveCount(0);
   await closeMenus(page);
 });
+
+/** A plain JPEG of 40 by 30 pixels. */
+const JPEG =
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAAeACgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwCGiiivUPMCiiigAooooAKKKKACiiigAooooA//2Q==';
+
+test('ACC-COPY-198 copies a picture as PNG at the size of its file', async ({
+  page,
+  tmpPath
+}) => {
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.contents.uploadContent(JPEG, 'base64', `${tmpPath}/house.jpg`);
+  const target = `${tmpPath}/${FILE}`;
+  // Shown at half the width of its file.
+  await page.contents.uploadContent(
+    '# Pictures\n\n<img src="house.jpg" width="20">\n\nPlain words here.\n',
+    'text',
+    target
+  );
+  await openPreview(page, target, 'Plain words here.');
+  const root = page.locator('.jp-RenderedMarkdown:visible');
+  const picture = root.locator('img');
+  await expect
+    .poll(() =>
+      picture.evaluate((image: HTMLImageElement) => image.naturalWidth)
+    )
+    .toBe(40);
+
+  const box = await picture.boundingBox();
+  await openMenu(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+  await expect(
+    entry(page, 'Copy image').locator('.lm-Menu-itemIcon svg')
+  ).toHaveCount(1);
+  await choose(page, 'Copy image');
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const items = await navigator.clipboard.read();
+        if (!items[0]?.types.includes('image/png')) {
+          return null;
+        }
+        const bitmap = await createImageBitmap(
+          await items[0].getType('image/png')
+        );
+        return [items.length, bitmap.width, bitmap.height];
+      })
+    )
+    .toEqual([1, 40, 30]);
+
+  // Off a picture the entry is not offered.
+  const words = await root
+    .locator('p', { hasText: 'Plain words' })
+    .boundingBox();
+  await openMenu(page, { x: words.x + 5, y: words.y + words.height / 2 });
+  await expect(entry(page, 'Copy image')).toHaveCount(0);
+  await closeMenus(page);
+});

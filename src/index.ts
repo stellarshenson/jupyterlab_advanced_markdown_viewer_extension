@@ -41,9 +41,11 @@ import { Menu } from '@lumino/widgets';
 import { ChangeChannel } from './channel';
 import { contentOfRange, copiedContent, selectedContent } from './content';
 import { linkAddress } from './link';
+import { copiesAsImage, imageAsPng } from './image';
 import { renderedToDomRange } from './anchor';
 import {
   COPY_ICON,
+  IMAGE_ICON,
   LINK_ICON,
   MARK_ICONS,
   MARK_MENU_ICON,
@@ -102,7 +104,9 @@ export const COMMANDS = {
   /** Ask for the handle note lines are signed with. */
   setHandle: 'advanced-markdown-viewer:set-note-handle',
   /** Copy the address of the link the context menu was opened on. */
-  copyLinkAddress: 'advanced-markdown-viewer:copy-link-address'
+  copyLinkAddress: 'advanced-markdown-viewer:copy-link-address',
+  /** Copy the picture the context menu was opened on. */
+  copyImage: 'advanced-markdown-viewer:copy-image'
 };
 
 /**
@@ -129,6 +133,9 @@ const ROW_SELECTOR = `.${PANEL_CLASS} .${ROW_CLASS}`;
 
 /** A link in the rendered Markdown of a preview, where its address is offered. */
 const LINK_SELECTOR = `${CONTEXT_SELECTOR} a[href]`;
+
+/** A picture in the rendered Markdown of a preview, where Copy image is offered. */
+const IMAGE_SELECTOR = `${CONTEXT_SELECTOR} img`;
 
 /**
  * The order the context menu offers the three states in.
@@ -559,6 +566,32 @@ const plugin: JupyterFrontEndPlugin<void> = {
       }
     });
 
+    // The browser's Copy image goes with its menu too (ACC-COPY-198). A picture
+    // holds no other node, so the menu is opened over the picture itself, and
+    // a picture a render has taken out of the document still holds its pixels.
+    const imageUnderMenu = (): HTMLImageElement | null =>
+      (app.contextMenuHitTest(node => node instanceof HTMLImageElement) as
+        HTMLImageElement | undefined) ?? null;
+    app.commands.addCommand(COMMANDS.copyImage, {
+      label: trans.__('Copy image'),
+      icon: IMAGE_ICON,
+      describedBy: { args: { type: 'object', properties: {} } },
+      isVisible: () => {
+        const image = imageUnderMenu();
+        return !!image && copiesAsImage(image);
+      },
+      execute: async () => {
+        const image = imageUnderMenu();
+        if (image && copiesAsImage(image)) {
+          // The PNG is handed over while it is still being drawn, so the write
+          // starts inside the click that chose the entry.
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': imageAsPng(image) })
+          ]);
+        }
+      }
+    });
+
     app.commands.addCommand(COMMANDS.panel, {
       label: args => {
         const state = args.state as PanelState;
@@ -637,6 +670,11 @@ const plugin: JupyterFrontEndPlugin<void> = {
       command: COMMANDS.copyLinkAddress,
       selector: LINK_SELECTOR,
       rank: 26
+    });
+    app.contextMenu.addItem({
+      command: COMMANDS.copyImage,
+      selector: IMAGE_SELECTOR,
+      rank: 27
     });
     PANEL_ORDER.forEach((state, index) => {
       app.contextMenu.addItem({

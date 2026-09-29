@@ -18,6 +18,7 @@ import {
   copyIcon,
   deleteIcon,
   editIcon,
+  imageIcon,
   LabIcon,
   linkIcon,
   listIcon,
@@ -139,6 +140,9 @@ export const COPY_ICON: LabIcon = copyIcon;
 
 /** Copying the address of a link, in JupyterLab's own link icon. */
 export const LINK_ICON: LabIcon = linkIcon;
+
+/** Copying a picture, in JupyterLab's own image icon. */
+export const IMAGE_ICON: LabIcon = imageIcon;
 
 /** The icon of the entry that puts the panel in each state. */
 export const PANEL_ICONS: Record<PanelState, LabIcon> = {

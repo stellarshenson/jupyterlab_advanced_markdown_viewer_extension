@@ -2,6 +2,14 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.25] - 2026-09-29
+
+A picture in the preview can be copied again from the context menu.
+
+### Added
+
+- **Copy image** in the context menu of a picture in the preview puts the picture on the clipboard as PNG, at the size of its file, ready to paste into an email or a document. JupyterLab's own context menu had taken the browser's Copy image away. The entry is not offered on a picture from another website; Shift and right-click opens the browser's own menu, which copies it
+
 ## [1.0.24] - 2026-09-28
 
 A comment of several lines no longer shows on the page, and an AI assistant can now mark, comment and watch through a skill in the repository.
