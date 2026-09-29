@@ -322,3 +322,42 @@ test('ACC-COPY-198 copies a picture as PNG at the size of its file', async ({
   await expect(entry(page, 'Copy image')).toHaveCount(0);
   await closeMenus(page);
 });
+
+test('DEF-COPY-126 offers no Copy image on an SVG picture or a drawn diagram', async ({
+  page,
+  tmpPath
+}) => {
+  await page.contents.uploadContent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="40" height="30" fill="#4682b4"/></svg>',
+    'text',
+    `${tmpPath}/chart.svg`
+  );
+  const target = `${tmpPath}/${FILE}`;
+  await page.contents.uploadContent(
+    '# Pictures\n\n![chart](chart.svg)\n\n```mermaid\ngraph TD\n  A --> B\n```\n\nPlain words here.\n',
+    'text',
+    target
+  );
+  await openPreview(page, target, 'Plain words here.');
+  const root = page.locator('.jp-RenderedMarkdown:visible');
+
+  for (const picture of [
+    root.locator('img[alt="chart"]'),
+    root.locator('.jp-RenderedMermaid img')
+  ]) {
+    await expect
+      .poll(() =>
+        picture.evaluate((image: HTMLImageElement) => image.naturalWidth)
+      )
+      .toBeGreaterThan(0);
+    const box = await picture.boundingBox();
+    await openMenu(page, {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2
+    });
+    // The menu is the preview's own, and it keeps the entry as a hidden item.
+    await expect(entry(page, 'Copy Content')).toBeVisible();
+    await expect(entry(page, 'Copy image')).toBeHidden();
+    await closeMenus(page);
+  }
+});

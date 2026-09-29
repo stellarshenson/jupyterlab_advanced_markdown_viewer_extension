@@ -21,7 +21,7 @@ See the changes an AI agent, or any other program, makes to a Markdown file as i
 - **Notes are stored in the file** - as HTML comments that other Markdown renderers do not show; a note line an agent adds appears in the thread
 - **Copy the document, or one passage of it, for an email** - **Copy Content** in the preview's context menu puts the selected passage on the clipboard as basic HTML, or the whole rendered document when nothing is selected, without the theme's colours, the marks' paint or any styling
 - **Copy the address of a link** - **Copy link address** in the context menu of a link puts the address the link opens on the clipboard
-- **Copy a picture** - **Copy image** in the context menu of a picture puts the picture on the clipboard, ready to paste into an email or a document
+- **Copy a picture** - **Copy image** in the context menu of a PNG, JPEG or other raster picture puts the picture on the clipboard, ready to paste into an email or a document
 
 ## Screenshots
 
@@ -44,7 +44,7 @@ Notes beside the preview: a note on the whole document, then three marked passag
 - Click a row in the panel to reveal its passage and open its thread; click the row's top line, or press Enter on the row, to close it again. The eye and the trash at the right of the top line act on the whole mark: the eye shows whether the mark is visible or hidden, and pressing it closes the mark, which hides it until the panel's Show hidden control lists it. The first entry is the comment, every entry after it a reply, listed one after another; each carries an edit icon and an x that deletes it, both shown while the pointer is on the note. The colour swatch at the left of a row rolls the other colours down: pick one to recolour the mark. The caret at the header's left edge collapses the panel to a strip of ticks, the cross hides it. With the panel hidden, the notes badge at the top right of the preview brings it back. Where a change from disk has taken a marked passage away, the row says unanchored and a thin bar stands in the preview at the place the mark began, so you can still see where the note belongs
 - Right-click the preview and choose **Copy Content** to put the selected passage on the clipboard as basic HTML, or the whole rendered document when nothing is selected: headings, lists, tables, links and code, with no colours or styling, ready to paste into an email. A selected table row keeps the table its cells sit in, and a selected fenced block keeps the line breaks of its program. The same entry is in the command palette
 - Right-click a link in the preview and choose **Copy link address**. A link to another file gives that file's address on the server, and the paragraph mark beside a hovered heading gives the address of that heading
-- Right-click a picture in the preview and choose **Copy image** to put it on the clipboard at the size of its file. The entry is not offered on a picture from another website; hold Shift while you right-click to get the browser's own menu, which copies it
+- Right-click a picture in the preview and choose **Copy image** to put it on the clipboard at the size of its file. The entry is not offered on an SVG picture or a drawn Mermaid diagram, which `jupyterlab_export_svg_as_png_extension` copies and saves as PNG, nor on a picture from another website; hold Shift while you right-click to get the browser's own menu, which copies it
 
 ## Agent skill
 

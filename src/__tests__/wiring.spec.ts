@@ -1416,6 +1416,26 @@ describe('the plugin', () => {
       }
     });
 
+    it('offers Copy image on raster pictures only, not on an SVG or a drawn diagram (DEF-COPY-126)', async () => {
+      const lab = await start(SOURCE);
+      // An SVG file, the same with its extension in capitals, the picture
+      // JupyterLab draws a mermaid fence into, then two raster pictures.
+      lab.widget.render(
+        '<p><img src="/files/chart.svg?_xsrf=1"> <img src="/files/CHART.SVG"> ' +
+          '<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E"> ' +
+          '<img src="data:image/png;base64,iVBORw0KGgo="> <img src="/files/photo.png"></p>'
+      );
+      const images = Array.from(lab.widget.rendered.querySelectorAll('img'));
+      for (const image of images) {
+        Object.defineProperty(image, 'naturalWidth', { value: 40 });
+      }
+      const offered = images.map(image => {
+        lab.openedOver(image);
+        return lab.commands.isVisible(COMMANDS.copyImage);
+      });
+      expect(offered).toEqual([false, false, false, true, true]);
+    });
+
     it('copies the rendered document as basic HTML and as text (ACC-COPY-160)', async () => {
       const lab = await start(MARKED);
       lab.widget.render(MARKED_HTML);

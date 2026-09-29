@@ -2,6 +2,14 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.27] - 2026-09-29
+
+Copy image is offered on raster pictures only.
+
+### Fixed
+
+- **Copy image** was offered on an SVG picture and on a drawn Mermaid diagram, beside **Copy as PNG** and **Save as PNG** of `jupyterlab_export_svg_as_png_extension`, which serve those. It is now offered on PNG, JPEG and other raster pictures only
+
 ## [1.0.26] - 2026-09-29
 
 A comment on a Mermaid diagram is marked as one in the notes panel.

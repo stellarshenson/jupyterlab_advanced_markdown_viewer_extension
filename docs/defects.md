@@ -1088,3 +1088,11 @@ Defects of the Copy Content command, which puts rendered Markdown on the clipboa
   - root-cause: 2026-09-14T01:36:17Z @kj src/notes.ts:1079 restores the selection only when the focus is on the document body or the viewer content node, and an open Lumino menu holds the focus itself until the moment it runs the command
   - log: 2026-09-14T01:36:17Z @kj added
   - log: 2026-09-14T02:06:58Z @kj closed
+- [x] `DEF-COPY-126` **Copy image on SVG pictures and diagrams** - MEDIUM; Copy image is offered on an SVG picture and on a drawn Mermaid diagram, beside Copy as PNG and Save as PNG of jupyterlab_export_svg_as_png_extension, which serve those; Copy image belongs to raster pictures only
+  - test-tags: UNIT, E2E
+  - evidence: copiesAsImage in src/image.ts refuses data:image/svg+xml and paths ending .svg; jest DEF-COPY-126 case fails on two mutants, jest 995 of 995 (logs/jest-126-full.log); Galata 'DEF-COPY-126 offers no Copy image on an SVG picture or a drawn diagram', copy.spec.ts 6 passed (logs/galata-126-copy.log); lint 0
+  - repro: preview a file holding ![c](chart.svg) and a mermaid fence; right-click each: Copy image is listed
+  - root-cause: 2026-09-29T19:23:31Z @kj copiesAsImage in src/image.ts accepts any loaded picture on the lab's origin or a data address; a .svg file and the data:image/svg+xml image @jupyterlab/mermaid draws both pass
+  - log: 2026-09-29T19:23:31Z @kj added
+  - log: 2026-09-29T19:28:17Z @kj closed
+  - log: 2026-09-29T19:28:24Z @kj edited test-tags added "UNIT, E2E"
