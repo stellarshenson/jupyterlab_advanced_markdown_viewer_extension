@@ -2,6 +2,14 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.28] - 2026-09-29
+
+The agent skill is installed with the package.
+
+### Fixed
+
+- `pip install` gave no copy of the agent skill. The wheel now installs it to `share/jupyter/agents/skills/jupyterlab-advanced-markdown-viewer-extension` in the Python environment, and the README gives the line that links it from there into `~/.agents/skills`, beside the line for a clone
+
 ## [1.0.27] - 2026-09-29
 
 Copy image is offered on raster pictures only.

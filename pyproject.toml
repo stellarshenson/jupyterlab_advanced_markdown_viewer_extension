@@ -69,6 +69,7 @@ exclude = [".github", "binder"]
 "jupyterlab_advanced_markdown_viewer_extension/labextension" = "share/jupyter/labextensions/jupyterlab_advanced_markdown_viewer_extension"
 "install.json" = "share/jupyter/labextensions/jupyterlab_advanced_markdown_viewer_extension/install.json"
 "jupyter-config/server-config" = "etc/jupyter/jupyter_server_config.d"
+".agents/skills/jupyterlab-advanced-markdown-viewer-extension" = "share/jupyter/agents/skills/jupyterlab-advanced-markdown-viewer-extension"
 
 [tool.hatch.build.hooks.version]
 path = "jupyterlab_advanced_markdown_viewer_extension/_version.py"

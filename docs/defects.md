@@ -968,6 +968,14 @@ Marks, note lines and the notes panel
   - root-cause: 2026-09-28T16:21:00Z @kj the command named a fixed handle; ln -s without mkdir -p and -fn
   - log: 2026-09-28T16:21:00Z @kj added
   - log: 2026-09-28T16:21:09Z @kj closed: fixed: --me <handle>; mkdir -p ~/.claude/skills && ln -sfn
+- [x] `DEF-NOTES-127` **Agent skill missing from the wheel** - MEDIUM; pip install gives no copy of the agent skill: the wheel carries neither SKILL.md nor scripts/watch-marks.py, so a user without a clone has nothing to link, and the README says the skill is not in the installed package
+  - test-tags: UNIT
+  - evidence: pyproject.toml shared-data maps .agents/skills/jupyterlab-advanced-markdown-viewer-extension to share/jupyter/agents/skills; wheel 1.0.28 holds SKILL.md and scripts/watch-marks.py only; test_skill_installed.py fails before install and on a changed installed copy, pytest 43 (logs/pytest-127.log); README pip link line run twice in a scratch HOME resolves to SKILL.md
+  - repro: pip install the 1.0.27 wheel; ls <sys.prefix>/share/jupyter/agents/skills: no such directory
+  - root-cause: 2026-09-29T20:02:15Z @kj pyproject.toml [tool.hatch.build.targets.wheel.shared-data] maps the labextension and the server config only; the skill was packaged by the earlier jupyterlab-extension rule, which kept skills out of the wheel
+  - log: 2026-09-29T20:02:15Z @kj added
+  - log: 2026-09-29T20:04:23Z @kj closed; reason: names the entry, the wheel check, the test and the README check
+  - log: 2026-09-29T20:04:23Z @kj edited test-tags added "UNIT"
 
 ## Change detection `DETECT`
 
