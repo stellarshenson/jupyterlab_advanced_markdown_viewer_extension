@@ -41,6 +41,7 @@ import {
   MINIMAP_CLASS,
   NotesPanel,
   PASSAGE_CLASS,
+  DIAGRAM_ICON_CLASS,
   PASSAGE_LIMIT,
   ROW_CLASS,
   ROW_CLOSED_CLASS,
@@ -114,6 +115,7 @@ function item(
     mark: mark(id),
     passage,
     anchored: true,
+    diagram: false,
     position: 0.5,
     ...over
   };
@@ -1695,6 +1697,24 @@ describe('writing a note', () => {
     // The control the chain used to end on is still there, and skipped.
     expect(hide.tagName).toBe('BUTTON');
     expect(document.activeElement).not.toBe(hide);
+  });
+
+  it('puts the Mermaid icon before the passage text on the row of a diagram (ACC-NOTES-199)', () => {
+    panel.setMarks([
+      item('a', 'graph TD A --> B', { diagram: true }),
+      item('b', 'plain words')
+    ]);
+    const [diagram, words] = rows();
+    const passage = diagram.querySelector(`.${PASSAGE_CLASS}`)!;
+    const icon = passage.firstElementChild as HTMLElement;
+    expect(icon.className).toBe(DIAGRAM_ICON_CLASS);
+    expect(icon.querySelector('svg')).not.toBeNull();
+    expect(icon.getAttribute('role')).toBe('img');
+    expect(icon.getAttribute('aria-label')).toBe('diagram');
+    // The passage text follows the icon as it stood before.
+    expect(passage.textContent).toBe('graph TD A --> B');
+    expect(passage.lastChild!.nodeType).toBe(Node.TEXT_NODE);
+    expect(words.querySelector(`.${DIAGRAM_ICON_CLASS}`)).toBeNull();
   });
 
   it('draws a document note with the word Document and no swatch wherever it is handed', () => {

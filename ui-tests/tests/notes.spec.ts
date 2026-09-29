@@ -5244,6 +5244,32 @@ test.describe('a note on a drawn diagram (ACC-NOTES-182)', () => {
     );
   });
 
+  test('ACC-NOTES-199 starts the row of a diagram with the Mermaid icon', async ({
+    page
+  }) => {
+    const box = (await picture(page).boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.locator('.jp-AdvancedMd-selecting')).toHaveCount(1);
+    await page.keyboard.press('Control+Shift+M');
+    await mark(page, 'cherries');
+    await expect(rows(page)).toHaveCount(2);
+
+    // The icon comes first, then the passage text as it stood before.
+    const diagram = rows(page).first().locator('.jp-AdvancedMd-notesPassage');
+    await expect(
+      diagram.locator('.jp-AdvancedMd-notesDiagram svg')
+    ).toBeVisible();
+    await expect(diagram).toHaveText(/^graph TD/);
+    expect(
+      await diagram.evaluate(
+        (node: HTMLElement) => (node.firstChild as HTMLElement).className
+      )
+    ).toBe('jp-AdvancedMd-notesDiagram');
+    await expect(
+      rows(page).nth(1).locator('.jp-AdvancedMd-notesDiagram')
+    ).toHaveCount(0);
+  });
+
   test('keeps a diagram inside a callout in its quote, still drawing', async ({
     page,
     tmpPath

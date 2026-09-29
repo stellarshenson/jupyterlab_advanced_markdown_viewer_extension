@@ -22,6 +22,7 @@ import {
   LabIcon,
   linkIcon,
   listIcon,
+  mermaidIcon,
   paletteIcon,
   tableRowsIcon
 } from '@jupyterlab/ui-components';
@@ -143,6 +144,9 @@ export const LINK_ICON: LabIcon = linkIcon;
 
 /** Copying a picture, in JupyterLab's own image icon. */
 export const IMAGE_ICON: LabIcon = imageIcon;
+
+/** Before the passage text of a mark on a drawn diagram, in JupyterLab's Mermaid icon. */
+export const DIAGRAM_ICON: LabIcon = mermaidIcon;
 
 /** The icon of the entry that puts the panel in each state. */
 export const PANEL_ICONS: Record<PanelState, LabIcon> = {

@@ -875,6 +875,19 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   text-overflow: ellipsis;
 }
 
+/* The icon before the passage text of a mark on a diagram (ACC-NOTES-199). */
+.jp-AdvancedMd-notesDiagram {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: text-bottom;
+}
+
+.jp-AdvancedMd-notesDiagram svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
 .jp-AdvancedMd-notesState {
   color: var(--jp-ui-font-color2);
   font-size: var(--jp-ui-font-size0);

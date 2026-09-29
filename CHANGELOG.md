@@ -2,6 +2,14 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.26] - 2026-09-29
+
+A comment on a Mermaid diagram is marked as one in the notes panel.
+
+### Added
+
+- The notes panel row of a comment on a Mermaid diagram starts with the Mermaid icon, then shows the passage text as before, so the row says it stands for a diagram. A screen reader reads the icon as diagram
+
 ## [1.0.25] - 2026-09-29
 
 A picture in the preview can be copied again from the context menu.

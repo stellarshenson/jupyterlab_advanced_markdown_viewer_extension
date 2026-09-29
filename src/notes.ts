@@ -174,6 +174,8 @@ export interface INotesSettings {
 export interface IListedMark extends IMark {
   /** The marked text, empty when the mark has no passage any more. */
   text: string;
+  /** Whether the passage holds a mermaid fence (ACC-NOTES-199). */
+  diagram: boolean;
   /** Where the mark sits in the document, 0 at the start and 1 at the end. */
   position: number;
   /**
@@ -553,6 +555,33 @@ function imageText(passage: ISpan, scan: ISourceScan, source: string): string {
   const path = target ? target[1].split(/[?#]/)[0] : '';
   const name = path.split('/').pop() ?? '';
   return name ? `image ${name}` : 'image';
+}
+
+/**
+ * The opening line of a mermaid fence: the quote markers, indentation and
+ * bullet the line may carry, the fence, then the language word alone.
+ */
+const MERMAID_FENCE = /^[^\n`~]*?(?:`{3,}|~{3,})[ \t]*mermaid(?:\s|$)/;
+
+/**
+ * Whether a passage holds a mermaid fence, which JupyterLab draws as a
+ * diagram (ACC-NOTES-199). A fenced block's span starts at its opening line.
+ */
+function onDiagram(
+  passage: ISpan | null,
+  scan: ISourceScan,
+  source: string
+): boolean {
+  return (
+    !!passage &&
+    scan.protectedSpans.some(
+      span =>
+        span.kind === 'code-block' &&
+        span.end > passage.start &&
+        span.start < passage.end &&
+        MERMAID_FENCE.test(source.slice(span.start, span.end))
+    )
+  );
 }
 
 /**
@@ -2059,6 +2088,7 @@ export class NotesController implements IDisposable {
     return {
       ...mark,
       text: passageText(mark.passage, scan, source),
+      diagram: onDiagram(mark.passage, scan, source),
       position: mark.open ? mark.open.start / Math.max(source.length, 1) : 0,
       unanchored:
         mark.type === DOCUMENT_TYPE

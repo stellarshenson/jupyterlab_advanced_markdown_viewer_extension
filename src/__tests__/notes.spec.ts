@@ -825,6 +825,28 @@ describe('NotesController', () => {
       expect(figure.dataset.mark).toBe(ONE);
     });
 
+    it('lists a mark around a mermaid fence as on a diagram, and no other (ACC-NOTES-199)', async () => {
+      const h = open(diagramMarked());
+      await ready();
+      h.render(DIAGRAM_HTML);
+      expect(h.controller.marks.map(mark => mark.diagram)).toEqual([true]);
+
+      // The same fence in another language is drawn as code.
+      const code = open(diagramMarked().replace('```mermaid', '```text'));
+      await ready();
+      code.render(
+        '<p>Alpha beta.</p><pre><code>graph TD\n  A[Start] --&gt; B[End]</code></pre><p>Gamma delta.</p>'
+      );
+      expect(code.controller.marks.map(mark => mark.diagram)).toEqual([false]);
+
+      const words = open(
+        `Alpha <!-- mark:${ONE} note colour=yellow -->beta<!-- /mark:${ONE} --> gamma.\n`
+      );
+      await ready();
+      words.render('<p>Alpha beta gamma.</p>');
+      expect(words.controller.marks.map(mark => mark.diagram)).toEqual([false]);
+    });
+
     it('carries the note of the mark on the figure, as a passage carries it', async () => {
       const h = open(
         diagramMarked(
@@ -2498,6 +2520,7 @@ describe('NotesController', () => {
             mark,
             passage: mark.text,
             anchored: !mark.unanchored,
+            diagram: mark.diagram,
             position: mark.position
           }))
         );

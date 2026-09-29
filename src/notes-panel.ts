@@ -23,6 +23,7 @@ import {
   CROSSED_EYE_ICON,
   COLLAPSE_ICON,
   DELETE_NOTE_ICON,
+  DIAGRAM_ICON,
   EXPAND_ICON,
   NOTE_ICON,
   PANEL_ICONS,
@@ -108,6 +109,9 @@ export const CLOSE_MARK_CLASS = 'jp-AdvancedMd-notesCloseMark';
 
 /** Class on the word a document note's row shows in place of a passage. */
 export const DOCUMENT_CLASS = 'jp-AdvancedMd-notesDocument';
+
+/** Class on the icon before the passage text of a mark on a diagram. */
+export const DIAGRAM_ICON_CLASS = 'jp-AdvancedMd-notesDiagram';
 
 /**
  * Class on the notes badge over the preview, and the class it carries while
@@ -212,6 +216,8 @@ export interface INotesPanelItem {
   passage: string;
   /** Whether the passage was found in the rendered view. */
   anchored: boolean;
+  /** Whether the passage holds a mermaid fence (ACC-NOTES-199). */
+  diagram: boolean;
   /** Where the mark sits in the document, from 0 at the top to 1 at the end. */
   position: number;
 }
@@ -1087,7 +1093,17 @@ export class NotesPanel extends Widget {
       swatch.setAttribute('role', 'img');
       swatch.setAttribute('aria-label', mark.colour);
       head.appendChild(known(mark) ? this._colour(mark, swatch) : swatch);
-      passage.textContent = shorten(item.passage);
+      // The text of a diagram's passage is its fence source, which the page
+      // never shows: the icon says what the row stands for (ACC-NOTES-199).
+      if (item.diagram) {
+        const icon = document.createElement('span');
+        icon.className = DIAGRAM_ICON_CLASS;
+        icon.setAttribute('role', 'img');
+        icon.setAttribute('aria-label', this._trans.__('diagram'));
+        DIAGRAM_ICON.element({ container: icon, tag: 'span' });
+        passage.appendChild(icon);
+      }
+      passage.append(shorten(item.passage));
     }
     head.appendChild(passage);
     if (open && known(mark)) {

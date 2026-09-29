@@ -339,6 +339,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
             mark,
             passage: mark.text,
             anchored: !mark.unanchored,
+            diagram: mark.diagram,
             position: mark.position
           }))
         );
