@@ -50,8 +50,10 @@ import {
   QUIET_MS,
   TAB_ACTIVE_CLASS,
   TAB_BLOCKED_CLASS,
+  TAB_FRAME_CLASS_PREFIX,
   TAB_MISSING_CLASS,
-  TAB_UPDATED_CLASS
+  TAB_UPDATED_CLASS,
+  frameFor
 } from '../controller';
 
 const watcherModule = jest.requireMock('../watcher') as { __instances: any[] };
@@ -267,9 +269,95 @@ describe('tab cue', () => {
     });
   });
 
+  describe('the speed of the updated marker', () => {
+    // ACC-CUE-200: each frame shows for the mean time between the latest
+    // changes, from 1 s down to 0.25 s.
+    const frameClasses = () =>
+      tabClasses().filter((name: string) =>
+        name.startsWith(TAB_FRAME_CLASS_PREFIX)
+      );
+
+    /** Changes the given number of milliseconds apart. */
+    const changesEvery = (gap: number, count: number) => {
+      for (let i = 0; i < count; i++) {
+        jest.advanceTimersByTime(gap);
+        applied();
+      }
+    };
+
+    it('turns at 1 s a frame for a single change and for a change a second', () => {
+      applied();
+      expect(tabClasses()).toContain(TAB_ACTIVE_CLASS);
+      expect(frameClasses()).toEqual([]);
+      changesEvery(1000, 4);
+      expect(tabClasses()).toContain(TAB_ACTIVE_CLASS);
+      expect(frameClasses()).toEqual([]);
+    });
+
+    it.each([
+      [750, 'jp-AdvancedMd-tabFrame750'],
+      [500, 'jp-AdvancedMd-tabFrame500'],
+      [250, 'jp-AdvancedMd-tabFrame250'],
+      [100, 'jp-AdvancedMd-tabFrame250']
+    ])('turns faster for changes %i ms apart', (gap, name) => {
+      changesEvery(gap, 5);
+      expect(frameClasses()).toEqual([name]);
+    });
+
+    it('takes the speed from the five latest changes', () => {
+      changesEvery(1000, 5);
+      changesEvery(250, 4);
+      expect(frameClasses()).toEqual(['jp-AdvancedMd-tabFrame250']);
+    });
+
+    it('goes back to 1 s a frame once the writer goes quiet, and measures the next burst afresh', () => {
+      changesEvery(250, 5);
+      jest.advanceTimersByTime(QUIET_MS);
+      expect(tabClasses()).toContain(TAB_UPDATED_CLASS);
+      expect(frameClasses()).toEqual([]);
+      applied();
+      expect(frameClasses()).toEqual([]);
+    });
+
+    it('drops the speed with the marker', () => {
+      changesEvery(250, 5);
+      watcher.blocked.emit('dirty');
+      expect(tabClasses()).toEqual([TAB_BLOCKED_CLASS]);
+    });
+
+    it('rounds the mean gap to a quarter second, between 0.25 s and 1 s', () => {
+      expect(frameFor([])).toBe(1000);
+      expect(frameFor([0])).toBe(1000);
+      expect(frameFor([0, 5000])).toBe(1000);
+      expect(frameFor([0, 870])).toBe(750);
+      expect(frameFor([0, 300, 600])).toBe(250);
+      expect(frameFor([0, 10])).toBe(250);
+    });
+  });
+
   describe('the stylesheet', () => {
     const markerRule = (className: string) =>
       ruleFor(`.lm-TabBar-tab.${className} .lm-TabBar-tabLabel::before`);
+
+    it('turns the arriving marker half a turn at a time, so it alternates two frames', () => {
+      // ACC-CUE-71. A full turn in two steps shows the circle at 0 and at
+      // 180 degrees, its filled half on the left and then on the right.
+      const updated = markerRule(TAB_UPDATED_CLASS);
+      expect(glyphOf(updated)).toBe('\\25D0');
+      expect(updated).toMatch(/jp-AdvancedMd-tab-turn 2s steps\(2, end\)/);
+      expect(stylesheet).toMatch(
+        /@keyframes jp-AdvancedMd-tab-turn \{\s*to \{\s*transform: rotate\(1turn\);/
+      );
+    });
+
+    it('gives each frame class a turn of two of its frames', () => {
+      // ACC-CUE-200. The base turn is 2 s, two frames of 1 s.
+      for (const frame of [750, 500, 250]) {
+        expect(markerRule(`${TAB_FRAME_CLASS_PREFIX}${frame}`)).toMatch(
+          new RegExp(`animation-duration: ${(2 * frame) / 1000}s;`)
+        );
+      }
+    });
 
     it('gives the missing marker a shape of its own that never moves', () => {
       const missing = markerRule(TAB_MISSING_CLASS);
@@ -323,12 +411,11 @@ describe('the settled marker at the shipped defaults', () => {
 
   it('stands on the tab for a fade duration of its own before it goes', () => {
     watcher.applied.emit(undefined);
-    // A change has just arrived, so the marker turns at the fast speed.
+    // A change has just arrived, so the tab says changes are arriving.
     expect(tabClasses()).toContain(TAB_ACTIVE_CLASS);
 
-    // The writer has gone quiet: the fast turn stops and the marker stays,
-    // which is the settled state ACC-CUE-71 asks to be tellable from the one
-    // above it.
+    // The writer has gone quiet: the tab stops saying so and the marker
+    // stays.
     jest.advanceTimersByTime(QUIET_MS);
     expect(tabClasses()).toContain(TAB_UPDATED_CLASS);
     expect(tabClasses()).not.toContain(TAB_ACTIVE_CLASS);

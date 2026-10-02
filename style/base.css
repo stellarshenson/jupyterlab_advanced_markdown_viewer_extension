@@ -198,23 +198,36 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
 }
 
 /*
- | Tab marker. A half-filled circle before the label, turning a quarter at a
- | time, so a tab with a change on it moves in the corner of the eye and says
- | so by motion rather than by a colour the reader has to be able to tell
- | apart. It takes the tab's own text colour, so the tab keeps whatever colour
- | another extension gave it, and the turn is faster while a writer is still
- | working than once it has gone quiet.
+ | Tab marker. A half-filled circle before the label, turning half a turn at
+ | a time, so its filled half swaps between left and right. A tab with a
+ | change on it moves in the corner of the eye and says so by motion rather
+ | than by a colour the reader has to be able to tell apart. It takes the
+ | tab's own text colour, so the tab keeps whatever colour another extension
+ | gave it.
+ |
+ | Each frame shows for 1 s. While changes arrive, a frame class from the
+ | controller shortens it to the mean time between them, down to 0.25 s, so
+ | the marker turns faster the more often the file changes (ACC-CUE-200). A
+ | turn is two frames, so each duration is twice the frame.
  */
 
 .lm-TabBar-tab.jp-AdvancedMd-tabUpdated .lm-TabBar-tabLabel::before {
   display: inline-block;
   margin-right: 5px;
   content: '\25D0';
-  animation: jp-AdvancedMd-tab-turn 2s steps(4, end) infinite;
+  animation: jp-AdvancedMd-tab-turn 2s steps(2, end) infinite;
 }
 
-.lm-TabBar-tab.jp-AdvancedMd-tabActive .lm-TabBar-tabLabel::before {
-  animation-duration: 0.8s;
+.lm-TabBar-tab.jp-AdvancedMd-tabFrame750 .lm-TabBar-tabLabel::before {
+  animation-duration: 1.5s;
+}
+
+.lm-TabBar-tab.jp-AdvancedMd-tabFrame500 .lm-TabBar-tabLabel::before {
+  animation-duration: 1s;
+}
+
+.lm-TabBar-tab.jp-AdvancedMd-tabFrame250 .lm-TabBar-tabLabel::before {
+  animation-duration: 0.5s;
 }
 
 /*

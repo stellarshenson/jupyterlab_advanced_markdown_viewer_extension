@@ -2,6 +2,16 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.29] - 2026-10-02
+
+The tab marker shows how often a file changes.
+
+### Changed
+
+- The marker on the tab of a changed file alternates two frames, ◐ and ◑, instead of turning through four
+- Its speed follows how often changes arrive: each frame shows for the mean time between the latest changes, from 1 s for a change a second or fewer down to 0.25 s for four or more a second, and goes back to 1 s once the file stops changing
+- The `test` extra lists `jupyterlab`, which the browser test server imports
+
 ## [1.0.28] - 2026-09-29
 
 The agent skill is installed with the package.

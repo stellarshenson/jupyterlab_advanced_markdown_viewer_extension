@@ -140,7 +140,7 @@ test.describe('the marker of a change that arrived', () => {
     expect(tooltip).toContain('changed on disk');
   });
 
-  test('turns a quarter at a time, faster while changes keep arriving', async ({
+  test('turns half a turn at a time, at 1 s a frame for a change a second', async ({
     page,
     tmpPath
   }) => {
@@ -160,14 +160,16 @@ test.describe('the marker of a change that arrived', () => {
       const turning = await markerStyle(page, UPDATED);
       expect(turning.content).toBe(CIRCLE);
       expect(turning.animationName).toBe('jp-AdvancedMd-tab-turn');
-      // A quarter of a turn at a time rather than a smooth spin.
-      expect(turning.timingFunction).toMatch(/steps\(4/);
-      expect(turning.animationDuration).toBe('0.8s');
+      // Half a turn at a time rather than a smooth spin: the circle
+      // alternates its filled half between left and right.
+      expect(turning.timingFunction).toMatch(/steps\(2/);
+      // ACC-CUE-200: a change a second is the slowest rate, two frames of 1 s.
+      expect(turning.animationDuration).toBe('2s');
       await expect(page.locator(`.lm-TabBar-tab.${ACTIVE}`)).toHaveCount(1);
       await page.waitForTimeout(1000);
     }
 
-    // The writer has gone quiet: the tab settles to the slower turn within a
+    // The writer has gone quiet: the tab stops saying changes arrive within a
     // few seconds and keeps the marker, which is still the reader's to clear.
     await expect(page.locator(`.lm-TabBar-tab.${ACTIVE}`)).toHaveCount(0, {
       timeout: 10000
@@ -175,6 +177,39 @@ test.describe('the marker of a change that arrived', () => {
     const settled = await markerStyle(page, UPDATED);
     expect(settled.content).toBe(CIRCLE);
     expect(settled.animationName).toBe('jp-AdvancedMd-tab-turn');
+    expect(settled.animationDuration).toBe('2s');
+  });
+
+  test('ACC-CUE-200 turns faster the more often the file changes', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+
+    // Writes 150 ms apart. The lab may take two of them in one read, so the
+    // gaps it sees are 150 to 300 ms: 0.25 s or 0.5 s a frame, never the 1 s
+    // of a change a second.
+    for (let i = 1; i <= 10; i++) {
+      await page.contents.uploadContent(
+        `${REWRITTEN}\nFast write ${i}.\n`,
+        'text',
+        path
+      );
+      await page.waitForTimeout(150);
+    }
+    await expect(page.locator(`.lm-TabBar-tab.${UPDATED}`)).toHaveClass(
+      /jp-AdvancedMd-tabFrame(250|500)\b/
+    );
+    const fast = await markerStyle(page, UPDATED);
+    expect(fast.content).toBe(CIRCLE);
+    expect(fast.animationDuration).toMatch(/^(0\.5|1)s$/);
+
+    // Quiet again: back to 1 s a frame, the marker kept.
+    await expect(page.locator(`.lm-TabBar-tab.${ACTIVE}`)).toHaveCount(0, {
+      timeout: 10000
+    });
+    const settled = await markerStyle(page, UPDATED);
+    expect(settled.content).toBe(CIRCLE);
     expect(settled.animationDuration).toBe('2s');
   });
 });
@@ -260,8 +295,8 @@ test.describe('the markers under reduced motion', () => {
       const turning = await markerStyle(page, UPDATED);
       expect(turning.content).toBe(CIRCLE);
       expect(turning.animationName).toBe('jp-AdvancedMd-tab-turn');
-      expect(turning.timingFunction).toMatch(/steps\(4/);
-      expect(turning.animationDuration).toBe('0.8s');
+      expect(turning.timingFunction).toMatch(/steps\(2/);
+      expect(turning.animationDuration).toMatch(/^(2|1\.5|1|0\.5)s$/);
     }
 
     await alsoGone(page, tmpPath);

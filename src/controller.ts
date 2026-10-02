@@ -58,9 +58,51 @@ export const TAB_MISSING_CLASS = 'jp-AdvancedMd-tabMissing';
  * Class marking a tab whose document is receiving changes right now.
  *
  * Set on every applied change and cleared after a quiet period, so the tab
- * icon animates while an external writer is at work and settles when it stops.
+ * says a writer is at work and settles when it stops. How fast the marker
+ * turns meanwhile is set by the frame class.
  */
 export const TAB_ACTIVE_CLASS = 'jp-AdvancedMd-tabActive';
+
+/**
+ * Prefix of the class that sets how fast the updated marker turns while
+ * changes arrive (ACC-CUE-200). The class names how long each of the two
+ * frames shows, in milliseconds: jp-AdvancedMd-tabFrame750, -500 or -250.
+ * The slowest frame is the stylesheet's own and needs no class.
+ */
+export const TAB_FRAME_CLASS_PREFIX = 'jp-AdvancedMd-tabFrame';
+
+/** The slowest frame of the updated marker, in milliseconds. */
+const SLOWEST_FRAME_MS = 1000;
+
+/** The fastest frame of the updated marker, in milliseconds. */
+const FASTEST_FRAME_MS = 250;
+
+/** The step between frame lengths, one for each frame class. */
+const FRAME_STEP_MS = 250;
+
+/** How many of the latest changes of a burst the marker speed is taken from. */
+const RATE_CHANGES = 5;
+
+/**
+ * How long each frame of the updated marker shows, from the times of the
+ * latest changes of a burst: the mean gap between them, rounded to a quarter
+ * second and held between the fastest and the slowest frame. A single change
+ * has no gap and turns at the slowest.
+ */
+export function frameFor(arrivals: number[]): number {
+  if (arrivals.length < 2) {
+    return SLOWEST_FRAME_MS;
+  }
+  const gap =
+    (arrivals[arrivals.length - 1] - arrivals[0]) / (arrivals.length - 1);
+  const rounded = Math.round(gap / FRAME_STEP_MS) * FRAME_STEP_MS;
+  return Math.min(SLOWEST_FRAME_MS, Math.max(FASTEST_FRAME_MS, rounded));
+}
+
+/** Whether a title class is one that only exists while changes arrive. */
+function isArrivalClass(name: string): boolean {
+  return name === TAB_ACTIVE_CLASS || name.startsWith(TAB_FRAME_CLASS_PREFIX);
+}
 
 /**
  * Tooltip for each marker, so the tab says in words which state it shows.
@@ -344,7 +386,8 @@ export class LiveViewController implements IDisposable {
     // follows later and is taken as a re-render of the same text.
     this._widget.content.update();
     if (this._settings.tabCue) {
-      this._setTabState(TAB_UPDATED_CLASS, true);
+      this._arrivals = [...this._arrivals, Date.now()].slice(-RATE_CHANGES);
+      this._setTabState(TAB_UPDATED_CLASS, frameFor(this._arrivals));
       this._resetQuietTimer();
       this._resetCueTimer();
     }
@@ -388,6 +431,7 @@ export class LiveViewController implements IDisposable {
     }
     this._quietTimer = window.setTimeout(() => {
       this._quietTimer = null;
+      this._arrivals = [];
       this._setActive(false);
     }, QUIET_MS);
   }
@@ -671,9 +715,13 @@ export class LiveViewController implements IDisposable {
    * reconciles rather than being overwritten.
    *
    * @param state - the marker class, or null to clear every marker
-   * @param active - whether the tab should also animate
+   * @param frame - while changes arrive, how long each frame of the marker
+   *   shows in milliseconds; null when none are arriving
    */
-  private _setTabState(state: string | null, active = false): void {
+  private _setTabState(
+    state: string | null,
+    frame: number | null = null
+  ): void {
     const title = this._widget.title;
     const classes = (title.className ?? '')
       .split(/\s+/)
@@ -683,13 +731,16 @@ export class LiveViewController implements IDisposable {
           name !== TAB_UPDATED_CLASS &&
           name !== TAB_BLOCKED_CLASS &&
           name !== TAB_MISSING_CLASS &&
-          name !== TAB_ACTIVE_CLASS
+          !isArrivalClass(name)
       );
     this._setCaption(state ? TAB_CAPTIONS[state] : undefined);
     if (state) {
       classes.push(state);
-      if (active) {
+      if (frame !== null) {
         classes.push(TAB_ACTIVE_CLASS);
+        if (frame < SLOWEST_FRAME_MS) {
+          classes.push(`${TAB_FRAME_CLASS_PREFIX}${frame}`);
+        }
       }
     }
     const next = classes.join(' ');
@@ -699,6 +750,7 @@ export class LiveViewController implements IDisposable {
     if (!state && this._quietTimer !== null) {
       window.clearTimeout(this._quietTimer);
       this._quietTimer = null;
+      this._arrivals = [];
     }
   }
 
@@ -763,7 +815,7 @@ export class LiveViewController implements IDisposable {
     const title = this._widget.title;
     const classes = (title.className ?? '')
       .split(/\s+/)
-      .filter(name => name && name !== TAB_ACTIVE_CLASS);
+      .filter(name => name && !isArrivalClass(name));
     if (active && classes.includes(TAB_UPDATED_CLASS)) {
       classes.push(TAB_ACTIVE_CLASS);
     }
@@ -785,6 +837,7 @@ export class LiveViewController implements IDisposable {
   private _fadeTimer: number | null = null;
   private _fadeEndsAt = 0;
   private _quietTimer: number | null = null;
+  private _arrivals: number[] = [];
   private _cueTimer: number | null = null;
   private _documentCaption: string | null = null;
   private _stateCaption: string | null = null;
