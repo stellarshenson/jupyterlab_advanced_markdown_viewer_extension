@@ -178,3 +178,6 @@ This journal tracks substantive work on documents, diagrams, and documentation c
 
 59. **Task [Short] - jupyterlab in the test extra** (v1.0.28): `/jupyterlab-extension` now requires the `test` extra to list every Python package a test imports; ships in the next release<br>
     **Result**: `ui-tests/jupyter_server_test_config.py` imports `jupyterlab.galata`, so `pyproject.toml` `test` gains `jupyterlab>=4.6,<5`, the installed 4.6.4 as the floor. The agent skill's own packaging already met every rule: wheel and sdist hold `SKILL.md` and `scripts/watch-marks.py`.
+
+60. **Task [Short] - Re-release with no content change** (v1.0.29): the Star Colonel invoked the release again on a clean tree; nothing changed since 1.0.29<br>
+    **Result**: `make publish` waited for a sibling session's `pip install --force-reinstall` of `jupyterlab_passkey_extension` to end: two such installs at once share `site-packages`, the likely cause of the `OSError` on a vanished `INSTALLER*.tmp` that stopped the first 1.0.29 publish on 2026-09-30.
