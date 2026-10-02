@@ -181,3 +181,6 @@ This journal tracks substantive work on documents, diagrams, and documentation c
 
 60. **Task [Short] - Re-release with no content change** (v1.0.29): the Star Colonel invoked the release again on a clean tree; nothing changed since 1.0.29<br>
     **Result**: `make publish` waited for a sibling session's `pip install --force-reinstall` of `jupyterlab_passkey_extension` to end: two such installs at once share `site-packages`, the likely cause of the `OSError` on a vanished `INSTALLER*.tmp` that stopped the first 1.0.29 publish on 2026-09-30.
+
+61. **Task [Short] - Second re-release with no content change** (v1.0.30): the Star Colonel invoked the release again on a clean tree, minutes after 1.0.30<br>
+    **Result**: The next version repeats 1.0.30, which repeats 1.0.29: no file changes but this journal, `CHANGELOG.md` and the version in `package.json`. No other session was installing into `site-packages` when `make publish` started.

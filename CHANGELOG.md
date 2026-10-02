@@ -2,6 +2,10 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.31] - 2026-10-02
+
+A rebuild of 1.0.30. Nothing in the extension changed.
+
 ## [1.0.30] - 2026-10-02
 
 A rebuild of 1.0.29. Nothing in the extension changed.
