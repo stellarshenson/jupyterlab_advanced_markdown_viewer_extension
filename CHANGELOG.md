@@ -2,6 +2,29 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.32] - 2026-10-13
+
+The tab shows changes nobody has looked at yet, and the preview reads and writes the file through the server extension.
+
+### Added
+
+- A star (✻) on the tab marks changes that arrived while the tab was behind another one and that nobody has looked at yet. It stays until the tab is brought to the front, and the tooltip of the tab names it
+- The preview reads the file through a route of the server extension, which waits until a write of the file has ended
+
+### Changed
+
+- The tab marker is two characters shown in turn. It moves only while changes arrive and stands still once the writer is quiet
+- A mark made while another program appends to the file is written in front of the appended text
+- The README names two limits of marking under a stream of writes: a program that keeps the file open while it writes has to open it for appending, and a file with mixed line endings can still raise the File Changed dialog
+
+### Fixed
+
+- The tab marker changed height between its two frames
+- A write made right after a preview opened was not shown until the next write
+- A preview could show an empty document while JupyterLab saved the file
+- A mark made during a stream of writes raised the File Changed dialog on a browser slower than the writer
+- A server whose root is a filesystem root, `/` or a drive root, served no document
+
 ## [1.0.31] - 2026-10-02
 
 A rebuild of 1.0.30. Nothing in the extension changed.
