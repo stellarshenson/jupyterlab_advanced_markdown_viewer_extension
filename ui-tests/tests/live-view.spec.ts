@@ -94,7 +94,9 @@ async function readDisk(page: any, path: string): Promise<string> {
 
 const previewScrollTop = (page: any): Promise<number> =>
   page.evaluate(
-    () => document.querySelector('.jp-RenderedMarkdown')?.scrollTop ?? -1
+    () =>
+      document.querySelector('.jp-MarkdownViewer .jp-RenderedMarkdown')
+        ?.scrollTop ?? -1
   );
 
 /**
@@ -150,11 +152,12 @@ test.describe('live preview with a long highlight', () => {
   }) => {
     await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
 
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A third paragraph appeared.',
-      { timeout: 20000 }
-    );
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText('oranges');
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('A third paragraph appeared.', { timeout: 20000 });
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('oranges');
   });
 
   test('highlights the text the change added', async ({ page, tmpPath }) => {
@@ -209,7 +212,8 @@ test.describe('live preview with a long highlight', () => {
     const countChildren = () =>
       page.evaluate(
         () =>
-          document.querySelector('.jp-RenderedMarkdown')?.children.length ?? -1
+          document.querySelector('.jp-MarkdownViewer .jp-RenderedMarkdown')
+            ?.children.length ?? -1
       );
     const before = await countChildren();
     expect(before).toBeGreaterThan(0);
@@ -266,12 +270,12 @@ test.describe('fading', () => {
       timeout: 20000
     });
     // The document itself is untouched by the decorations coming and going.
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A third paragraph appeared.'
-    );
-    await expect(page.locator('.jp-RenderedMarkdown')).not.toContainText(
-      'apples'
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('A third paragraph appeared.');
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).not.toContainText('apples');
   });
 });
 
@@ -288,10 +292,9 @@ test.describe('highlighting turned off', () => {
     await openPreview(page, `${tmpPath}/${FILE}`);
     await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
 
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A third paragraph appeared.',
-      { timeout: 20000 }
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('A third paragraph appeared.', { timeout: 20000 });
     await expect(page.locator('.jp-AdvancedMd-decoration')).toHaveCount(0);
     // The two settings are independent: the cue still says which document
     // moved when the highlighting is off.
@@ -314,10 +317,9 @@ test.describe('the tab cue turned off', () => {
     await openPreview(page, `${tmpPath}/${FILE}`);
     await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
 
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A third paragraph appeared.',
-      { timeout: 20000 }
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('A third paragraph appeared.', { timeout: 20000 });
     // The live update is unaffected: the change landed and is highlighted.
     await expect(
       page.locator('.jp-AdvancedMd-decoration').first()
@@ -347,9 +349,9 @@ test.describe('the extension turned off', () => {
     await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
 
     await page.waitForTimeout(6000);
-    await expect(page.locator('.jp-RenderedMarkdown')).not.toContainText(
-      'A third paragraph appeared.'
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).not.toContainText('A third paragraph appeared.');
   });
 });
 
@@ -371,10 +373,9 @@ test.describe('a document open in the editor as well', () => {
 
     // The change lands around the reader's text: both are in the document,
     // the preview shows the change, and the document stays unsaved.
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'oranges',
-      { timeout: 20000 }
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('oranges', { timeout: 20000 });
     const source = await page.evaluate(() => {
       const app = (window as any).jupyterapp;
       return app.shell.currentWidget?.context?.model?.toString?.() ?? '';
@@ -418,10 +419,9 @@ test.describe('a document open in the editor as well', () => {
     expect(before).toEqual({ line: 5, column: 12 });
 
     await page.contents.uploadContent(ABOVE, 'text', path);
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A preface line.',
-      { timeout: 20000 }
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('A preface line.', { timeout: 20000 });
     // Two lines went in above: the cursor is on the same text, two lines
     // down, and stays where the reader types.
     expect(await cursor()).toEqual({ line: 7, column: 12 });
@@ -440,15 +440,14 @@ test.describe('a document open in the editor as well', () => {
   }) => {
     const path = `${tmpPath}/${FILE}`;
     await page.contents.uploadContent(REWRITTEN, 'text', path);
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A third paragraph appeared.',
-      { timeout: 20000 }
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('A third paragraph appeared.', { timeout: 20000 });
 
     // The applied change marked the tab and drew decorations. The reader
     // takes the marker back by acting on the document, so from here on
     // anything on the tab or in the text came from the save.
-    await page.locator('.jp-RenderedMarkdown').click();
+    await page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown').click();
     await expect(
       page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
     ).toHaveCount(0);
@@ -503,9 +502,9 @@ test.describe('a document open in the editor as well', () => {
     // the marker of a change held back names the conflict.
     const blockedTab = page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked');
     await expect(blockedTab).toHaveCount(1, { timeout: 20000 });
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'Report, revised'
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('Report, revised');
     const source = await page.evaluate(() => {
       const app = (window as any).jupyterapp;
       return app.shell.currentWidget?.context?.model?.toString?.() ?? '';
@@ -518,7 +517,7 @@ test.describe('a document open in the editor as well', () => {
 
     // Looking at the preview does not make the conflict go away.
     await blockedTab.click();
-    await page.locator('.jp-RenderedMarkdown').click();
+    await page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown').click();
     await page.waitForTimeout(1500);
     await expect(blockedTab).toHaveCount(1);
 
@@ -587,10 +586,9 @@ test.describe('a document open in the editor as well', () => {
     await dialog.locator('button', { hasText: 'Reload' }).click();
     await expect(dialog).toHaveCount(0);
 
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A third paragraph appeared.',
-      { timeout: 10000 }
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('A third paragraph appeared.', { timeout: 10000 });
     // The document holds what the file holds: no marker and nothing unsaved.
     await expect(blockedTab).toHaveCount(0, { timeout: 10000 });
     await expect
@@ -610,10 +608,9 @@ test.describe('a document open in the editor as well', () => {
       'text',
       path
     );
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A fourth paragraph appeared.',
-      { timeout: 20000 }
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('A fourth paragraph appeared.', { timeout: 20000 });
     await expect(
       page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
     ).toHaveCount(1);
@@ -769,7 +766,7 @@ test.describe('the reader position', () => {
 
     // An in-document link sets the hash; the table-of-contents fix scrolls
     // to its heading, which shows it is watching this hash.
-    await page.locator('.jp-RenderedMarkdown').hover();
+    await page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown').hover();
     await page.mouse.wheel(0, 1500);
     await expect.poll(() => previewScrollTop(page)).toBeGreaterThan(500);
     await navigateToHash(page, '#Report');
@@ -949,10 +946,12 @@ test.describe('change animation', () => {
     // The fade is 30 s, so the ghost left by deletion, not by the fade: the
     // added text is still decorated.
     await expect(ghost).toHaveCount(0, { timeout: 20000 });
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText('oranges');
-    await expect(page.locator('.jp-RenderedMarkdown')).not.toContainText(
-      'apples'
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('oranges');
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).not.toContainText('apples');
     expect(await page.locator('.jp-AdvancedMd-added').count()).toBeGreaterThan(
       0
     );
@@ -1100,8 +1099,9 @@ const sampleFade = (
               }
               started = now;
             }
-            const last = document.querySelector('.jp-RenderedMarkdown')
-              ?.lastElementChild as HTMLElement | null;
+            const last = document.querySelector(
+              '.jp-MarkdownViewer .jp-RenderedMarkdown'
+            )?.lastElementChild as HTMLElement | null;
             samples.push({
               at: Math.round(now - (started as number)),
               bg: span ? getComputedStyle(span).backgroundColor : null,
@@ -1283,7 +1283,9 @@ const codeTokens = (
   page: any
 ): Promise<{ tokens: string[]; decorations: number }> =>
   page.evaluate(() => {
-    const code = document.querySelector('.jp-RenderedMarkdown pre code');
+    const code = document.querySelector(
+      '.jp-MarkdownViewer .jp-RenderedMarkdown pre code'
+    );
     const spans = Array.from(code?.querySelectorAll('span') ?? []);
     return {
       tokens: spans
@@ -1317,7 +1319,7 @@ test.describe('a change inside a fenced code block', () => {
     // is not asserted against here: the struck-out text the change replaced
     // stands in it for the whole fade, which this suite makes long.
     const added = page.locator(
-      '.jp-RenderedMarkdown pre code .jp-AdvancedMd-added'
+      '.jp-MarkdownViewer .jp-RenderedMarkdown pre code .jp-AdvancedMd-added'
     );
     await expect(added.first()).toBeVisible({ timeout: 20000 });
     // Both renders of the change are over: past the viewer's own 1000 ms
@@ -1338,7 +1340,7 @@ test.describe('a change inside a fenced code block', () => {
     // colour the renderer gave the text around it shows through it.
     const colours = await page.evaluate(() => {
       const span = document.querySelector(
-        '.jp-RenderedMarkdown pre code .jp-AdvancedMd-added'
+        '.jp-MarkdownViewer .jp-RenderedMarkdown pre code .jp-AdvancedMd-added'
       ) as HTMLElement;
       return {
         background: getComputedStyle(span).backgroundColor,

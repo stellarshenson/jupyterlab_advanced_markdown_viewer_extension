@@ -248,13 +248,16 @@ describe('mergeEdits', () => {
 });
 
 /**
- * The change channel, reduced to what the watcher uses: registrations and a
- * signal the test fires.
+ * The change channel, reduced to what the watcher uses: registrations, a
+ * signal the test fires, and a read route that answers for no path, as on a
+ * lab without the server extension, so the file is read through the contents
+ * API.
  */
 function makeChannel() {
   const channel: any = {
     register: jest.fn(),
-    release: jest.fn()
+    release: jest.fn(),
+    read: jest.fn(async (_path: string): Promise<unknown> => undefined)
   };
   channel.changed = new Signal(channel);
   return channel;
@@ -429,6 +432,40 @@ describe('FileWatcher', () => {
     expect(events).toEqual(['applied']);
   });
 
+  describe('where the server extension answers for the path (DEF-APPLY-131)', () => {
+    // The file as the server extension answers it: the whole of it.
+    const served = (content: string, hash: string) => ({
+      path: 'live.md',
+      name: 'live.md',
+      type: 'file',
+      hash,
+      last_modified: `t-${hash}`,
+      content
+    });
+
+    it('applies what the read route answers, and does not read the contents API', async () => {
+      // The contents API answers the file as it stands part way through a
+      // save by the server: empty.
+      fixture.write('', 'h-empty');
+      channel.read.mockResolvedValue(served('alpha beta\n', 'h1'));
+      const before = reads();
+      await change();
+      expect(channel.read).toHaveBeenLastCalledWith('live.md');
+      expect(reads()).toBe(before);
+      expect(fixture.source()).toBe('alpha beta\n');
+      expect(events).toEqual(['applied']);
+    });
+
+    it('reports a file the read route says is not there as missing', async () => {
+      channel.read.mockRejectedValue(new Error('404'));
+      const before = reads();
+      await change();
+      expect(reads()).toBe(before);
+      expect(fixture.source()).toBe('alpha\n');
+      expect(events).toEqual(['blocked:missing']);
+    });
+  });
+
   it('applies a change from disk and records the revision on the context', async () => {
     fixture.write('alpha beta\n', 'h1');
     await change();
@@ -457,10 +494,15 @@ describe('FileWatcher', () => {
 
   it('reads once more when an event arrives during a check', async () => {
     fixture.write('alpha beta\n', 'h1');
-    channel.changed.emit({ path: 'live.md', event: 'changed' });
-    fixture.write('alpha beta gamma\n', 'h2');
-    channel.changed.emit({ path: 'live.md', event: 'changed' });
-    await settle();
+    const read = fixture.contents.get.getMockImplementation()!;
+    fixture.contents.get.mockImplementationOnce(async path => {
+      const first = await read(path);
+      // The second write and its event arrive while this read is on its way.
+      fixture.write('alpha beta gamma\n', 'h2');
+      channel.changed.emit({ path: 'live.md', event: 'changed' });
+      return first;
+    });
+    await change();
     expect(reads()).toBe(3);
     expect(fixture.source()).toBe('alpha beta gamma\n');
     expect(events).toEqual(['applied', 'applied']);
@@ -833,13 +875,14 @@ describe('FileWatcher', () => {
     expect(channel.register).toHaveBeenLastCalledWith('moved.md');
   });
 
-  it('releases the path while disabled and registers it again when enabled', () => {
+  it('releases the path while disabled and registers it again when enabled', async () => {
     watcher.enabled = false;
     expect(channel.release).toHaveBeenCalledWith('live.md');
-    channel.changed.emit({ path: 'live.md', event: 'changed' });
+    await change();
     expect(reads()).toBe(1);
     watcher.enabled = true;
     expect(channel.register).toHaveBeenCalledTimes(2);
+    await settle();
     expect(reads()).toBe(2);
   });
 

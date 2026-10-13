@@ -14,12 +14,12 @@
  */
 
 import { URLExt } from '@jupyterlab/coreutils';
-import { ServerConnection } from '@jupyterlab/services';
+import { Contents, ServerConnection } from '@jupyterlab/services';
 import { IDisposable } from '@lumino/disposable';
 import { Poll } from '@lumino/polling';
 import { ISignal, Signal } from '@lumino/signaling';
 
-import { requestAPI } from './request';
+import { fetchAPI, requestAPI } from './request';
 import { EXTERNAL_ORIGIN } from './watcher';
 
 /**
@@ -82,7 +82,8 @@ function sameStat(a: IStat | null, b: IStat | null): boolean {
  * stat, so a moved stat that event already carried is not reported twice.
  * `connection` is the connection the stat was taken on. `silent` is the timer
  * running while a change the stat found waits for the event that may still be
- * on its way.
+ * on its way. `confirmed` says the server has confirmed this registration,
+ * and that the one check a confirmation asks for has been asked for.
  */
 interface IPathState {
   count: number;
@@ -90,6 +91,7 @@ interface IPathState {
   eventConnection: number;
   connection: number;
   silent: ReturnType<typeof setTimeout> | null;
+  confirmed: boolean;
 }
 
 /**
@@ -130,7 +132,9 @@ export class ChangeChannel implements IDisposable {
   }
 
   /**
-   * Emitted when a registered file changed or disappeared on disk.
+   * Emitted when a registered file changed or disappeared on disk. Also
+   * emitted with no change known, to ask for one read of the file: when the
+   * server first confirms a registration and at a path's first stat.
    */
   get changed(): ISignal<this, IChange> {
     return this._changed;
@@ -164,7 +168,8 @@ export class ChangeChannel implements IDisposable {
       stat: undefined,
       eventConnection: 0,
       connection: 0,
-      silent: null
+      silent: null,
+      confirmed: false
     });
     if (this._mode === 'idle') {
       this._mode = 'starting';
@@ -310,10 +315,19 @@ export class ChangeChannel implements IDisposable {
   }
 
   private _onMessage(event: MessageEvent): void {
-    let message: { type?: string; path?: string; event?: string };
+    let message: {
+      type?: string;
+      path?: string;
+      event?: string;
+      paths?: unknown;
+    };
     try {
       message = JSON.parse(String(event.data));
     } catch {
+      return;
+    }
+    if (message.type === 'registered') {
+      this._onRegistered(Array.isArray(message.paths) ? message.paths : []);
       return;
     }
     if (message.type !== 'change' || typeof message.path !== 'string') {
@@ -337,6 +351,33 @@ export class ChangeChannel implements IDisposable {
     });
   }
 
+  /**
+   * The server confirms registrations: where it could set the watch, it
+   * watches those paths from now on and reports every write made to them
+   * after this message.
+   *
+   * A document's watcher reads the file when it registers, which is before
+   * the registration reaches the server: a status request and the socket
+   * come first on a lab that has just started, and one message on a standing
+   * connection. A write made in between raises no event, and the path's
+   * first reading can be a whole fallback interval after the registration on
+   * a standing connection (DEF-DETECT-129). One check asked for here reads
+   * the file at once, after the server began to watch it. A registration is
+   * confirmed again on
+   * every reconnect; the stat made there finds what moved during the gap, so
+   * only the first confirmation asks.
+   */
+  private _onRegistered(paths: unknown[]): void {
+    for (const path of paths) {
+      const state =
+        typeof path === 'string' ? this._paths.get(path) : undefined;
+      if (state && !state.confirmed) {
+        state.confirmed = true;
+        this._changed.emit({ path: path as string, event: 'changed' });
+      }
+    }
+  }
+
   private _send(message: { type: string; paths: string[] }): void {
     if (this._ws && this._open && message.paths.length) {
       this._ws.send(JSON.stringify(message));
@@ -353,6 +394,43 @@ export class ChangeChannel implements IDisposable {
     return this._serverAbsent
       ? this._statContents(paths)
       : this._statBatched(paths);
+  }
+
+  /**
+   * Read a document through the server extension, which answers once the
+   * server itself is not writing the file.
+   *
+   * A save through the contents API empties the file and writes it
+   * afterwards, and so does a mark written through this extension; the
+   * contents API answers an empty file for a read made between the two
+   * (DEF-APPLY-131). `undefined` where the server extension does not answer
+   * for the path - it is absent, it has no read route, its route failed, or
+   * the path names another drive - and the caller reads through the contents
+   * API. Rejects for a file that is not there.
+   */
+  async read(path: string): Promise<Contents.IModel | undefined> {
+    if (this._serverAbsent || this._readAbsent) {
+      return undefined;
+    }
+    const { response, data } = await fetchAPI(
+      `read${URLExt.objectToQueryString({ path })}`,
+      this._settings
+    );
+    if (response.status === 404 && typeof data === 'string') {
+      // No such route: the 404 carries the server's own page, where the
+      // route's 404 for a file that is not there carries JSON. The server
+      // extension is absent, or the server still runs the release before
+      // this route, as it does until it is restarted after an upgrade the
+      // browser has already loaded. Remembered for the session.
+      this._readAbsent = true;
+      return undefined;
+    }
+    if (response.status === 404) {
+      throw new ServerConnection.ResponseError(response);
+    }
+    // Any other failure of the route carries no model, and what the reader
+    // is told is left to the read through the contents API.
+    return data.model;
   }
 
   /**
@@ -393,6 +471,13 @@ export class ChangeChannel implements IDisposable {
           // this reading has just taken as the baseline, so it must not also
           // consume the change the reading after this one finds.
           state.eventConnection = 0;
+          // The baseline may hold a write made after the last read of the
+          // file, which no later reading would differ from (DEF-DETECT-129):
+          // one check now reads it. A confirmation does not cover that
+          // write where the filesystem raises no events or the server could
+          // not set the watch, so the check is asked for on a standing
+          // connection too.
+          this._changed.emit({ path, event: 'changed' });
           continue;
         }
       } else if (sameStat(previous, next)) {
@@ -545,6 +630,7 @@ export class ChangeChannel implements IDisposable {
   private _mode: 'idle' | 'starting' | 'events' | 'poll' = 'idle';
   private _intervalMs = DEFAULT_INTERVAL_MS;
   private _serverAbsent = false;
+  private _readAbsent = false;
   private _ws: WebSocket | null = null;
   private _open = false;
   private _connection = 0;

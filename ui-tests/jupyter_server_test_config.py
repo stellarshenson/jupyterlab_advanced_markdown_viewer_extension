@@ -18,5 +18,11 @@ c.ServerApp.port = int(os.environ.get("JUPYTER_TEST_PORT") or "8888")
 # root outside the home directory and leaves every fixture behind.
 c.FileContentsManager.delete_to_trash = False
 
+# The GalaxaHub message-of-the-day extension, where it is installed, opens a
+# Welcome tab some time after the lab has started. A test that has opened its
+# document by then loses the front tab to it. traitlets ignores the line
+# where the extension is not installed, as in CI.
+c.GalaxaHubMotd.open_on_start = False
+
 # Uncomment to set server log level to debug level
 # c.ServerApp.log_level = "DEBUG"

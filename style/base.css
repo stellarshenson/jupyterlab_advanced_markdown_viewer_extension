@@ -198,24 +198,35 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
 }
 
 /*
- | Tab marker. A half-filled circle before the label, turning half a turn at
- | a time, so its filled half swaps between left and right. A tab with a
- | change on it moves in the corner of the eye and says so by motion rather
- | than by a colour the reader has to be able to tell apart. It takes the
- | tab's own text colour, so the tab keeps whatever colour another extension
- | gave it.
+ | Tab marker. A half-filled circle before the label. While changes arrive it
+ | alternates with its mirror image, so its filled half swaps between left
+ | and right: a tab with a change on it moves in the corner of the eye and
+ | says so by motion rather than by a colour the reader has to be able to
+ | tell apart. It takes the tab's own text colour, so the tab keeps whatever
+ | colour another extension gave it.
  |
- | Each frame shows for 1 s. While changes arrive, a frame class from the
- | controller shortens it to the mean time between them, down to 0.25 s, so
- | the marker turns faster the more often the file changes (ACC-CUE-200). A
- | turn is two frames, so each duration is twice the frame.
+ | The two frames are two characters, each drawn where the font draws it. One
+ | character turned half a turn changed height on the tab at every frame: the
+ | turn is about the centre of the marker's box, which is as tall as the
+ | tab's line, and no font draws the circle exactly at that centre
+ | (DEF-CUE-128).
+ |
+ | The marker moves only while changes arrive, which is the state the
+ | controller marks with its active class, and it stands still once the
+ | writer is quiet (ACC-CUE-71). Each frame shows for 1 s; a frame class from
+ | the controller shortens it to the mean time between the changes, down to
+ | 0.25 s (ACC-CUE-200). One run of the animation is two frames, so each
+ | duration is twice the frame.
  */
 
 .lm-TabBar-tab.jp-AdvancedMd-tabUpdated .lm-TabBar-tabLabel::before {
   display: inline-block;
   margin-right: 5px;
   content: '\25D0';
-  animation: jp-AdvancedMd-tab-turn 2s steps(2, end) infinite;
+}
+
+.lm-TabBar-tab.jp-AdvancedMd-tabActive .lm-TabBar-tabLabel::before {
+  animation: jp-AdvancedMd-tab-turn 2s step-end infinite;
 }
 
 .lm-TabBar-tab.jp-AdvancedMd-tabFrame750 .lm-TabBar-tabLabel::before {
@@ -231,14 +242,29 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
 }
 
 /*
+ | A change nobody has looked at: it arrived while the tab was behind
+ | another, and has stopped arriving. The marker stands there as a star with
+ | six teardrop spokes (U+273B) until the tab is brought to the front
+ | (ACC-CUE-201). It is drawn one level brighter than the label: JupyterLab
+ | gives the label of a tab that is not selected the theme's text colour 1,
+ | and the star takes text colour 0, which a dark theme makes brighter and a
+ | light theme darker.
+ */
+
+.lm-TabBar-tab.jp-AdvancedMd-tabUnread .lm-TabBar-tabLabel::before {
+  color: var(--jp-ui-font-color0);
+  content: '\273B';
+}
+
+/*
  | A held change is not arriving, it is waiting for the reader to save or
  | revert. Nothing is progressing, so its marker does not move as though
  | something were: it stands still and nudges once every eight seconds, the
  | pattern applications use for a state that needs the reader rather than one
  | that is working. Continuous motion of any kind, a pulse included, reads as
  | progress and tires the eye over a long session. The square differs from the
- | turning circle in shape, in colour and in whether the tab moves at all, so
- | a reader who cannot tell the colours apart still has two of the three. It is
+ | arriving circle in shape, in colour and in how the tab moves, so a reader
+ | who cannot tell the colours apart still has two of the three. It is
  | written after the arriving marker, so a tab that is both shows the one that
  | needs the reader.
  */
@@ -260,7 +286,8 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
  | acts; nothing is waiting behind a file that is gone, so its marker reports
  | and does not ask. Continuous motion would be the worst reading of all, a
  | claim that the state is progressing. The three markers therefore carry
- | three amounts of movement: continuous, occasional, none.
+ | three amounts of movement: continuous while changes arrive, occasional,
+ | none.
  */
 
 .lm-TabBar-tab.jp-AdvancedMd-tabMissing .lm-TabBar-tabLabel::before {
@@ -271,8 +298,8 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
 }
 
 @keyframes jp-AdvancedMd-tab-turn {
-  to {
-    transform: rotate(1turn);
+  50% {
+    content: '\25D1';
   }
 }
 

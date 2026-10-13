@@ -975,7 +975,8 @@ describe('NotesController', () => {
       expect(JSON.parse(init.body)).toEqual({
         path: 'live.md',
         expected: 'h0',
-        content: written
+        content: written,
+        length: BARE.length
       });
       // The file is written first, then the same edits go into the document,
       // which is clean because disk and document are equal, and the refresh
@@ -1015,7 +1016,8 @@ describe('NotesController', () => {
       expect(JSON.parse(route.mock.calls[1][2].body)).toEqual({
         path: 'live.md',
         expected: 'h1',
-        content: written
+        content: written,
+        length: newer.length
       });
       expect(h.source()).toBe(written);
       expect(h.transactions).toHaveLength(1);
@@ -1086,6 +1088,23 @@ describe('NotesController', () => {
       );
       // The document itself stays LF, as the Context keeps it.
       expect(h.source()).not.toContain('\r');
+    });
+
+    it('DEF-NOTES-33-1 names the size of the revision it wrote from in bytes, as the file holds it', async () => {
+      // Two letters of two bytes each, and a line ending of two bytes where
+      // the document holds one character.
+      const source = 'Älpha beta gamma délta.\n';
+      const h = open(source);
+      await ready();
+      h.render('<p>Älpha beta gamma délta.</p>');
+      h.widget.context._lineEnding = '\r\n';
+      route.mockResolvedValue(answer(200, { hash: 'h1' }));
+
+      selectRange(h.root, 'beta', 'gamma');
+      await h.controller.mark('yellow');
+
+      expect(source).toHaveLength(24);
+      expect(JSON.parse(route.mock.calls[0][2].body).length).toBe(27);
     });
 
     it('takes the save path for a document holding unsaved edits', async () => {
@@ -1161,6 +1180,30 @@ describe('NotesController', () => {
       expect(h.content.update).not.toHaveBeenCalled();
       MessageLoop.sendMessage(h.content, Widget.Msg.UpdateRequest);
       expect(h.content.processMessage).not.toHaveBeenCalled();
+    });
+
+    it('DEF-NOTES-33-1 answers yes when the watcher applied the written file with the lines a writer had appended', async () => {
+      const h = open(BARE);
+      await ready();
+      h.render(BARE_HTML);
+      let file = '';
+      route.mockImplementation(async (_: string, __: unknown, init: any) => {
+        // The file had grown by two lines since the document read it. The
+        // route wrote the mark in front of them, and the watcher's read of
+        // that file lands before the answer does.
+        file = `${JSON.parse(init.body).content}Line one.\nLine two.\n`;
+        h.external(file, 'h1');
+        return answer(200, { hash: 'h1' });
+      });
+
+      selectRange(h.root, 'beta', 'gamma');
+      const id = await h.controller.mark('yellow');
+
+      expect(id).not.toBeNull();
+      expect(h.source()).toBe(file);
+      expect(h.order).not.toContain('transact');
+      expect(h.controller.marks.map(mark => mark.id)).toContain(id);
+      expect(h.saves).toHaveLength(0);
     });
 
     it("keeps the reader's edits when they typed while the route wrote", async () => {
@@ -2983,6 +3026,22 @@ describe('NotesController', () => {
       expect(h.source()).toBe(CLOSING_LEFT);
       expect(h.transactions).toHaveLength(0);
       expect(h.saves).toEqual([]);
+    });
+
+    it('DEF-NOTES-33-1 names no revision size for the deletion, so the server compares the whole file', async () => {
+      const h = open(marked());
+      await ready();
+      route.mockResolvedValue(answer(200, { hash: 'h1' }));
+
+      await rewrite(h, OPENING_LEFT);
+
+      // A file that grew since this revision may hold the closing marker of
+      // the mark by now, and the deletion written in front of it would take
+      // a whole mark apart.
+      expect(route).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(route.mock.calls[0][2].body);
+      expect(body.content).toBe(PLAIN);
+      expect(body).not.toHaveProperty('length');
     });
 
     it('writes nothing when the route refused the deletion three times', async () => {

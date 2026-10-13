@@ -132,7 +132,6 @@ export interface IMarkerStyle {
   color: string;
   animationName: string;
   animationDuration: string;
-  timingFunction: string;
   labelColor: string;
 }
 
@@ -155,7 +154,6 @@ export function markerStyle(
       color: marker.color,
       animationName: marker.animationName,
       animationDuration: marker.animationDuration,
-      timingFunction: marker.animationTimingFunction,
       labelColor: getComputedStyle(label).color
     };
   }, tabClass);

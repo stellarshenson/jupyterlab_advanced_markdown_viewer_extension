@@ -17,12 +17,19 @@ False, register schedules nothing and only `stat` and `swap` answer, so the fron
 back to its batched poll.
 
 `swap` is the compare-and-write behind the write route: the browser passes back the hash the
-contents API gave it for the document, and the file is rewritten only while it still carries
-that hash, under a per-path lock, so two writes of one path from this server are serialised.
+contents API gave it for the document, and the file is rewritten while it still carries that
+hash, or still begins with that revision and has only been appended to, under a per-path
+lock, so two writes of one path from this server are serialised.
 The hash is computed the way the contents manager computes it,
 over the file's bytes with its configured algorithm, so the value the browser holds and the
 value compared here come from one function.
+
+`begin`, `end`, `settle` and `writes` keep track of the writes this server itself makes: a
+save through the contents API and a `swap`. Both empty the file before they write it, so a
+read made between the two holds an empty file. The read route waits a write of its path out
+and reads again when a write started during its read.
 """
+import asyncio
 import hashlib
 import os
 import posixpath
@@ -81,6 +88,14 @@ def _read_bytes(os_path):
         return source.read()
 
 
+def _running_task():
+    """The asyncio task this call runs in; None where there is none."""
+    try:
+        return asyncio.current_task()
+    except RuntimeError:  # this thread runs no event loop
+        return None
+
+
 class _DirectoryHandler(FileSystemEventHandler):
     """Matches the events of one watched directory against the registered names in it."""
 
@@ -129,8 +144,11 @@ class FileWatchRegistry:
     """
 
     def __init__(self, root_dir, loop, hash_algorithm="sha256"):
+        # None for a contents manager that keeps no files on this machine: no path is served
         self._root = root_dir
-        self._abs_root = os.path.abspath(root_dir)
+        # With its separator, so a path is inside when it begins with this; a filesystem
+        # root already ends in one (DEF-DETECT-133).
+        self._abs_root = None if root_dir is None else os.path.join(os.path.abspath(root_dir), "")
         self._loop = loop
         # The contents manager's algorithm, so a hash the browser got from the contents API
         # compares equal to one computed here over the same bytes.
@@ -138,6 +156,8 @@ class FileWatchRegistry:
         # API path -> the lock one swap of that path holds; never dropped, because a lock
         # dropped while another swap is about to take it would let two writes through.
         self._locks = {}
+        # API path -> size and hash of what the last swap wrote to it
+        self._written = {}
         self.paths = {}
         self.watches = {}
         self._observer = None
@@ -150,6 +170,13 @@ class FileWatchRegistry:
         self._identities = {}
         # API path -> (kind, timeout handle, time of the first event) while a window is open
         self._pending = {}
+        # API path -> the tasks whose write of it through this server is under way
+        self._writers = {}
+        # how many such writes have started, of any path: a read compares the count before
+        # it with the count after it
+        self.writes = 0
+        # API path -> the futures of the reads waiting for its writers to end
+        self._waiters = {}
 
     @property
     def available(self):
@@ -230,20 +257,35 @@ class FileWatchRegistry:
             result[path] = None if st is None else {"mtime": st.st_mtime, "size": st.st_size}
         return result
 
-    def swap(self, path, expected, content):
-        """Write `content` over the file at `path` if its bytes still hash to `expected`.
+    def swap(self, path, expected, content, length=None):
+        """Write `content` over the file at `path` if its bytes still hash to `expected`, or
+        its first `length` bytes do.
 
         Returns {"hash": ...} of the written bytes when the write landed, or {"hash", "content"}
         of the file as it is when it no longer matches, so the caller can rebase on it and try
-        again. None for a path this registry cannot serve, and FileNotFoundError for a file
+        again; the hash is of the file's bytes, and bytes that are not valid UTF-8, as a
+        writer leaves them part way through a character, are replaced in the content. None
+        for a path this registry cannot serve, and FileNotFoundError for a file
         that is not there, both as `stat` tells them apart.
+
+        `length` is the size in bytes of the revision `content` was made from. A file a
+        writer has appended to since - a streaming agent - still begins with that revision:
+        `content` is written and the appended bytes follow it. A write under a stream then
+        lands at its first attempt however long the browser took over it, where a refusal
+        would have it race the writer (DEF-NOTES-33-1). The caller leaves `length` out for
+        an edit that depends on what follows the revision, and the whole file is compared.
+
+        The revision has to hold what the last swap wrote to the path. Where that write
+        only added to the end of an older revision, the file still begins with the older
+        one, and a second write made from it would land beside the first; it is refused,
+        and the caller makes it again over the file as it is (DEF-NOTES-134).
 
         The write runs under a per-path lock and in place: the existing file is opened for
         writing and truncated, keeping its inode, because an agent that holds the file open
         for appending keeps writing to that inode - a temporary file renamed over it would
         send the agent's next line to the unlinked file. The watcher reports this write to
         the subscribers like any other change; the frontend reads the file back and finds
-        it equal to what it wrote.
+        what it wrote, followed by whatever had been appended.
         """
         normalized = _api_path(path)
         os_path = None if normalized is None else self._os_path(normalized)
@@ -253,11 +295,77 @@ class FileWatchRegistry:
         with self._locks.setdefault(normalized, threading.Lock()):
             current = _read_bytes(os_path)
             if self._hash(current) != expected:
-                return {"hash": self._hash(current), "content": current.decode("utf-8")}
+                if (
+                    length is None
+                    or self._hash(current[:length]) != expected
+                    or self._predates(normalized, current, length)
+                ):
+                    return {
+                        "hash": self._hash(current),
+                        "content": current.decode("utf-8", errors="replace"),
+                    }
+                data += current[length:]
             with open(os_path, "r+b") as target:
                 target.truncate(0)
                 target.write(data)
+            self._written[normalized] = (len(data), self._hash(data))
         return {"hash": self._hash(data)}
+
+    def _predates(self, path, current, length):
+        """True when a revision of `length` bytes does not hold what the last swap wrote.
+
+        The file `current` still begins with what the last swap wrote to `path`, and the
+        revision is shorter than that. A file another program has replaced since begins
+        with something else, and then that write says nothing about the revision.
+        """
+        size, digest = self._written.get(path, (0, None))
+        return length < size and self._hash(current[:size]) == digest
+
+    def serves(self, path):
+        """True for a path this registry answers for: under the root and on no other drive."""
+        path = _api_path(path)
+        return path is not None and self._os_path(path) is not None
+
+    def begin(self, path):
+        """Note that the running task starts a write of `path` through this server.
+
+        The write ends at `end`, or with its task where it raised before `end` was reached:
+        the contents manager runs no hook for a save that failed.
+        """
+        path = _api_path(path)
+        task = _running_task()
+        if path is None or task is None:
+            return
+        self.writes += 1
+        writers = self._writers.setdefault(path, set())
+        if task not in writers:
+            writers.add(task)
+            task.add_done_callback(lambda done: self._ended(path, done))
+
+    def end(self):
+        """Note that the running task has finished the write it began."""
+        task = _running_task()
+        for path in [path for path, writers in self._writers.items() if task in writers]:
+            self._ended(path, task)
+
+    def _ended(self, path, task):
+        writers = self._writers.get(path, ())
+        if task not in writers:
+            return
+        writers.discard(task)
+        if not writers:
+            del self._writers[path]
+            for waiter in self._waiters.pop(path, ()):
+                waiter.set_result(None)
+
+    async def settle(self, path):
+        """Wait until no write of `path` through this server is under way; answer `writes`."""
+        path = _api_path(path)
+        while path in self._writers:
+            waiter = asyncio.get_running_loop().create_future()
+            self._waiters.setdefault(path, []).append(waiter)
+            await waiter
+        return self.writes
 
     def stop(self):
         """Stop the observer thread and drop every pending window; used by tests."""
@@ -274,8 +382,10 @@ class FileWatchRegistry:
         return hashlib.new(self._hash_algorithm, data).hexdigest()
 
     def _os_path(self, path):
+        if self._root is None:
+            return None
         os_path = os.path.join(self._root, *path.split("/"))
-        if not (os.path.abspath(os_path) + os.sep).startswith(self._abs_root + os.sep):
+        if not (os.path.abspath(os_path) + os.sep).startswith(self._abs_root):
             return None
         return os_path
 

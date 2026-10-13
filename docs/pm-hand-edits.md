@@ -1,0 +1,1 @@
+- 2026-10-13T10:21:21Z @kj acc-crit-advanced-markdown-viewer.md a855ad60 sha256:286e1527bfddf4dbd4ee9714e475c4785f0aa1ef4562b4a961fe23e70417aceb: check forbids the character U+263C in ACC-CUE-71 and ACC-CUE-201; replacing it through edit copies the old text, with the character, into a new log line, so the tool cannot remove it

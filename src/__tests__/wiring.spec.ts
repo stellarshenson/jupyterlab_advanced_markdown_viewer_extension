@@ -988,6 +988,7 @@ describe('the plugin', () => {
       select(lab.widget.rendered, 'beta', 'gamma');
       route.mockClear();
 
+      const held = lab.widget.text;
       await lab.commands.execute(COMMANDS.mark, { colour: 'yellow' });
 
       // The refresh reaches the watcher before the write, so a change already
@@ -1002,7 +1003,8 @@ describe('the plugin', () => {
       expect(JSON.parse(route.mock.calls[0][2].body)).toEqual({
         path: 'live.md',
         expected: 'h0',
-        content: lab.widget.text
+        content: lab.widget.text,
+        length: held.length
       });
       expect(lab.widget.order).toEqual(['transact']);
       expect(lab.widget.transactions).toEqual([

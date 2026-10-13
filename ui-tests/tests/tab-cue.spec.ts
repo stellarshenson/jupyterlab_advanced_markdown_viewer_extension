@@ -29,6 +29,7 @@ const UPDATED = 'jp-AdvancedMd-tabUpdated';
 const ACTIVE = 'jp-AdvancedMd-tabActive';
 const BLOCKED = 'jp-AdvancedMd-tabBlocked';
 const MISSING = 'jp-AdvancedMd-tabMissing';
+const UNREAD = 'jp-AdvancedMd-tabUnread';
 
 /**
  * The glyphs the stylesheet writes: a half-filled circle for a change that
@@ -38,6 +39,61 @@ const MISSING = 'jp-AdvancedMd-tabMissing';
 const CIRCLE = '"◐"';
 const SQUARE = '"◼"';
 const CROSS = '"✕"';
+const STAR = '"✻"';
+
+/**
+ * The colour one of the theme's text colour levels gives text, as the
+ * browser computes it: level 0 is the strongest, level 1 the usual one.
+ */
+const themeColour = (page: any, level: number): Promise<string> =>
+  page.evaluate((variable: string) => {
+    const probe = document.createElement('span');
+    probe.style.color = `var(${variable})`;
+    document.body.appendChild(probe);
+    const colour = getComputedStyle(probe).color;
+    probe.remove();
+    return colour;
+  }, `--jp-ui-font-color${level}`);
+
+/**
+ * Either character of a marker read while it alternates: which of the two is
+ * on the tab depends on the moment of the read.
+ */
+const EITHER_FRAME = /^"[◐◑]"$/;
+
+/**
+ * The two frames of the marker of a change that is arriving: the character
+ * and the transform at a quarter and at three quarters of one run of its
+ * animation. The animation is held at each of the two and then let go, so
+ * the read does not depend on when it is made.
+ */
+const frames = (page: any): Promise<{ content: string; transform: string }[]> =>
+  page.evaluate((name: string) => {
+    const label = document.querySelector(
+      `.lm-TabBar-tab.${name} .lm-TabBar-tabLabel`
+    ) as Element;
+    const animation = document.getAnimations().find(candidate => {
+      const effect = candidate.effect as any;
+      return effect?.target === label && effect?.pseudoElement === '::before';
+    });
+    if (!animation) {
+      throw new Error('the marker is not animated');
+    }
+    const duration = Number(
+      (animation.effect as any).getComputedTiming().duration
+    );
+    const was = animation.currentTime;
+    animation.pause();
+    const read = (fraction: number) => {
+      animation.currentTime = duration * fraction;
+      const style = getComputedStyle(label, '::before');
+      return { content: style.content, transform: style.transform };
+    };
+    const both = [read(0.25), read(0.75)];
+    animation.currentTime = was;
+    animation.play();
+    return both;
+  }, UPDATED);
 
 /**
  * Where the test server keeps a contents-API path on disk. A file removed
@@ -124,7 +180,7 @@ test.describe('the marker of a change that arrived', () => {
     });
 
     const marker = await markerStyle(page, UPDATED);
-    expect(marker.content).toBe(CIRCLE);
+    expect(marker.content).toMatch(EITHER_FRAME);
     // Written in currentColor, so a colour another extension gave the tab is
     // what the marker shows too.
     expect(marker.color).toBe(marker.labelColor);
@@ -140,7 +196,7 @@ test.describe('the marker of a change that arrived', () => {
     expect(tooltip).toContain('changed on disk');
   });
 
-  test('turns half a turn at a time, at 1 s a frame for a change a second', async ({
+  test('DEF-CUE-128 alternates two characters at 1 s a frame for a change a second, and stands still once the writer is quiet', async ({
     page,
     tmpPath
   }) => {
@@ -153,16 +209,19 @@ test.describe('the marker of a change that arrived', () => {
         'text',
         path
       );
-      await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-        `Write ${i}.`,
-        { timeout: 20000 }
-      );
+      await expect(
+        page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+      ).toContainText(`Write ${i}.`, { timeout: 20000 });
       const turning = await markerStyle(page, UPDATED);
-      expect(turning.content).toBe(CIRCLE);
       expect(turning.animationName).toBe('jp-AdvancedMd-tab-turn');
-      // Half a turn at a time rather than a smooth spin: the circle
-      // alternates its filled half between left and right.
-      expect(turning.timingFunction).toMatch(/steps\(2/);
+      // The second frame is the second character, and neither is turned or
+      // moved: a character turned about the centre of its box changes
+      // height on the tab, because the font does not draw the circle at
+      // that centre.
+      expect(await frames(page)).toEqual([
+        { content: CIRCLE, transform: 'none' },
+        { content: '"◑"', transform: 'none' }
+      ]);
       // ACC-CUE-200: a change a second is the slowest rate, two frames of 1 s.
       expect(turning.animationDuration).toBe('2s');
       await expect(page.locator(`.lm-TabBar-tab.${ACTIVE}`)).toHaveCount(1);
@@ -174,10 +233,12 @@ test.describe('the marker of a change that arrived', () => {
     await expect(page.locator(`.lm-TabBar-tab.${ACTIVE}`)).toHaveCount(0, {
       timeout: 10000
     });
+    // ACC-CUE-71: it stands still from then on, and on a tab in front it is
+    // the half circle, not the unread marker of a change nobody has looked at.
     const settled = await markerStyle(page, UPDATED);
     expect(settled.content).toBe(CIRCLE);
-    expect(settled.animationName).toBe('jp-AdvancedMd-tab-turn');
-    expect(settled.animationDuration).toBe('2s');
+    expect(settled.animationName).toBe('none');
+    await expect(page.locator(`.lm-TabBar-tab.${UNREAD}`)).toHaveCount(0);
   });
 
   test('ACC-CUE-200 turns faster the more often the file changes', async ({
@@ -201,16 +262,112 @@ test.describe('the marker of a change that arrived', () => {
       /jp-AdvancedMd-tabFrame(250|500)\b/
     );
     const fast = await markerStyle(page, UPDATED);
-    expect(fast.content).toBe(CIRCLE);
+    expect(fast.content).toMatch(EITHER_FRAME);
     expect(fast.animationDuration).toMatch(/^(0\.5|1)s$/);
 
-    // Quiet again: back to 1 s a frame, the marker kept.
+    // Quiet again: the marker is kept and stands still.
     await expect(page.locator(`.lm-TabBar-tab.${ACTIVE}`)).toHaveCount(0, {
       timeout: 10000
     });
     const settled = await markerStyle(page, UPDATED);
     expect(settled.content).toBe(CIRCLE);
-    expect(settled.animationDuration).toBe('2s');
+    expect(settled.animationName).toBe('none');
+  });
+});
+
+test.describe('the marker of a change on a tab behind another', () => {
+  // A fade duration short enough to wait out, and long enough to tell from
+  // a marker that leaves at once.
+  const FADE = 3000;
+  test.use({ mockSettings: settings({ fadeDuration: FADE }) });
+
+  test('ACC-CUE-201 is a still unread marker once the changes stop, and ACC-CUE-29 leaves a fade duration after the tab comes to the front', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    const other = `${tmpPath}/other.md`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await page.contents.uploadContent(INITIAL, 'text', other);
+    await openPreview(page, path);
+    await openPreview(page, other);
+
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    const tab = page.locator(`.lm-TabBar-tab.${UPDATED}`);
+    await expect(tab).toHaveCount(1, { timeout: 20000 });
+    await expect(tab).toHaveClass(new RegExp(ACTIVE));
+    expect((await markerStyle(page, UPDATED)).animationName).toBe(
+      'jp-AdvancedMd-tab-turn'
+    );
+
+    // The writer is quiet and nobody has looked: the marker is the star, and
+    // it does not move.
+    await expect(page.locator(`.lm-TabBar-tab.${UNREAD}`)).toHaveCount(1, {
+      timeout: 10000
+    });
+    const unread = await markerStyle(page, UPDATED);
+    expect(unread.content).toBe(STAR);
+    expect(unread.animationName).toBe('none');
+    // It is one level brighter than the label: the label of a tab that is
+    // not selected has the theme's text colour 1, the star colour 0.
+    expect(unread.labelColor).toBe(await themeColour(page, 1));
+    expect(unread.color).toBe(await themeColour(page, 0));
+    expect(unread.color).not.toBe(unread.labelColor);
+    // ACC-CUE-202: the unread marker says in words what it means.
+    expect(await tab.getAttribute('title')).toContain(
+      'while this tab was behind another'
+    );
+
+    // Past the time a tab in front would have kept it: it waits for the
+    // reader on a tab behind.
+    await page.waitForTimeout(FADE + 1000);
+    await expect(tab).toHaveCount(1);
+
+    // Selecting the tab is enough. The unread marker becomes the half circle at
+    // once, and the marker stays for a fade duration, then goes, with no
+    // click, key or scroll in the document.
+    await tab.click();
+    const selected = Date.now();
+    await expect(page.locator(`.lm-TabBar-tab.${UNREAD}`)).toHaveCount(0);
+    await expect(tab).toHaveCount(1);
+    expect((await markerStyle(page, UPDATED)).content).toBe(CIRCLE);
+    await expect(tab).toHaveCount(0, { timeout: FADE + 5000 });
+    expect(Date.now() - selected).toBeGreaterThan(FADE - 500);
+  });
+
+  test('DEF-CUE-130 gives no unread marker to a change the reader watched, and takes its marker away on time', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    const other = `${tmpPath}/other.md`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await page.contents.uploadContent(INITIAL, 'text', other);
+    await openPreview(page, path);
+    // Every class change on the page is watched, so an unread marker shown at any
+    // moment is seen, not only one that is there when the test looks.
+    await page.evaluate((unread: string) => {
+      (window as any).__sawUnread = false;
+      new MutationObserver(() => {
+        if (document.querySelector(`.lm-TabBar-tab.${unread}`)) {
+          (window as any).__sawUnread = true;
+        }
+      }).observe(document.body, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class']
+      });
+    }, UNREAD);
+
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    const tab = page.locator(`.lm-TabBar-tab.${UPDATED}`);
+    await expect(tab).toHaveCount(1, { timeout: 20000 });
+    // The tab was in front while the change arrived. The reader now selects
+    // another tab, before the marker has left.
+    await openPreview(page, other);
+    await expect(tab).toHaveCount(1);
+    await expect(tab).toHaveCount(0, { timeout: FADE + 8000 });
+    expect(await page.evaluate(() => (window as any).__sawUnread)).toBe(false);
   });
 });
 
@@ -293,25 +450,30 @@ test.describe('the markers under reduced motion', () => {
         .poll(() => renderedText(page), { timeout: 20000 })
         .toContain(`Write ${i}.`);
       const turning = await markerStyle(page, UPDATED);
-      expect(turning.content).toBe(CIRCLE);
+      expect(turning.content).toMatch(EITHER_FRAME);
       expect(turning.animationName).toBe('jp-AdvancedMd-tab-turn');
-      expect(turning.timingFunction).toMatch(/steps\(2/);
       expect(turning.animationDuration).toMatch(/^(2|1\.5|1|0\.5)s$/);
     }
 
     await alsoGone(page, tmpPath);
+    // The third preview is in front now, so once the writer is quiet the
+    // marker of the arriving change is that of a change nobody looked at.
+    await expect(page.locator(`.lm-TabBar-tab.${UNREAD}`)).toHaveCount(1, {
+      timeout: 10000
+    });
 
     const arriving = await markerStyle(page, UPDATED);
     const blocked = await markerStyle(page, BLOCKED);
     const gone = await markerStyle(page, MISSING);
 
     // Each marker keeps its own shape, and its own amount of movement: the
-    // arriving circle turns, the held square nudges, the cross of a file gone
-    // from disk stands still because nothing is waiting behind it.
-    expect(arriving.content).toBe(CIRCLE);
+    // arriving circle alternated while the changes arrived and now stands
+    // as the star, the held square nudges, the cross of a file gone from disk
+    // stands still because nothing is waiting behind it.
+    expect(arriving.content).toBe(STAR);
     expect(blocked.content).toBe(SQUARE);
     expect(gone.content).toBe(CROSS);
-    expect(arriving.animationName).toBe('jp-AdvancedMd-tab-turn');
+    expect(arriving.animationName).toBe('none');
     expect(blocked.animationName).toBe('jp-AdvancedMd-tab-nudge');
     expect(gone.animationName).toBe('none');
     expect(blocked.color).toBe(BLOCKED_COLOUR);

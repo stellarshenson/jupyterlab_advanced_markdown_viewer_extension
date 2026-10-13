@@ -265,10 +265,11 @@ export class FileWatcher implements IDisposable {
       this._context.fileChanged.connect(this._onFileChanged, this);
       if (this._enabled) {
         this._channel.register(this._path);
-        // A write between the load and this registration is reported by
-        // nothing: the server matches events only from the registration on,
-        // and the channel's first stat is a baseline taken after it. One read
-        // here is what closes that gap.
+        // A write between the load and this registration raised no event:
+        // the server matches events only from the registration on. This read
+        // shows it at once. The channel asks for the later reads: one when
+        // the server confirms the registration and one at the path's first
+        // stat (DEF-DETECT-129).
         void this._check();
       }
     });
@@ -541,14 +542,20 @@ export class FileWatcher implements IDisposable {
     const saves = this._saves;
     let full: Contents.IModel;
     try {
-      full = await this._contents.get(this._path, {
-        content: true,
-        format: 'text',
-        type: 'file',
-        // The server hashes only on request; without it the revision handed
-        // to the Context would be by timestamp alone.
-        hash: true
-      });
+      // The server extension answers once the server itself is not writing
+      // the file; the contents API answers an empty file for a read made
+      // while the server saves that file (DEF-APPLY-131). Where the server
+      // extension does not answer for the path, the contents API is read.
+      full =
+        (await this._channel.read(this._path)) ??
+        (await this._contents.get(this._path, {
+          content: true,
+          format: 'text',
+          type: 'file',
+          // The server hashes only on request; without it the revision
+          // handed to the Context would be by timestamp alone.
+          hash: true
+        }));
     } catch {
       this._missing = true;
       this._blocked.emit('missing');

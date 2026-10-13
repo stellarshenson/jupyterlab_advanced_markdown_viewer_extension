@@ -15,7 +15,7 @@ See the changes an AI agent, or any other program, makes to a Markdown file as i
 - **Changes show as they are written** - the Markdown Preview shows a change to the file within half a second, with no reload
 - **Watch each change happen** - added text is typed in on green; removed text is struck through on red, then deleted
 - **Your place is kept** - the preview keeps the same text in view when the file changes outside it or is typed in beside it, and its pictures stay on screen instead of loading again
-- **See which tab changed** - a half-filled circle for a new change, turning faster the more often the file changes, a red square for a change held back or dropped where it met your unsaved edits, a cross for a deleted file
+- **See which tab changed** - a half-filled circle that swaps sides while changes arrive, faster the more often the file changes, a star (✻) for changes you have not looked at yet, a red square for a change held back or dropped where it met your unsaved edits, a cross for a deleted file
 - **Unsaved edits are kept** - a change from disk lands around your unsaved edits; where it overlaps or sits right beside them your text stands and the tab shows a red square; when the part that is dropped adds or removes a code fence or an HTML comment marker, such as a mark, none of the change is shown; save to keep your version, or choose File, Reload Markdown File from Disk to take the file's
 - **Mark and note while the agent writes** - six colours, notes on a passage or on the whole document, all listed beside the preview
 - **Notes are stored in the file** - as HTML comments that other Markdown renderers do not show; a note line an agent adds appears in the thread
@@ -72,6 +72,8 @@ mkdir -p ~/.claude/skills && ln -sfn "$PWD/.agents/skills/jupyterlab-advanced-ma
 - A file open only in an editor is not followed; open it in the Markdown Preview. A preview opened over unsaved edits after the file had already changed holds that change back, and a save then meets JupyterLab's own File Changed dialog
 - On network drives, Windows drives under WSL2 and other mounts that raise no file events, the first change can take up to 10 seconds to show; after it, the file is checked every second
 - A line an agent appends during the few milliseconds a mark is being written can be lost
+- A program that keeps the file open while it writes has to open it for appending (`>>`, not `>`); a program that keeps the file open for plain writing overwrites its own newest text after each mark
+- On a file with mixed line endings, a mark made while an agent appends can still raise the File Changed dialog
 - With unsaved edits, a new mark stays in the document and reaches the file with your next save
 - With live updates off, or without the server extension, a mark is saved through JupyterLab, whose File Changed dialog can appear if an agent wrote in between; Revert keeps the agent's text and drops the new mark
 - Showing, collapsing or hiding the notes panel stores that state in the file as an HTML comment

@@ -89,8 +89,26 @@ async function closeWidget(page: any, id: string): Promise<void> {
 test.describe('file events', () => {
   test.use({ mockSettings: settings({ pollInterval: 10 }) });
 
+  /**
+   * Settles once the document has finished opening. A rendered preview does
+   * not mean that: the context resolves and renders first, and writes the
+   * checkpoint JupyterLab takes of a file it opens afterwards. A file taken
+   * away or renamed inside that window fails that request, and JupyterLab
+   * closes the document it could not open, so no tab is left to assert on.
+   * A test that removes or renames the file waits for this first.
+   */
+  let opened: Promise<unknown>;
+
   test.beforeEach(async ({ page, tmpPath }) => {
     await page.contents.uploadContent(INITIAL, 'text', `${tmpPath}/${FILE}`);
+    opened = page
+      .waitForResponse(
+        (response: any) =>
+          response.url().includes(`${tmpPath}/${FILE}/checkpoints`) &&
+          response.request().method() === 'POST'
+      )
+      // A test that does not wait for it may end before the answer comes.
+      .catch(() => undefined);
     await openPreview(page, `${tmpPath}/${FILE}`);
   });
 
@@ -111,7 +129,9 @@ test.describe('file events', () => {
             .then(() => {
               const timer = setInterval(() => {
                 const at = performance.now() - started;
-                const root = document.querySelector('.jp-RenderedMarkdown');
+                const root = document.querySelector(
+                  '.jp-MarkdownViewer .jp-RenderedMarkdown'
+                );
                 if ((root?.textContent ?? '').includes(needle)) {
                   clearInterval(timer);
                   resolve(at);
@@ -151,7 +171,7 @@ test.describe('file events', () => {
     // reads in src/__tests__/watcher.spec.ts. Asserting the count here instead
     // would hang the verdict on the two writes above landing inside a window
     // this side cannot set.
-    const rendered = page.locator('.jp-RenderedMarkdown');
+    const rendered = page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown');
     await expect(rendered).toContainText(THIRD, { timeout: 5000 });
     await expect(rendered).toContainText('oranges');
     await expect(rendered).not.toContainText('pears');
@@ -165,7 +185,9 @@ test.describe('file events', () => {
     fs.writeFileSync(`${target}.tmp`, REWRITTEN);
     fs.renameSync(`${target}.tmp`, target);
 
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(THIRD, {
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText(THIRD, {
       timeout: 5000
     });
   });
@@ -197,6 +219,7 @@ test.describe('file events', () => {
     tmpPath
   }) => {
     const target = onDisk(`${tmpPath}/${FILE}`);
+    await opened;
     fs.unlinkSync(target);
 
     // A file gone from disk carries its own marker: it asks the reader to
@@ -207,11 +230,15 @@ test.describe('file events', () => {
     await expect(
       page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked')
     ).toHaveCount(0);
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText('apples');
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('apples');
     await expect(page.locator('.jp-Dialog')).toHaveCount(0);
 
     fs.writeFileSync(target, REWRITTEN);
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(THIRD, {
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText(THIRD, {
       timeout: 5000
     });
     await expect(blockedTab).toHaveCount(0);
@@ -222,7 +249,7 @@ test.describe('file events', () => {
     tmpPath
   }) => {
     const target = `${tmpPath}/${FILE}`;
-    const rendered = page.locator('.jp-RenderedMarkdown');
+    const rendered = page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown');
     const [first] = await mainWidgetIds(page);
 
     // A second view of the same document, which is what JupyterLab's own New
@@ -255,6 +282,7 @@ test.describe('file events', () => {
     tmpPath
   }) => {
     const renamed = `${tmpPath}/renamed.md`;
+    await opened;
     await page.evaluate(
       async ([from, to]: [string, string]) => {
         await (window as any).jupyterapp.serviceManager.contents.rename(
@@ -273,7 +301,9 @@ test.describe('file events', () => {
       .toBe(renamed);
 
     await page.contents.uploadContent(REWRITTEN, 'text', renamed);
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(THIRD, {
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText(THIRD, {
       timeout: 5000
     });
     // The rename raises a removal of the old name, which may reach the browser
@@ -311,7 +341,9 @@ test.describe('ten quiet previews', () => {
         });
       }, apiPath);
     }
-    await expect(page.locator('.jp-RenderedMarkdown')).toHaveCount(10);
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toHaveCount(10);
     // The channel opens on the first registration, stats every path once the
     // socket is up and reads each document once as it registers; all of that
     // is over well within this.
@@ -363,7 +395,9 @@ test.describe('a filesystem that raises no events', () => {
     fs.linkSync(onDisk(target), second);
     fs.writeFileSync(second, REWRITTEN);
 
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(THIRD, {
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText(THIRD, {
       timeout: 4500
     });
 
@@ -404,7 +438,9 @@ test.describe('a dropped event connection', () => {
     await routes[0].close();
     await page.contents.uploadContent(REWRITTEN, 'text', target);
 
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(THIRD, {
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText(THIRD, {
       timeout: 15000
     });
     expect(routes.length).toBeGreaterThanOrEqual(2);
@@ -431,7 +467,9 @@ test.describe('a dropped event connection', () => {
     // must not stop the check made after the reconnect from finding the write
     // below.
     await page.contents.uploadContent(REWRITTEN, 'text', target);
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(THIRD, {
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText(THIRD, {
       timeout: 15000
     });
 
@@ -446,7 +484,9 @@ test.describe('a dropped event connection', () => {
     // request.
     expect(routes.length).toBe(1);
 
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(FOURTH, {
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText(FOURTH, {
       timeout: 15000
     });
     expect(routes.length).toBeGreaterThanOrEqual(2);
@@ -485,7 +525,9 @@ test.describe('the server extension absent', () => {
     await page.waitForTimeout(1000);
 
     await page.contents.uploadContent(REWRITTEN, 'text', target);
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(THIRD, {
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText(THIRD, {
       timeout: 6000
     });
     expect(warnings).toHaveLength(1);

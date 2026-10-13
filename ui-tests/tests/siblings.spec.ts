@@ -83,7 +83,9 @@ const parsedSources = (page: any): Promise<string[]> =>
 
 const previewScrollTop = (page: any): Promise<number> =>
   page.evaluate(
-    () => document.querySelector('.jp-RenderedMarkdown')?.scrollTop ?? -1
+    () =>
+      document.querySelector('.jp-MarkdownViewer .jp-RenderedMarkdown')
+        ?.scrollTop ?? -1
   );
 
 test.describe('the GitHub alerts sibling', () => {
@@ -98,15 +100,16 @@ test.describe('the GitHub alerts sibling', () => {
     await page.contents.uploadContent(ALERT, 'text', path);
     await openPreview(page, path, 'The note says apples.');
 
-    const alert = page.locator('.jp-RenderedMarkdown .markdown-alert');
+    const alert = page.locator(
+      '.jp-MarkdownViewer .jp-RenderedMarkdown .markdown-alert'
+    );
     await expect(alert).toHaveCount(1);
     await watchParser(page);
 
     await page.contents.uploadContent(ALERT_REWRITTEN, 'text', path);
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A second line joined the note.',
-      { timeout: 20000 }
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('A second line joined the note.', { timeout: 20000 });
     // Both renders of the change are over.
     await page.waitForTimeout(2000);
 
@@ -189,7 +192,8 @@ test.describe('the colourful tab sibling', () => {
       const label = element.querySelector('.lm-TabBar-tabLabel');
       return getComputedStyle(label as Element, '::before').content;
     });
-    expect(marker).toBe('"◐"');
+    // Read while the marker alternates, so either of its two characters.
+    expect(marker).toMatch(/^"[◐◑]"$/);
   });
 });
 
@@ -219,7 +223,7 @@ test.describe('the forced render', () => {
         w.__renders += 1;
       });
     });
-    await page.locator('.jp-RenderedMarkdown').hover();
+    await page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown').hover();
     await page.mouse.wheel(0, 1000);
     await expect.poll(() => previewScrollTop(page)).toBeGreaterThan(300);
     await page.evaluate(() => {
@@ -239,10 +243,9 @@ test.describe('the forced render', () => {
     const renders = await page.evaluate(() => (window as any).__renders);
 
     await page.contents.uploadContent(ALERT_REWRITTEN, 'text', path);
-    await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-      'A second line joined the note.',
-      { timeout: 20000 }
-    );
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toContainText('A second line joined the note.', { timeout: 20000 });
     // Long enough for the viewer's own render, about a second behind the
     // forced one, and for an anchor scroll 100 ms after it.
     await page.waitForTimeout(2500);
@@ -278,7 +281,9 @@ const currentWidgetState = (
 }> =>
   page.evaluate(() => {
     const widget = (window as any).jupyterapp.shell.currentWidget;
-    const root = widget.node.querySelector('.jp-RenderedMarkdown');
+    const root = widget.node.querySelector(
+      '.jp-MarkdownViewer .jp-RenderedMarkdown'
+    );
     return {
       scrollTop: root ? root.scrollTop : -1,
       guarded: widget.node.hasAttribute('data-jp-scroll-guard'),
@@ -311,7 +316,7 @@ async function readerPlace(
     const root = (
       window as any
     ).jupyterapp.shell.currentWidget.node.querySelector(
-      '.jp-RenderedMarkdown'
+      '.jp-MarkdownViewer .jp-RenderedMarkdown'
     ) as HTMLElement;
     const top = root.getBoundingClientRect().top;
     const block = Array.from(root.querySelectorAll('p')).find(
@@ -332,7 +337,7 @@ async function offsetOf(page: any, text: string): Promise<number> {
     const root = (
       window as any
     ).jupyterapp.shell.currentWidget.node.querySelector(
-      '.jp-RenderedMarkdown'
+      '.jp-MarkdownViewer .jp-RenderedMarkdown'
     ) as HTMLElement;
     const block = Array.from(root.querySelectorAll('p')).find(
       p => p.textContent === needle
@@ -619,7 +624,9 @@ test.describe('the switch-tab scrolling fix sibling', () => {
         const widget = Array.from(w.jupyterapp.shell.widgets('main')).find(
           (candidate: any) => candidate.context?.path === target
         ) as any;
-        const root = widget.node.querySelector('.jp-RenderedMarkdown');
+        const root = widget.node.querySelector(
+          '.jp-MarkdownViewer .jp-RenderedMarkdown'
+        );
         const started = Date.now();
         w.__samples = [];
         w.__sampler = window.setInterval(() => {
@@ -673,7 +680,9 @@ test.describe('the switch-tab scrolling fix sibling', () => {
         const widget = Array.from(w.jupyterapp.shell.widgets('main')).find(
           (candidate: any) => candidate.context?.path === target
         ) as any;
-        const root = widget.node.querySelector('.jp-RenderedMarkdown');
+        const root = widget.node.querySelector(
+          '.jp-MarkdownViewer .jp-RenderedMarkdown'
+        );
         const property = Object.getOwnPropertyDescriptor(
           Element.prototype,
           'scrollTop'
@@ -725,7 +734,9 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     await page.evaluate((holdMs: number) => {
       const w = window as any;
       const widget = w.jupyterapp.shell.currentWidget;
-      const root = widget.node.querySelector('.jp-RenderedMarkdown');
+      const root = widget.node.querySelector(
+        '.jp-MarkdownViewer .jp-RenderedMarkdown'
+      );
       const anchor = () => (root.querySelector('h1') as HTMLElement).offsetTop;
       let heldUntil = 0;
       root.addEventListener('scroll', () => {

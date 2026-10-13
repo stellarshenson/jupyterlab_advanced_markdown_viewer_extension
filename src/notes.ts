@@ -11,9 +11,10 @@
  * extension observing the model sees an ordinary local edit. The file is
  * refreshed before the write, so a change already on disk lands first, and
  * the file is written through the server's compare-and-write route, which
- * rewrites it only while it still holds the revision the document holds, so
- * a write from an agent is neither overwritten nor met with the File Changed
- * dialog; a document that already held unsaved edits is not written to disk
+ * rewrites it while it still holds the revision the document holds, or still
+ * begins with that revision and has only been appended to, so a write from an
+ * agent is neither overwritten nor met with the File Changed dialog; a
+ * document that already held unsaved edits is not written to disk
  * at all, because those edits are the reader's to save. And the passage bytes
  * between the two markers are never touched: a note, a colour and a removal
  * all rewrite or delete markers alone.
@@ -2271,8 +2272,9 @@ export class NotesController implements IDisposable {
    *
    * With the document clean and the server extension present, the file is
    * written first, through the compare-and-write route: the server rewrites
-   * it only while it still carries the revision the document holds, under a
-   * lock, so two writes of one path from this server are serialised; a write
+   * it while it still carries the revision the document holds, or still
+   * begins with that revision and has only been appended to, under a lock,
+   * so two writes of one path from this server are serialised; a write
    * from another process that lands inside the server's own write is the
    * residual DEF-NOTES-33 records. A 409 carries the newer file; the
    * refresh brings it into the document through the watcher's normal path,
@@ -2281,10 +2283,10 @@ export class NotesController implements IDisposable {
    * check raises the File Changed dialog against the newer file, which is
    * what a refresh that moves nothing comes to; with live updates off the
    * route is not taken at all.
-   * On a 200 the same edits go into the document, which is then clean
-   * because disk and document are equal, and the refresh that follows finds
-   * them equal and moves the revision the Context holds. No save, so no File
-   * Changed dialog.
+   * On a 200 the same edits go into the document, which is then marked
+   * clean, and the refresh that follows brings in what a writer had appended
+   * and moves the revision the Context holds. No save, so no File Changed
+   * dialog.
    *
    * Without the route - a 404 carrying the server's HTML page rather than the
    * JSON a served answer carries, remembered for the session - the document
@@ -2357,7 +2359,18 @@ export class NotesController implements IDisposable {
             body: JSON.stringify({
               path: this._context.path,
               expected,
-              content: this._lineEnded(written)
+              content: this._lineEnded(written),
+              // The size in bytes of the revision the edits were made from:
+              // a file that a writer has only appended to since still begins
+              // with it, and the server writes the edits in front of what
+              // was appended instead of refusing them (DEF-NOTES-33-1). The
+              // deletion of leftover markers leaves the size out, so the
+              // server compares the whole file: that edit depends on what
+              // follows the revision, where the closing marker of a mark
+              // still being written arrives.
+              length: mayCreateFile
+                ? new Blob([this._lineEnded(source)]).size
+                : undefined
             })
           }
         );
@@ -2418,13 +2431,16 @@ export class NotesController implements IDisposable {
         this._flush();
         this._paint();
         // Only one of the states reaching this guard is known to have written
-        // into the document: the watcher brought the written file in. When
-        // the document moved to something else - a second external write
-        // landed after the server wrote and before the answer came back, or
-        // the reader typed with no shadow to merge over - the mark is on disk
-        // and not in the document, and a caller told otherwise discards the
-        // reader's draft over a note the document never took.
-        return this._source === written;
+        // into the document: the watcher brought the written file in, which
+        // is the written text, followed by whatever a writer had appended to
+        // the revision the edits were made from, since the route keeps that
+        // behind the written text (DEF-NOTES-33-1). When the document moved
+        // to something else - a second external write landed after the
+        // server wrote and before the answer came back, or the reader typed
+        // with no shadow to merge over - the mark is on disk and not in the
+        // document, and a caller told otherwise discards the reader's draft
+        // over a note the document never took.
+        return this._source.startsWith(written);
       }
       const shared = this._context.model.sharedModel;
       shared.transact(

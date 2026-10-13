@@ -11,6 +11,7 @@ import { DocumentRegistry } from '@jupyterlab/docregistry';
 import { MarkdownDocument } from '@jupyterlab/markdownviewer';
 import { Contents } from '@jupyterlab/services';
 import { IDisposable } from '@lumino/disposable';
+import { Message, MessageLoop } from '@lumino/messaging';
 import { ISignal, Signal } from '@lumino/signaling';
 import { Title, Widget } from '@lumino/widgets';
 
@@ -64,6 +65,14 @@ export const TAB_MISSING_CLASS = 'jp-AdvancedMd-tabMissing';
 export const TAB_ACTIVE_CLASS = 'jp-AdvancedMd-tabActive';
 
 /**
+ * Class marking a tab whose change the reader has not looked at: it arrived
+ * while the tab was behind another, and has stopped arriving (ACC-CUE-201).
+ * The marker stands there as the unread marker, which the stylesheet draws
+ * as a star, until the tab is brought to the front.
+ */
+export const TAB_UNREAD_CLASS = 'jp-AdvancedMd-tabUnread';
+
+/**
  * Prefix of the class that sets how fast the updated marker turns while
  * changes arrive (ACC-CUE-200). The class names how long each of the two
  * frames shows, in milliseconds: jp-AdvancedMd-tabFrame750, -500 or -250.
@@ -115,6 +124,13 @@ const TAB_CAPTIONS: { [className: string]: string | undefined } = {
   [TAB_MISSING_CLASS]:
     'The file is gone from disk. This view keeps the last content that was read.'
 };
+
+/**
+ * Tooltip of the unread marker: the highlight on the changed text has gone
+ * by then, so the words say when the file changed (ACC-CUE-202).
+ */
+const UNREAD_CAPTION =
+  'The file changed on disk while this tab was behind another. The preview shows the new content.';
 
 /**
  * Tooltip of the blocked marker when it reports a conflict: the change was
@@ -258,6 +274,7 @@ export class LiveViewController implements IDisposable {
     node.addEventListener('pointerdown', this._onAttention, true);
     node.addEventListener('keydown', this._onAttention, true);
     node.addEventListener('wheel', this._onAttention, true);
+    MessageLoop.installMessageHook(this._widget, this._onMessage);
   }
 
   get isDisposed(): boolean {
@@ -349,6 +366,7 @@ export class LiveViewController implements IDisposable {
     node.removeEventListener('pointerdown', this._onAttention, true);
     node.removeEventListener('keydown', this._onAttention, true);
     node.removeEventListener('wheel', this._onAttention, true);
+    MessageLoop.removeMessageHook(this._widget, this._onMessage);
     this._images.dispose();
     this._place.dispose();
     this._clearDecorations();
@@ -375,6 +393,39 @@ export class LiveViewController implements IDisposable {
     this._clearUpdatedCue();
   };
 
+  /**
+   * Watch the widget's own messages for the one the dock panel sends when
+   * the tab is brought to the front. Every message goes on to the widget.
+   */
+  private _onMessage = (_: unknown, msg: Message): boolean => {
+    if (msg.type === 'after-show') {
+      this._onShown();
+    }
+    return true;
+  };
+
+  /**
+   * The tab came to the front. A marker left on it while it was behind has
+   * waited for the reader, who has now selected the tab: it goes a fade
+   * duration from now, and no click in the document is needed (ACC-CUE-29).
+   * While changes still arrive, the period the last one set ends later than
+   * that, and it stands. An unread marker becomes the half circle at once,
+   * because the tab is no longer one the reader has not opened
+   * (ACC-CUE-201).
+   */
+  private _onShown(): void {
+    // Opening the tab is looking at it.
+    this._unseen = false;
+    if (this._quietTimer === null && this._hasTabClass(TAB_UPDATED_CLASS)) {
+      const title = this._widget.title;
+      title.className = title.className
+        .split(/\s+/)
+        .filter(name => name !== TAB_UNREAD_CLASS)
+        .join(' ');
+      this._resetCueTimer(this._settings.fadeDuration);
+    }
+  }
+
   private _onApplied(): void {
     if (!this._settings.enabled) {
       return;
@@ -386,6 +437,9 @@ export class LiveViewController implements IDisposable {
     // follows later and is taken as a re-render of the same text.
     this._widget.content.update();
     if (this._settings.tabCue) {
+      if (!this._widget.isVisible) {
+        this._unseen = true;
+      }
       this._arrivals = [...this._arrivals, Date.now()].slice(-RATE_CHANGES);
       this._setTabState(TAB_UPDATED_CLASS, frameFor(this._arrivals));
       this._resetQuietTimer();
@@ -395,30 +449,39 @@ export class LiveViewController implements IDisposable {
 
   /**
    * Take the updated marker back a fade duration after the tab has settled,
-   * but only while the tab is the one in front.
+   * unless its change arrived while the tab was behind another and the
+   * reader has not brought the tab to the front since.
    *
    * A reader looking at the document has seen the change by the time its
-   * highlight has gone, so the marker has done its work. A tab behind another
-   * one keeps its marker until the reader comes to it and acts, which is what
-   * the marker is for.
+   * highlight has gone, so the marker has done its work, whichever tab is in
+   * front when the period ends. A change that arrived while the tab was
+   * behind another keeps its marker, as the unread marker of a change nobody
+   * has looked at, until the reader brings the tab to the front, which is
+   * what the marker is for.
    *
    * The period is measured from the end of the quiet period rather than from
-   * the change, so the settled turn always has a window to be seen in. Both
-   * timers are armed on the same change, and a fade duration set to the quiet
-   * period (3000 ms; the two were equal at the defaults of 1.0.5) would, with
-   * a period measured from the change, take the marker away in the tick the
-   * tab settled, and the slower turn ACC-CUE-71 asks for would never appear.
+   * the change, so the settled marker always has a window to be seen in.
+   * Both timers are armed on the same change, and a fade duration set to the
+   * quiet period (3000 ms; the two were equal at the defaults of 1.0.5)
+   * would, with a period measured from the change, take the marker away in
+   * the tick the tab settled, and the still marker ACC-CUE-71 asks for would
+   * never appear.
+   *
+   * @param delay - how long from now, the full period after a change and a
+   *   fade duration after the tab comes to the front
    */
-  private _resetCueTimer(): void {
+  private _resetCueTimer(delay = QUIET_MS + this._settings.fadeDuration): void {
     if (this._cueTimer !== null) {
       window.clearTimeout(this._cueTimer);
     }
     this._cueTimer = window.setTimeout(() => {
       this._cueTimer = null;
-      if (this._widget.isVisible) {
+      // A change the reader watched, or a tab the reader has opened since,
+      // needs no marker any more, whichever tab is in front now.
+      if (this._widget.isVisible || !this._unseen) {
         this._clearUpdatedCue();
       }
-    }, QUIET_MS + this._settings.fadeDuration);
+    }, delay);
   }
 
   /**
@@ -433,7 +496,27 @@ export class LiveViewController implements IDisposable {
       this._quietTimer = null;
       this._arrivals = [];
       this._setActive(false);
+      this._markUnread();
     }, QUIET_MS);
+  }
+
+  /**
+   * Say on the tab that nobody has looked at the change: it arrived while
+   * the tab was behind another, and its arrival has ended there
+   * (ACC-CUE-201). A change the reader watched and a tab in front are left
+   * as they are.
+   */
+  private _markUnread(): void {
+    if (
+      !this._unseen ||
+      this._widget.isVisible ||
+      !this._hasTabClass(TAB_UPDATED_CLASS)
+    ) {
+      return;
+    }
+    const title = this._widget.title;
+    title.className = `${title.className} ${TAB_UNREAD_CLASS}`;
+    this._setCaption(UNREAD_CAPTION);
   }
 
   /**
@@ -731,9 +814,13 @@ export class LiveViewController implements IDisposable {
           name !== TAB_UPDATED_CLASS &&
           name !== TAB_BLOCKED_CLASS &&
           name !== TAB_MISSING_CLASS &&
+          name !== TAB_UNREAD_CLASS &&
           !isArrivalClass(name)
       );
     this._setCaption(state ? TAB_CAPTIONS[state] : undefined);
+    if (state !== TAB_UPDATED_CLASS) {
+      this._unseen = false;
+    }
     if (state) {
       classes.push(state);
       if (frame !== null) {
@@ -838,6 +925,9 @@ export class LiveViewController implements IDisposable {
   private _fadeEndsAt = 0;
   private _quietTimer: number | null = null;
   private _arrivals: number[] = [];
+  // Whether a change arrived while the tab was behind another and the reader
+  // has not opened the tab since.
+  private _unseen = false;
   private _cueTimer: number | null = null;
   private _documentCaption: string | null = null;
   private _stateCaption: string | null = null;

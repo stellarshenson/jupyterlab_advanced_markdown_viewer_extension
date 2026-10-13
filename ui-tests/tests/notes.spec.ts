@@ -812,7 +812,9 @@ test.describe('marking a passage', () => {
     // probe span inside the rendered view so the theme rules apply.
     const alphas = () =>
       page.evaluate(() => {
-        const root = document.querySelector('.jp-RenderedMarkdown')!;
+        const root = document.querySelector(
+          '.jp-MarkdownViewer .jp-RenderedMarkdown'
+        )!;
         return ['yellow', 'blue', 'pink', 'orange', 'red', 'green'].map(
           colour => {
             const probe = document.createElement('span');
@@ -1024,7 +1026,9 @@ test.describe('marking a passage', () => {
     await expect(badge).toHaveClass(/jp-AdvancedMd-notesBadge-empty/);
     await expect(badge).toHaveAttribute('title', 'No marks: Show notes');
     await expect(
-      page.locator('.jp-RenderedMarkdown .jp-AdvancedMd-notesBadge')
+      page.locator(
+        '.jp-MarkdownViewer .jp-RenderedMarkdown .jp-AdvancedMd-notesBadge'
+      )
     ).toHaveCount(0);
     // Over the top right corner of the preview.
     const box = (await badge.boundingBox())!;
@@ -1167,7 +1171,7 @@ test.describe('marking a passage', () => {
     const backgrounds = await page.evaluate(() =>
       ['red', 'green'].map(colour => {
         const node = document.querySelector(
-          `.jp-RenderedMarkdown .jp-AdvancedMd-mark-${colour}`
+          `.jp-MarkdownViewer .jp-RenderedMarkdown .jp-AdvancedMd-mark-${colour}`
         );
         return node ? getComputedStyle(node).backgroundColor : '';
       })
@@ -1712,7 +1716,7 @@ test.describe('marking a passage', () => {
     // The two ends of "and pears" inside the painted passage, on screen.
     const ends = await page.evaluate(() => {
       const span = document.querySelector<HTMLElement>(
-        '.jp-RenderedMarkdown [data-mark]'
+        '.jp-MarkdownViewer .jp-RenderedMarkdown [data-mark]'
       );
       if (!span) {
         throw new Error('no painted passage');
@@ -2198,7 +2202,7 @@ test.describe('marking a passage', () => {
     const backgrounds = await page.evaluate(() =>
       ['yellow', 'blue', 'pink', 'orange'].map(colour => {
         const node = document.querySelector(
-          `.jp-RenderedMarkdown .jp-AdvancedMd-mark-${colour}`
+          `.jp-MarkdownViewer .jp-RenderedMarkdown .jp-AdvancedMd-mark-${colour}`
         );
         return node ? getComputedStyle(node).backgroundColor : '';
       })
@@ -2250,7 +2254,7 @@ test.describe('marking a passage', () => {
       (target: string) =>
         Array.from(
           document.querySelectorAll(
-            `.jp-RenderedMarkdown [data-mark="${target}"]`
+            `.jp-MarkdownViewer .jp-RenderedMarkdown [data-mark="${target}"]`
           )
         ).map(node => node.closest('p')?.textContent ?? ''),
       id
@@ -2717,7 +2721,9 @@ test.describe('a document that already carries marks', () => {
     await expect(painted(page)).toHaveCount(3);
     const marked = await page.evaluate(() =>
       Array.from(
-        document.querySelectorAll('.jp-RenderedMarkdown .jp-AdvancedMd-mark')
+        document.querySelectorAll(
+          '.jp-MarkdownViewer .jp-RenderedMarkdown .jp-AdvancedMd-mark'
+        )
       ).map(node => node.textContent)
     );
     expect(marked).toEqual([P1, P2, P3]);
@@ -3324,6 +3330,31 @@ test.describe('a file with CRLF line endings', () => {
 test.describe('the panel state stored in the document', () => {
   test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
 
+  test('DEF-NOTES-134 two changes of the panel state inside one round trip leave one settings marker, holding the second state', async ({
+    page,
+    tmpPath
+  }) => {
+    const target = `${tmpPath}/${FILE}`;
+    // No mark and no settings marker: the first state stored only adds to
+    // the end of the file.
+    await page.contents.uploadContent(DOC, 'text', target);
+    await openPreview(page, target, FIRST);
+
+    // The second command starts before the refresh of the first has
+    // returned, so both writes are made from one revision of the file.
+    await page.evaluate(() => {
+      const commands = (window as any).jupyterapp.commands;
+      const panelState = (state: string) =>
+        commands.execute('advanced-markdown-viewer:notes-panel', { state });
+      return Promise.all([panelState('expanded'), panelState('minimap')]);
+    });
+
+    const text = fileText(target);
+    expect(text.match(/marks:settings/g)).toHaveLength(1);
+    expect(text).toContain('<!-- marks:settings panel=minimap -->');
+    await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-minimap/);
+  });
+
   test('ACC-NOTES-66 reopens the document in the state it was left', async ({
     page,
     tmpPath
@@ -3347,7 +3378,9 @@ test.describe('the panel state stored in the document', () => {
         widget.close();
       }
     });
-    await expect(page.locator('.jp-RenderedMarkdown')).toHaveCount(0);
+    await expect(
+      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+    ).toHaveCount(0);
     await openPreview(page, target, FIRST);
 
     await expect(panel(page)).toHaveClass(/jp-AdvancedMd-notes-minimap/);
@@ -3413,7 +3446,9 @@ test.describe('the panel state stored in the document', () => {
     await openPreview(page, target, 'Long report');
 
     await page.evaluate(() => {
-      const root = document.querySelector<HTMLElement>('.jp-RenderedMarkdown');
+      const root = document.querySelector<HTMLElement>(
+        '.jp-MarkdownViewer .jp-RenderedMarkdown'
+      );
       if (root) {
         root.scrollTop = Math.round(root.scrollHeight / 2);
       }
@@ -3456,7 +3491,9 @@ test.describe('revealing a mark from the panel', () => {
     await expect(rows(page)).toHaveCount(1);
 
     await page.evaluate(() => {
-      const root = document.querySelector<HTMLElement>('.jp-RenderedMarkdown');
+      const root = document.querySelector<HTMLElement>(
+        '.jp-MarkdownViewer .jp-RenderedMarkdown'
+      );
       if (root) {
         root.scrollTop = 0;
       }
@@ -3524,10 +3561,10 @@ test.describe('adding a note from a passage far down the document', () => {
 });
 
 test.describe('a change waiting on disk while the reader marks', () => {
-  // The fallback check is a minute away and the event socket carries nothing,
-  // so the change on disk reaches the document only because the marker write
-  // asks for it. This is the case ACC-NOTES-100 names: a change that arrived
-  // between the reader's selection and the write.
+  // The event socket carries nothing and the batched stat answers for no
+  // path, so the change on disk reaches the document only because the marker
+  // write asks for it. This is the case ACC-NOTES-100 names: a change that
+  // arrived between the reader's selection and the write.
   test.use({
     mockSettings: settings({
       pollInterval: 60,
@@ -3547,6 +3584,20 @@ test.describe('a change waiting on disk while the reader marks', () => {
       /jupyterlab-advanced-markdown-viewer-extension\/events/,
       () => undefined
     );
+    // The first reading of a path asks for one check of it
+    // (DEF-DETECT-129), and that check would find a write made this soon
+    // after the preview opened. The stat route therefore answers for no
+    // path, as it does for a path the server cannot serve, so no reading is
+    // ever taken.
+    await page.route(
+      /jupyterlab-advanced-markdown-viewer-extension\/stat/,
+      (route: any) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ paths: {} })
+        })
+    );
     // Socket routing is installed into a document as it loads.
     await page.reload();
     await page.contents.uploadContent(DOC, 'text', target);
@@ -3557,8 +3608,7 @@ test.describe('a change waiting on disk while the reader marks', () => {
       target,
       DOC.replace('cherries and figs', 'quinces and medlars')
     );
-    // Nothing carries the change to the document: no event, and the fallback
-    // check is a minute away.
+    // Nothing carries the change to the document: no event and no reading.
     await page.waitForTimeout(2000);
     await expect(
       page.locator('.jp-RenderedMarkdown:visible')
@@ -4953,7 +5003,9 @@ test.describe('the first note of a long document', () => {
     await openPreview(page, `${tmpPath}/${FILE}`, 'Paragraph 1.');
     // The passage sits at the bottom edge of the view, with the panel hidden.
     await page.evaluate(() => {
-      const paragraphs = document.querySelectorAll('.jp-RenderedMarkdown p');
+      const paragraphs = document.querySelectorAll(
+        '.jp-MarkdownViewer .jp-RenderedMarkdown p'
+      );
       paragraphs[paragraphs.length - 1].scrollIntoView({ block: 'end' });
     });
 
@@ -4963,7 +5015,7 @@ test.describe('the first note of a long document', () => {
 
     const placed = await page.evaluate(() => {
       const view = document
-        .querySelector('.jp-RenderedMarkdown')!
+        .querySelector('.jp-MarkdownViewer .jp-RenderedMarkdown')!
         .getBoundingClientRect();
       const passage = document
         .querySelector('[data-mark]')!

@@ -1,4 +1,4 @@
-"""Tests of the status, stat, write and events routes and of the file-watch registry.
+"""Tests of the status, stat, read, write and events routes and of the file-watch registry.
 
 The tests that need file events run only with watchdog installed; the rest hold either way.
 """
@@ -11,12 +11,21 @@ import shutil
 import threading
 import time
 
+import types
+
 import pytest
 from jupyter_server.auth.authorizer import Authorizer
+from jupyter_server.services.contents import fileio
+from jupyter_server.services.contents.manager import ContentsManager
 from tornado.httpclient import HTTPClientError
+from tornado.ioloop import IOLoop
 
 from jupyterlab_advanced_markdown_viewer_extension import watch
-from jupyterlab_advanced_markdown_viewer_extension.routes import NAMESPACE, SETTINGS_KEY
+from jupyterlab_advanced_markdown_viewer_extension.routes import (
+    NAMESPACE,
+    SETTINGS_KEY,
+    setup_route_handlers,
+)
 
 WINDOW = 0.2
 
@@ -120,8 +129,8 @@ async def contents_hash(jp_fetch, path):
     return json.loads(response.body)["hash"]
 
 
-async def write(jp_fetch, path, expected, content):
-    body = json.dumps({"path": path, "expected": expected, "content": content})
+async def write(jp_fetch, path, expected, content, **more):
+    body = json.dumps({"path": path, "expected": expected, "content": content, **more})
     return await jp_fetch(NAMESPACE, "write", method="POST", body=body)
 
 
@@ -155,6 +164,134 @@ async def test_write_with_stale_expected_answers_409(jp_fetch, jp_root_dir, regi
     assert current == {"content": "# one\n", "hash": sha256(b"# one\n")}
     assert doc.read_bytes() == b"# one\n"
     assert os.stat(doc).st_mtime_ns == before.st_mtime_ns
+
+
+async def test_write_lands_in_front_of_what_a_writer_appended(jp_fetch, jp_root_dir, registry):
+    """DEF-NOTES-33-1: a writer appended two lines after the browser read the file. The file
+    still begins with the browser's revision, whose size the browser names in bytes, so the
+    edit made against that revision is written and the appended lines follow it."""
+    doc = jp_root_dir / "doc.md"
+    held = "# één\n".encode()
+    doc.write_bytes(held + "twee\ndrie\n".encode())
+    response = await write(
+        jp_fetch, "doc.md", sha256(held), "# <!-- m -->één<!-- /m -->\n", length=len(held)
+    )
+    assert response.code == 200
+    assert doc.read_bytes() == "# <!-- m -->één<!-- /m -->\ntwee\ndrie\n".encode()
+    assert json.loads(response.body) == {"hash": sha256(doc.read_bytes())}
+
+
+async def test_write_is_refused_when_the_file_changed_inside_the_revision(
+    jp_fetch, jp_root_dir, registry
+):
+    """DEF-NOTES-33-1: the file has grown and no longer begins with the browser's revision,
+    so the edit made against that revision fits it nowhere and nothing is written."""
+    doc = jp_root_dir / "doc.md"
+    held = b"# one\n"
+    doc.write_bytes(b"# ONE\ntwo\n")
+    with pytest.raises(HTTPClientError) as refused:
+        await write(jp_fetch, "doc.md", sha256(held), "# <!-- m -->one\n", length=len(held))
+    assert refused.value.code == 409
+    assert json.loads(refused.value.response.body) == {
+        "content": "# ONE\ntwo\n",
+        "hash": sha256(b"# ONE\ntwo\n"),
+    }
+    assert doc.read_bytes() == b"# ONE\ntwo\n"
+
+
+async def test_a_second_write_from_one_revision_is_refused_when_the_first_only_added_to_it(
+    jp_fetch, jp_root_dir, registry
+):
+    """DEF-NOTES-134: two writes are made from one revision and the first only adds to its
+    end, so the file it leaves still begins with that revision. The second is refused, with
+    the file as the first left it, and a writer's line in between changes nothing of that."""
+    doc = jp_root_dir / "doc.md"
+    held = b"# one\n"
+    doc.write_bytes(held)
+    first = await write(jp_fetch, "doc.md", sha256(held), "# one\n<!-- s -->\n", length=len(held))
+    assert first.code == 200
+    with open(doc, "ab") as agent:
+        agent.write(b"two\n")
+    with pytest.raises(HTTPClientError) as refused:
+        await write(jp_fetch, "doc.md", sha256(held), "# one\n<!-- t -->\n", length=len(held))
+    assert refused.value.code == 409
+    assert json.loads(refused.value.response.body)["content"] == "# one\n<!-- s -->\ntwo\n"
+    assert doc.read_bytes() == b"# one\n<!-- s -->\ntwo\n"
+
+
+async def test_a_write_from_a_revision_that_holds_the_last_write_lands_in_front_of_new_lines(
+    jp_fetch, jp_root_dir, registry
+):
+    """DEF-NOTES-134: the revision was read after this server's last write, so it holds that
+    write, and the lines a writer appended since follow the new edit as before."""
+    doc = jp_root_dir / "doc.md"
+    doc.write_bytes(b"# one\n")
+    await write(jp_fetch, "doc.md", sha256(b"# one\n"), "# <!-- m -->one\n")
+    with open(doc, "ab") as agent:
+        agent.write(b"two\n")
+    held = doc.read_bytes()
+    with open(doc, "ab") as agent:
+        agent.write(b"three\n")
+    response = await write(
+        jp_fetch, "doc.md", sha256(held), "# <!-- m -->one\n<!-- n -->two\n", length=len(held)
+    )
+    assert response.code == 200
+    assert doc.read_bytes() == b"# <!-- m -->one\n<!-- n -->two\nthree\n"
+
+
+async def test_a_file_another_program_rewrote_is_not_held_to_the_last_write(
+    jp_fetch, jp_root_dir, registry
+):
+    """DEF-NOTES-134: another program replaced the file after this server's last write, so
+    the file no longer begins with that write and a shorter revision is no older one."""
+    doc = jp_root_dir / "doc.md"
+    doc.write_bytes(b"# one\n")
+    await write(jp_fetch, "doc.md", sha256(b"# one\n"), "# one, with a long line added\n")
+    held = b"# new\n"
+    doc.write_bytes(held + b"appended\n")
+    response = await write(jp_fetch, "doc.md", sha256(held), "# <!-- m -->new\n", length=len(held))
+    assert response.code == 200
+    assert doc.read_bytes() == b"# <!-- m -->new\nappended\n"
+
+
+async def test_a_second_write_from_an_empty_revision_is_refused(jp_fetch, jp_root_dir, registry):
+    """DEF-NOTES-134: the document note pressed twice on an empty document. Both writes are
+    made from a revision of no bytes, which every file begins with."""
+    doc = jp_root_dir / "doc.md"
+    doc.write_bytes(b"")
+    first = await write(jp_fetch, "doc.md", sha256(b""), "<!-- doc:1 -->\n", length=0)
+    assert first.code == 200
+    with pytest.raises(HTTPClientError) as refused:
+        await write(jp_fetch, "doc.md", sha256(b""), "<!-- doc:2 -->\n", length=0)
+    assert refused.value.code == 409
+    assert doc.read_bytes() == b"<!-- doc:1 -->\n"
+
+
+async def test_a_refusal_answers_while_the_file_ends_part_way_through_a_character(
+    jp_fetch, jp_root_dir, registry
+):
+    """DEF-NOTES-134: a writer has appended the first byte of a two-byte character when the
+    second write is refused. The refusal is still a 409 the browser can act on; an error here
+    would send the write to the Context save and its File Changed dialog."""
+    doc = jp_root_dir / "doc.md"
+    held = b"text\n"
+    doc.write_bytes(held)
+    await write(jp_fetch, "doc.md", sha256(held), "text\n<!-- s -->\n", length=len(held))
+    with open(doc, "ab") as agent:
+        agent.write(b"za\xc5")
+    on_disk = doc.read_bytes()
+    with pytest.raises(HTTPClientError) as refused:
+        await write(jp_fetch, "doc.md", sha256(held), "text\n<!-- t -->\n", length=len(held))
+    assert refused.value.code == 409
+    assert json.loads(refused.value.response.body)["hash"] == sha256(on_disk)
+    assert doc.read_bytes() == on_disk
+
+
+async def test_write_refuses_a_length_that_is_not_an_integer(jp_fetch, jp_root_dir, registry):
+    (jp_root_dir / "doc.md").write_text("# one\n")
+    with pytest.raises(HTTPClientError) as refused:
+        await write(jp_fetch, "doc.md", sha256(b"# one\n"), "# two\n", length="6")
+    assert refused.value.code == 400
 
 
 async def test_concurrent_writes_one_lands(jp_fetch, jp_root_dir, registry, monkeypatch):
@@ -208,6 +345,195 @@ async def test_write_outside_the_root_is_refused(jp_fetch, jp_root_dir, registry
     assert refused.value.code == 404
     assert json.loads(refused.value.response.body)["message"] == "path not served"
     assert outside.read_text() == "# outside\n"
+
+
+async def read(jp_fetch, path):
+    """What the read route answers for `path`."""
+    return json.loads((await jp_fetch(NAMESPACE, "read", params={"path": path})).body)
+
+
+async def contents(jp_fetch, path):
+    """What the contents API answers for `path`, asked the way the frontend asks."""
+    params = {"type": "file", "format": "text", "content": "1", "hash": "1"}
+    return json.loads((await jp_fetch("api", "contents", path, params=params)).body)
+
+
+async def until(condition):
+    """Wait for a state of the server, five seconds at most."""
+
+    async def poll():
+        while not condition():
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(poll(), 5)
+
+
+def hold(monkeypatch, *names):
+    """Hold the contents manager where it hands the named file calls to a thread.
+
+    The manager opens a file for writing, which empties it, and only then hands the write to
+    a thread, answering other requests meanwhile; it reads a file the same way. Returns, per
+    name, the event set when the first such call is reached and the event that lets it go on.
+    """
+    run_sync = fileio.run_sync
+    held = {name: (asyncio.Event(), asyncio.Event()) for name in names}
+
+    async def gated(func, *args):
+        reached, released = held.get(func.__name__, (None, None))
+        if reached is not None and not reached.is_set():
+            reached.set()
+            await released.wait()
+        return await run_sync(func, *args)
+
+    monkeypatch.setattr(fileio, "run_sync", gated)
+    return held
+
+
+def save(jp_fetch, path, content):
+    """Start a save of `path` through the contents API."""
+    body = json.dumps({"type": "file", "format": "text", "content": content})
+    return asyncio.ensure_future(jp_fetch("api", "contents", path, method="PUT", body=body))
+
+
+async def test_read_answers_what_the_contents_api_answers(jp_fetch, jp_root_dir, registry):
+    """DEF-APPLY-131: the frontend takes the answer for the contents model of the document."""
+    (jp_root_dir / "doc.md").write_text("# one\n")
+    model = await contents(jp_fetch, "doc.md")
+    assert model["content"] == "# one\n"
+    assert model["hash"] == sha256(b"# one\n")
+    assert await read(jp_fetch, "doc.md") == {"model": model}
+
+
+async def test_read_waits_out_a_save_through_the_contents_api(
+    jp_fetch, jp_root_dir, registry, monkeypatch
+):
+    """DEF-APPLY-131: a save is held between emptying the file and writing it. The contents
+    API answers the empty file; the read route answers once the save is through."""
+    (jp_root_dir / "doc.md").write_text("# one\n")
+    emptied, written = hold(monkeypatch, "write")["write"]
+    saving = save(jp_fetch, "doc.md", "# one\n# two\n")
+    await asyncio.wait_for(emptied.wait(), 5)
+    assert (await contents(jp_fetch, "doc.md"))["content"] == ""
+    reading = asyncio.ensure_future(read(jp_fetch, "doc.md"))
+    await until(lambda: "doc.md" in registry._waiters)
+    written.set()
+    await saving
+    assert (await reading)["model"]["content"] == "# one\n# two\n"
+
+
+async def test_read_reads_again_when_a_save_started_during_it(
+    jp_fetch, jp_root_dir, registry, monkeypatch
+):
+    """DEF-APPLY-131: no save is under way when the route begins to read, and one empties
+    the file before the read reaches it. The route reads again after that save."""
+    (jp_root_dir / "doc.md").write_text("# one\n")
+    held = hold(monkeypatch, "read", "write")
+    reading = asyncio.ensure_future(read(jp_fetch, "doc.md"))
+    await asyncio.wait_for(held["read"][0].wait(), 5)
+    saving = save(jp_fetch, "doc.md", "# one\n# two\n")
+    await asyncio.wait_for(held["write"][0].wait(), 5)
+    held["read"][1].set()
+    await until(lambda: "doc.md" in registry._waiters)
+    held["write"][1].set()
+    await saving
+    assert (await reading)["model"]["content"] == "# one\n# two\n"
+
+
+async def test_read_waits_out_a_write_through_the_write_route(
+    jp_fetch, jp_root_dir, registry, monkeypatch
+):
+    """DEF-APPLY-131: the write route empties the file before it writes it, as a save does."""
+    (jp_root_dir / "doc.md").write_text("# one\n")
+    reached, released = threading.Event(), threading.Event()
+    read_bytes = watch._read_bytes
+
+    def held(os_path):
+        reached.set()
+        released.wait(5)
+        return read_bytes(os_path)
+
+    monkeypatch.setattr(watch, "_read_bytes", held)
+    writing = asyncio.ensure_future(write(jp_fetch, "doc.md", sha256(b"# one\n"), "# marked\n"))
+    await until(reached.is_set)
+    reading = asyncio.ensure_future(read(jp_fetch, "doc.md"))
+    await until(lambda: "doc.md" in registry._waiters)
+    released.set()
+    await writing
+    assert (await reading)["model"]["content"] == "# marked\n"
+
+
+async def test_read_answers_after_a_save_that_failed(jp_fetch, jp_root_dir, registry):
+    """DEF-APPLY-131: the contents manager runs no hook for a save that failed, so that
+    save ends with its request, and a read after it is answered."""
+    (jp_root_dir / "doc.md").write_text("# one\n")
+    body = json.dumps({"type": "file", "format": "neither", "content": "# two\n"})
+    with pytest.raises(HTTPClientError) as refused:
+        await jp_fetch("api", "contents", "doc.md", method="PUT", body=body)
+    assert refused.value.code == 400
+    assert registry.writes == 1
+    answer = await asyncio.wait_for(read(jp_fetch, "doc.md"), 5)
+    assert answer["model"]["content"] == "# one\n"
+
+
+async def test_read_is_not_held_by_a_task_that_saved_and_runs_on(
+    jp_fetch, jp_serverapp, jp_root_dir, registry
+):
+    """DEF-APPLY-131: a save made from a task that goes on running, as this test does, is
+    over when the contents manager has written the file."""
+    (jp_root_dir / "doc.md").write_text("# one\n")
+    model = {"type": "file", "format": "text", "content": "# two\n"}
+    await jp_serverapp.contents_manager.save(model, "doc.md")
+    answer = await asyncio.wait_for(read(jp_fetch, "doc.md"), 5)
+    assert answer["model"]["content"] == "# two\n"
+
+
+async def test_read_tells_a_path_it_cannot_serve_from_a_file_that_is_not_there(
+    jp_fetch, jp_root_dir, registry
+):
+    """As the stat route: nothing for a document on another drive, which the frontend reads
+    through the contents API, and the 404 of the contents API for a file that is gone."""
+    (jp_root_dir / "RTC:doc.md").write_text("# colon\n")
+    assert await read(jp_fetch, "RTC:doc.md") == {}
+    assert await read(jp_fetch, "../outside.md") == {}
+    with pytest.raises(HTTPClientError) as missing:
+        await read(jp_fetch, "missing.md")
+    assert missing.value.code == 404
+
+
+async def test_read_keeps_a_space_at_the_start_of_a_file_name(jp_fetch, jp_root_dir, registry):
+    """A file whose name begins with a space is that file, not the one named without it."""
+    (jp_root_dir / " lead.md").write_text("# spaced\n")
+    (jp_root_dir / "lead.md").write_text("# plain\n")
+    assert (await read(jp_fetch, " lead.md"))["model"]["content"] == "# spaced\n"
+
+
+async def test_a_registry_rooted_at_a_filesystem_root_serves_the_files_under_it(jp_root_dir):
+    """DEF-DETECT-133: the root / ends in the separator a path is compared against, and every
+    path was taken to lie outside it."""
+    (jp_root_dir / "doc.md").write_text("# one\n")
+    path = str(jp_root_dir / "doc.md").lstrip("/")
+    rooted = watch.FileWatchRegistry("/", IOLoop.current())
+    try:
+        assert rooted.serves(path)
+        st = os.stat(jp_root_dir / "doc.md")
+        assert rooted.stat([path]) == {path: {"mtime": st.st_mtime, "size": st.st_size}}
+        assert rooted.register(path, object()) == path
+    finally:
+        rooted.stop()
+
+
+async def test_a_contents_manager_that_keeps_no_files_here_is_served_nothing():
+    """DEF-DETECT-133: such a manager reports the root / as well, and its paths are no local
+    files. It was left unserved only because the root / served nothing."""
+    web_app = types.SimpleNamespace(
+        settings={"base_url": "/", "contents_manager": ContentsManager()},
+        add_handlers=lambda *args: None,
+    )
+    setup_route_handlers(web_app)
+    unserved = web_app.settings[SETTINGS_KEY]
+    assert not unserved.serves("etc/hostname")
+    assert unserved.stat(["etc/hostname"]) == {}
+    assert unserved.register("etc/hostname", object()) is None
 
 
 async def test_write_reports_one_change_within_200ms(

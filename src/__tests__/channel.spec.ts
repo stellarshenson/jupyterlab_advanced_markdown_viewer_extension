@@ -69,8 +69,11 @@ function makeServer() {
   const server = {
     events: true,
     missing: false,
+    readMissing: false,
+    readFails: false,
     stats: {} as Record<string, IStat | null>,
     statRequests: [] as string[][],
+    readRequests: [] as string[],
     contentsRequests: [] as string[]
   };
   const fetch = jest.fn(async (request: Request) => {
@@ -98,6 +101,33 @@ function makeServer() {
     }
     if (request.url.includes('/status')) {
       return new Response(JSON.stringify({ events: server.events }));
+    }
+    if (request.url.includes('/read')) {
+      const path = new URL(request.url).searchParams.get('path') as string;
+      server.readRequests.push(path);
+      if (server.readMissing) {
+        return new Response('Not Found', { status: 404 });
+      }
+      if (server.readFails) {
+        return new Response(JSON.stringify({ message: 'Unhandled error' }), {
+          status: 500
+        });
+      }
+      // As the stat route: nothing for a path the server cannot serve, and a
+      // 404 with a JSON body for a file that is not there.
+      if (path.split('/')[0].includes(':')) {
+        return new Response(JSON.stringify({}));
+      }
+      if (!server.stats[path]) {
+        return new Response(JSON.stringify({ message: 'no such file' }), {
+          status: 404
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          model: { name: path, path, type: 'file', content: `text of ${path}` }
+        })
+      );
     }
     if (request.url.includes('/stat')) {
       const { paths } = JSON.parse(await request.text()) as { paths: string[] };
@@ -145,6 +175,11 @@ describe('ChangeChannel', () => {
 
   /**
    * Register paths and bring the socket up, as a lab session opening previews.
+   *
+   * The first reading of each path is taken while the socket is still
+   * opening, and asks for one check of it (DEF-DETECT-129). Those checks are
+   * asserted in their own tests and dropped here, so every other test counts
+   * from a session that has settled.
    */
   const connect = async (...paths: string[]) => {
     for (const path of paths) {
@@ -153,7 +188,12 @@ describe('ChangeChannel', () => {
     await settle();
     socket().open();
     await settle();
+    changes.length = 0;
   };
+
+  /** The server confirms registrations, as it does for every register message. */
+  const confirm = (...paths: string[]) =>
+    socket().message({ type: 'registered', paths, events: true });
 
   beforeEach(() => {
     jest.useFakeTimers();
@@ -211,11 +251,112 @@ describe('ChangeChannel', () => {
     socket().message({ type: 'change', path: 'a.md', event: 'changed' });
     socket().message({ type: 'change', path: 'a.md', event: 'deleted' });
     socket().message({ type: 'change', path: 'other.md', event: 'changed' });
-    socket().message({ type: 'registered', paths: ['a.md'], events: true });
     expect(changes).toEqual([
       { path: 'a.md', event: 'changed' },
       { path: 'a.md', event: 'deleted' }
     ]);
+  });
+
+  describe('a write made before the watch took effect (DEF-DETECT-129)', () => {
+    // The watcher reads the file when it registers, and the server watches
+    // the path only once the registration reaches it. A write in between
+    // raises no event, and the first reading takes its revision for the
+    // baseline. One check, asked for once the registration is in effect,
+    // reads what was written before.
+    it('is found by the check asked for when the server confirms the registration', async () => {
+      await connect('a.md');
+      // A second preview opens on the standing connection.
+      channel.register('b.md');
+      await settle();
+      server.stats['b.md'] = { mtime: 2, size: 21 };
+      confirm('b.md');
+      expect(changes).toEqual([{ path: 'b.md', event: 'changed' }]);
+      // The first reading of the path asks once more: a write made after the
+      // confirmation's check raises no event on a filesystem without them.
+      await advance(10_000);
+      expect(changes).toEqual([
+        { path: 'b.md', event: 'changed' },
+        { path: 'b.md', event: 'changed' }
+      ]);
+    });
+
+    it('asks once for each registration, and not again when a reconnect confirms it', async () => {
+      await connect('a.md', 'b.md');
+      confirm('a.md', 'b.md');
+      expect(changes).toEqual([
+        { path: 'a.md', event: 'changed' },
+        { path: 'b.md', event: 'changed' }
+      ]);
+      confirm('a.md', 'b.md');
+      socket().drop();
+      await advance(1000);
+      socket().open();
+      await settle();
+      confirm('a.md', 'b.md');
+      // The stat on reconnect is what finds a write made during the gap.
+      expect(changes).toHaveLength(2);
+    });
+
+    it('asks again for a path released and registered anew', async () => {
+      await connect('a.md');
+      confirm('a.md');
+      channel.release('a.md');
+      channel.register('a.md');
+      await settle();
+      confirm('a.md');
+      expect(changes).toEqual([
+        { path: 'a.md', event: 'changed' },
+        { path: 'a.md', event: 'changed' }
+      ]);
+    });
+
+    it('asks nothing for a path this session does not hold', async () => {
+      await connect('a.md');
+      confirm('other.md');
+      socket().message({ type: 'registered', events: true });
+      socket().message({ type: 'registered', paths: 'a.md', events: true });
+      expect(changes).toEqual([]);
+    });
+
+    it('is found at the first reading while the socket is still opening', async () => {
+      channel.register('a.md');
+      // The reading is taken before the socket is up, so no confirmation
+      // has come: it is the first thing that can vouch for the path.
+      await settle();
+      expect(changes).toEqual([{ path: 'a.md', event: 'changed' }]);
+      // The confirmation that follows the socket asks once more, because
+      // only from then on does the server report a write.
+      socket().open();
+      await settle();
+      confirm('a.md');
+      expect(changes).toEqual([
+        { path: 'a.md', event: 'changed' },
+        { path: 'a.md', event: 'changed' }
+      ]);
+    });
+
+    it('is found at the first reading where the server raises no events', async () => {
+      server.events = false;
+      channel.register('a.md');
+      await settle();
+      expect(changes).toEqual([{ path: 'a.md', event: 'changed' }]);
+      // Later readings report a file only when it moved.
+      await advance(10_000);
+      expect(changes).toEqual([{ path: 'a.md', event: 'changed' }]);
+    });
+
+    it('asks at the first reading of a path registered on a standing connection', async () => {
+      await connect('a.md');
+      channel.register('b.md');
+      await settle();
+      // No confirmation came: the first reading is what asks, a fallback
+      // interval later at most.
+      await advance(10_000);
+      expect(changes).toEqual([{ path: 'b.md', event: 'changed' }]);
+      // Later readings report the file only when it moved.
+      await advance(10_000);
+      expect(changes).toEqual([{ path: 'b.md', event: 'changed' }]);
+    });
   });
 
   it('reconnects with backoff, registers again and checks the files once', async () => {
@@ -292,10 +433,14 @@ describe('ChangeChannel', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     // The extension's own stat route is gone with the rest of it, so the
     // comparison is made from the contents API. The first check is the
-    // baseline.
+    // baseline, and asks for one check of each path (DEF-DETECT-129).
     expect(server.statRequests).toEqual([]);
     expect(server.contentsRequests).toEqual(['a.md', 'b.md']);
-    expect(changes).toEqual([]);
+    expect(changes).toEqual([
+      { path: 'a.md', event: 'changed' },
+      { path: 'b.md', event: 'changed' }
+    ]);
+    changes.length = 0;
     server.stats['b.md'] = { mtime: 2, size: 21 };
     // The poll started at time zero; settling took one millisecond.
     await advance(2998);
@@ -318,6 +463,7 @@ describe('ChangeChannel', () => {
     await settle();
     expect(FakeSocket.instances).toHaveLength(0);
     expect(warn).toHaveBeenCalledTimes(1);
+    changes.length = 0;
     server.stats['a.md'] = { mtime: 2, size: 11 };
     await advance(10_000);
     expect(changes).toEqual([{ path: 'a.md', event: 'changed' }]);
@@ -486,6 +632,7 @@ describe('ChangeChannel', () => {
     channel.register('b.md');
     channel.register('dir/RTC:a.md');
     await settle();
+    changes.length = 0;
     server.stats['b.md'] = null;
     // A colon in a later segment is part of a file name and names no drive,
     // so that file is compared as any other.
@@ -500,6 +647,63 @@ describe('ChangeChannel', () => {
     expect(server.contentsRequests).not.toContain('RTC:a.md');
   });
 
+  describe('reading a document (DEF-APPLY-131)', () => {
+    it('reads through the read route of the server extension', async () => {
+      await connect('dir/a b.md');
+      server.stats['dir/a b.md'] = { mtime: 1, size: 10 };
+      await expect(channel.read('dir/a b.md')).resolves.toEqual({
+        name: 'dir/a b.md',
+        path: 'dir/a b.md',
+        type: 'file',
+        content: 'text of dir/a b.md'
+      });
+      expect(server.readRequests).toEqual(['dir/a b.md']);
+    });
+
+    it('answers nothing for a path the server does not serve', async () => {
+      await connect('RTC:a.md');
+      await expect(channel.read('RTC:a.md')).resolves.toBeUndefined();
+    });
+
+    it('rejects for a file that is not there', async () => {
+      await connect('a.md');
+      server.stats['a.md'] = null;
+      await expect(channel.read('a.md')).rejects.toBeInstanceOf(
+        ServerConnection.ResponseError
+      );
+    });
+
+    it('answers nothing where the server has no read route, and asks once', async () => {
+      // A server not restarted since the upgrade the browser has loaded: its
+      // other routes answer, and this one is not there.
+      await connect('a.md');
+      server.readMissing = true;
+      await expect(channel.read('a.md')).resolves.toBeUndefined();
+      await expect(channel.read('a.md')).resolves.toBeUndefined();
+      expect(server.readRequests).toEqual(['a.md']);
+    });
+
+    it('answers nothing when the route fails, so the contents API says what the reader is told', async () => {
+      await connect('a.md');
+      server.readFails = true;
+      await expect(channel.read('a.md')).resolves.toBeUndefined();
+    });
+
+    it('asks nothing of a lab known to have no server extension', async () => {
+      server.missing = true;
+      channel.register('a.md');
+      await settle();
+      await expect(channel.read('a.md')).resolves.toBeUndefined();
+      // Such a lab answers every route of the extension with its own 404, so
+      // the request itself is what must not have been made.
+      expect(
+        server.fetch.mock.calls.filter(([request]) =>
+          request.url.includes('/read')
+        )
+      ).toEqual([]);
+    });
+  });
+
   it('does not let an event before the first check consume the change after it', async () => {
     await connect('a.md');
     channel.register('b.md');
@@ -509,34 +713,20 @@ describe('ChangeChannel', () => {
     socket().message({ type: 'change', path: 'b.md', event: 'changed' });
     server.stats['b.md'] = { mtime: 2, size: 21 };
     await advance(10_000);
-    expect(changes).toEqual([{ path: 'b.md', event: 'changed' }]);
+    // The event, then the one check the first reading of a path asks for.
+    expect(changes).toEqual([
+      { path: 'b.md', event: 'changed' },
+      { path: 'b.md', event: 'changed' }
+    ]);
     // The write after it raises no event of its own: the check must report
     // it rather than take it for the one the event already carried.
     server.stats['b.md'] = { mtime: 3, size: 22 };
     await advance(10_000);
     expect(changes).toEqual([
       { path: 'b.md', event: 'changed' },
+      { path: 'b.md', event: 'changed' },
       { path: 'b.md', event: 'changed' }
     ]);
-  });
-
-  it('applies a write lost before the first check at the write after it', async () => {
-    await connect('a.md');
-    // A second preview opens while the socket already stands: the
-    // registration is sent and no check is made for it.
-    channel.register('b.md');
-    await settle();
-    // The write lands inside that window and its event is lost with it, so
-    // the first check reads it as the baseline and reports nothing.
-    server.stats['b.md'] = { mtime: 2, size: 21 };
-    await advance(10_000);
-    expect(changes).toEqual([]);
-    // The write after it moves the file off that baseline and is reported.
-    // The read that follows brings the whole current file, so the document
-    // catches up one write later.
-    server.stats['b.md'] = { mtime: 3, size: 22 };
-    await advance(10_000);
-    expect(changes).toEqual([{ path: 'b.md', event: 'changed' }]);
   });
 
   it('closes the connection on dispose and does not reconnect', async () => {

@@ -342,9 +342,9 @@ for (const latencyMs of LATENCIES) {
       await page.waitForTimeout(1500);
       await startWatch(page);
       await page.keyboard.type(' zebrawood');
-      await expect(page.locator('.jp-RenderedMarkdown')).toContainText(
-        'zebrawood'
-      );
+      await expect(
+        page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
+      ).toContainText('zebrawood');
       await page.waitForTimeout(WATCH_MS);
       const watched = await stopWatch(page);
       expect(watched.moved).toBeLessThanOrEqual(TOLERANCE_PX);
@@ -392,14 +392,17 @@ test('ACC-APPLY-190 the place holds with the browser scroll anchoring turned off
   tmpPath
 }) => {
   await page.addStyleTag({
-    content: '.jp-RenderedMarkdown { overflow-anchor: none !important; }'
+    content:
+      '.jp-MarkdownViewer .jp-RenderedMarkdown { overflow-anchor: none !important; }'
   });
   const r = await openReport(page, tmpPath, 0);
   expect(
     await page.evaluate(
       () =>
         getComputedStyle(
-          document.querySelector('.jp-RenderedMarkdown:not(:empty)')!
+          document.querySelector(
+            '.jp-MarkdownViewer .jp-RenderedMarkdown:not(:empty)'
+          )!
         ).overflowAnchor
     )
   ).toBe('none');

@@ -9,8 +9,9 @@
  * sets; the rendered glyphs are a browser test.
  */
 
+import { MessageLoop } from '@lumino/messaging';
 import { Signal } from '@lumino/signaling';
-import { Title } from '@lumino/widgets';
+import { Title, Widget } from '@lumino/widgets';
 
 // The test compiler options carry the jest types alone, so the two things
 // this file needs from the module system are declared where they are used.
@@ -52,6 +53,7 @@ import {
   TAB_BLOCKED_CLASS,
   TAB_FRAME_CLASS_PREFIX,
   TAB_MISSING_CLASS,
+  TAB_UNREAD_CLASS,
   TAB_UPDATED_CLASS,
   frameFor
 } from '../controller';
@@ -106,6 +108,9 @@ function makeWidget() {
     node,
     title: new Title({ owner: {}, label: CAPTION, caption: CAPTION }),
     isVisible: true,
+    // The controller hooks the messages of the widget; a message sent to the
+    // stand-in ends here once the hooks have run.
+    processMessage: () => undefined,
     context: { path: CAPTION },
     content: Object.assign(content, {
       rendered: new Signal<any, void>(content),
@@ -149,6 +154,11 @@ describe('tab cue', () => {
   const tabClasses = () => widget.title.className.split(/\s+/).filter(Boolean);
   const attention = () =>
     widget.node.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+  /** The tab is selected, as the dock panel does it: the widget is shown. */
+  const toFront = () => {
+    widget.isVisible = true;
+    MessageLoop.sendMessage(widget, Widget.Msg.AfterShow);
+  };
 
   beforeEach(() => {
     jest.useFakeTimers();
@@ -197,6 +207,54 @@ describe('tab cue', () => {
       expect(tabClasses()).not.toContain(TAB_UPDATED_CLASS);
     });
 
+    it('drops the marker a fade duration after a tab left behind comes to the front', () => {
+      // ACC-CUE-29: the reader who selects the tab has seen the marker, and
+      // need not click in the document to be rid of it.
+      widget.isVisible = false;
+      applied();
+      jest.advanceTimersByTime(life + 1000);
+      expect(tabClasses()).toContain(TAB_UPDATED_CLASS);
+      toFront();
+      jest.advanceTimersByTime(settings.fadeDuration - 1);
+      expect(tabClasses()).toContain(TAB_UPDATED_CLASS);
+      jest.advanceTimersByTime(1);
+      expect(tabClasses()).not.toContain(TAB_UPDATED_CLASS);
+    });
+
+    it('keeps the longer period when the tab comes to the front while changes arrive', () => {
+      widget.isVisible = false;
+      applied();
+      jest.advanceTimersByTime(1000);
+      toFront();
+      // The period the last change set ends later than a fade duration from
+      // now, and it stands.
+      jest.advanceTimersByTime(life - 1000 - 1);
+      expect(tabClasses()).toContain(TAB_UPDATED_CLASS);
+      jest.advanceTimersByTime(1);
+      expect(tabClasses()).not.toContain(TAB_UPDATED_CLASS);
+    });
+
+    it('leaves a tab the reader opened, even when it goes behind again before the fade duration ends', () => {
+      // Opening the tab is looking at it: the marker has done its work.
+      widget.isVisible = false;
+      applied();
+      jest.advanceTimersByTime(life);
+      toFront();
+      jest.advanceTimersByTime(settings.fadeDuration - 1);
+      widget.isVisible = false;
+      expect(tabClasses()).toContain(TAB_UPDATED_CLASS);
+      jest.advanceTimersByTime(1);
+      expect(tabClasses()).toEqual([]);
+    });
+
+    it('leaves a change held back on a tab that comes to the front', () => {
+      widget.isVisible = false;
+      watcher.blocked.emit('dirty');
+      toFront();
+      jest.advanceTimersByTime(settings.fadeDuration * 2);
+      expect(tabClasses()).toEqual([TAB_BLOCKED_CLASS]);
+    });
+
     it('names the change in words for as long as it stands, then gives the caption back', () => {
       applied();
       expect(widget.title.caption).toMatch(/changed on disk/);
@@ -223,6 +281,113 @@ describe('tab cue', () => {
       expect(widget.title.caption).toBe(
         'Name: live.md\nPath: later\nLast Saved: later'
       );
+    });
+  });
+
+  describe('the unread marker', () => {
+    // ACC-CUE-201: a change the reader has not looked at stands on its tab
+    // as the unread marker.
+    it('turns the marker into the unread marker when changes stop on a tab behind another', () => {
+      widget.isVisible = false;
+      applied();
+      jest.advanceTimersByTime(QUIET_MS - 1);
+      expect(tabClasses()).toContain(TAB_ACTIVE_CLASS);
+      expect(tabClasses()).not.toContain(TAB_UNREAD_CLASS);
+      jest.advanceTimersByTime(1);
+      expect(tabClasses()).toEqual([TAB_UPDATED_CLASS, TAB_UNREAD_CLASS]);
+    });
+
+    it('keeps the half circle on a tab in front', () => {
+      applied();
+      jest.advanceTimersByTime(QUIET_MS);
+      expect(tabClasses()).toEqual([TAB_UPDATED_CLASS]);
+    });
+
+    it('never marks a change the reader watched as unread, and takes its marker away on time', () => {
+      // DEF-CUE-130. The tab was in front while the change arrived; the
+      // reader then selects another tab before the fade duration ends.
+      applied();
+      jest.advanceTimersByTime(QUIET_MS);
+      widget.isVisible = false;
+      jest.advanceTimersByTime(settings.fadeDuration - 1);
+      expect(tabClasses()).toEqual([TAB_UPDATED_CLASS]);
+      jest.advanceTimersByTime(1);
+      expect(tabClasses()).toEqual([]);
+    });
+
+    it('does the same when the reader leaves while the marker still alternates', () => {
+      applied();
+      jest.advanceTimersByTime(1000);
+      widget.isVisible = false;
+      jest.advanceTimersByTime(QUIET_MS - 1000);
+      expect(tabClasses()).toEqual([TAB_UPDATED_CLASS]);
+      jest.advanceTimersByTime(settings.fadeDuration);
+      expect(tabClasses()).toEqual([]);
+    });
+
+    it('marks unread a change that arrives after the reader left the tab', () => {
+      applied();
+      widget.isVisible = false;
+      applied();
+      jest.advanceTimersByTime(QUIET_MS);
+      expect(tabClasses()).toEqual([TAB_UPDATED_CLASS, TAB_UNREAD_CLASS]);
+    });
+
+    it('counts a tab brought to the front as looked at', () => {
+      widget.isVisible = false;
+      applied();
+      toFront();
+      // The reader is on the tab when the changes stop: no unread marker.
+      jest.advanceTimersByTime(QUIET_MS);
+      expect(tabClasses()).toEqual([TAB_UPDATED_CLASS]);
+    });
+
+    it('says in the tooltip that the file changed while the tab was behind', () => {
+      // ACC-CUE-202.
+      widget.isVisible = false;
+      applied();
+      expect(widget.title.caption).toMatch(/highlighted/);
+      jest.advanceTimersByTime(QUIET_MS);
+      expect(widget.title.caption).toMatch(/while this tab was behind another/);
+      expect(widget.title.caption).not.toMatch(/highlighted/);
+      // The document's own caption stays under the words.
+      expect(widget.title.caption).toContain(CAPTION);
+      // A new change brings back the words of an arriving change.
+      applied();
+      expect(widget.title.caption).toMatch(/highlighted/);
+      attention();
+      expect(widget.title.caption).toBe(CAPTION);
+    });
+
+    it('alternates again when a change arrives, and is the unread marker again once it stops', () => {
+      widget.isVisible = false;
+      applied();
+      jest.advanceTimersByTime(QUIET_MS);
+      applied();
+      expect(tabClasses()).toEqual([TAB_UPDATED_CLASS, TAB_ACTIVE_CLASS]);
+      jest.advanceTimersByTime(QUIET_MS);
+      expect(tabClasses()).toEqual([TAB_UPDATED_CLASS, TAB_UNREAD_CLASS]);
+    });
+
+    it('takes the unread marker off a tab brought to the front, and does not put it back when the tab goes behind again', () => {
+      widget.isVisible = false;
+      applied();
+      jest.advanceTimersByTime(QUIET_MS + settings.fadeDuration);
+      toFront();
+      expect(tabClasses()).toEqual([TAB_UPDATED_CLASS]);
+      widget.isVisible = false;
+      jest.advanceTimersByTime(settings.fadeDuration - 1);
+      expect(tabClasses()).toEqual([TAB_UPDATED_CLASS]);
+      jest.advanceTimersByTime(1);
+      expect(tabClasses()).toEqual([]);
+    });
+
+    it('gives way to a change held back', () => {
+      widget.isVisible = false;
+      applied();
+      jest.advanceTimersByTime(QUIET_MS);
+      watcher.blocked.emit('dirty');
+      expect(tabClasses()).toEqual([TAB_BLOCKED_CLASS]);
     });
   });
 
@@ -339,15 +504,43 @@ describe('tab cue', () => {
     const markerRule = (className: string) =>
       ruleFor(`.lm-TabBar-tab.${className} .lm-TabBar-tabLabel::before`);
 
-    it('turns the arriving marker half a turn at a time, so it alternates two frames', () => {
-      // ACC-CUE-71. A full turn in two steps shows the circle at 0 and at
-      // 180 degrees, its filled half on the left and then on the right.
-      const updated = markerRule(TAB_UPDATED_CLASS);
-      expect(glyphOf(updated)).toBe('\\25D0');
-      expect(updated).toMatch(/jp-AdvancedMd-tab-turn 2s steps\(2, end\)/);
-      expect(stylesheet).toMatch(
-        /@keyframes jp-AdvancedMd-tab-turn \{\s*to \{\s*transform: rotate\(1turn\);/
+    it('alternates two characters, neither of them turned or moved', () => {
+      // DEF-CUE-128. One character turned half a turn about the centre of
+      // its box moved by twice the distance the font draws the circle from
+      // that centre. The second frame is the second character, drawn where
+      // the font draws it.
+      expect(glyphOf(markerRule(TAB_UPDATED_CLASS))).toBe('\\25D0');
+      const frames = /@keyframes jp-AdvancedMd-tab-turn \{([^@]*?)\n\}/.exec(
+        stylesheet
       );
+      expect(frames).not.toBeNull();
+      expect((frames as RegExpExecArray)[1]).toMatch(
+        /^\s*50% \{\s*content: '\\25D1';\s*\}\s*$/
+      );
+    });
+
+    it('draws the unread marker as one character that stands still, one text colour level above the label', () => {
+      // ACC-CUE-201.
+      const unread = markerRule(TAB_UNREAD_CLASS);
+      expect(glyphOf(unread)).toBe('\\273B');
+      expect(unread).toMatch(/color: var\(--jp-ui-font-color0\);/);
+      expect(unread).not.toContain('animation');
+      for (const other of [
+        TAB_UPDATED_CLASS,
+        TAB_BLOCKED_CLASS,
+        TAB_MISSING_CLASS
+      ]) {
+        expect(glyphOf(unread)).not.toBe(glyphOf(markerRule(other)));
+      }
+    });
+
+    it('moves the marker only while changes arrive', () => {
+      // ACC-CUE-71. The animation is on the arriving state, so the marker
+      // stands still as its first character once the writer is quiet.
+      expect(markerRule(TAB_ACTIVE_CLASS)).toMatch(
+        /animation: jp-AdvancedMd-tab-turn 2s step-end infinite;/
+      );
+      expect(markerRule(TAB_UPDATED_CLASS)).not.toContain('animation');
     });
 
     it('gives each frame class a turn of two of its frames', () => {
@@ -363,12 +556,11 @@ describe('tab cue', () => {
       const missing = markerRule(TAB_MISSING_CLASS);
       expect(glyphOf(missing)).not.toBe(glyphOf(markerRule(TAB_UPDATED_CLASS)));
       expect(glyphOf(missing)).not.toBe(glyphOf(markerRule(TAB_BLOCKED_CLASS)));
-      // The three markers carry three amounts of movement: continuous,
-      // occasional, none. The still one therefore declares no animation at
-      // all, rather than only a different one from the turn - the nudge of
-      // the held change would read as something waiting to land, and nothing
-      // is waiting behind a file that is gone.
-      expect(markerRule(TAB_UPDATED_CLASS)).toContain('animation');
+      // The arriving change alternates and the held change nudges. The
+      // missing one declares no animation at all, rather than only a
+      // different one - the nudge of the held change would read as something
+      // waiting to land, and nothing is waiting behind a file that is gone.
+      expect(markerRule(TAB_ACTIVE_CLASS)).toContain('animation');
       expect(markerRule(TAB_BLOCKED_CLASS)).toContain('animation');
       expect(missing).not.toContain('animation');
     });
