@@ -2,6 +2,15 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.33] - 2026-10-16
+
+The tab marks changes nobody has looked at yet with a green dot.
+
+### Changed
+
+- The marker for changes that arrived while the tab was behind another one is a green dot, where it was a star (✻). The browser draws the dot, so it has the same size and shape on every machine
+- The dot is dark green in a light theme and a lighter green in a dark theme, at 3.4 to 1 or more against every tab colour measured. It is centred on the capital letters of the tab name and stays visible in a forced-colours mode
+
 ## [1.0.32] - 2026-10-13
 
 The tab shows changes nobody has looked at yet, and the preview reads and writes the file through the server extension.
