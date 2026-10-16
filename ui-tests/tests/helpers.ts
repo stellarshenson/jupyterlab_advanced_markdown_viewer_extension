@@ -122,17 +122,25 @@ export function highlightAlphas(
 
 /**
  * The computed style of one tab marker: the `::before` of the label of the
- * tab carrying a marker class, beside the label's own colour.
+ * tab carrying a marker class, beside the label's own colour and the height
+ * of the tab in pixels.
  *
  * The marker is generated content, so nothing but the computed style of the
- * pseudo-element says which shape a tab is showing or whether it moves.
+ * pseudo-element says which shape a tab is showing or whether it moves. The
+ * unread marker is a box with no character, so its size, its corners and its
+ * background colour are read as well.
  */
 export interface IMarkerStyle {
   content: string;
   color: string;
+  backgroundColor: string;
+  width: string;
+  height: string;
+  borderRadius: string;
   animationName: string;
   animationDuration: string;
   labelColor: string;
+  tabHeight: number;
 }
 
 /**
@@ -152,9 +160,14 @@ export function markerStyle(
     return {
       content: marker.content,
       color: marker.color,
+      backgroundColor: marker.backgroundColor,
+      width: marker.width,
+      height: marker.height,
+      borderRadius: marker.borderRadius,
       animationName: marker.animationName,
       animationDuration: marker.animationDuration,
-      labelColor: getComputedStyle(label).color
+      labelColor: getComputedStyle(label).color,
+      tabHeight: (tab as Element).getBoundingClientRect().height
     };
   }, tabClass);
 }

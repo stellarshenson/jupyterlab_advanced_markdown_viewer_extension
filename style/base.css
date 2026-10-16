@@ -13,6 +13,7 @@
   --jp-AdvancedMd-added-bg: rgb(46 160 67 / 35%);
   --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 31%);
   --jp-AdvancedMd-cue-blocked: rgb(218 54 51);
+  --jp-AdvancedMd-cue-unread: rgb(17 99 41);
   --jp-AdvancedMd-mark-flash-bg: rgb(128 128 128 / 55%);
   --jp-AdvancedMd-flash-ring: var(--jp-content-font-color1);
   --jp-AdvancedMd-flash-beat: 900ms;
@@ -26,6 +27,7 @@ body[data-jp-theme-light='false'] {
   --jp-AdvancedMd-added-bg: rgb(63 185 80 / 31%);
   --jp-AdvancedMd-removed-bg: rgb(248 81 73 / 29%);
   --jp-AdvancedMd-cue-blocked: rgb(248 81 73);
+  --jp-AdvancedMd-cue-unread: rgb(102 187 106);
   --jp-AdvancedMd-mark-flash-bg: rgb(220 220 220 / 45%);
 }
 
@@ -243,17 +245,43 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
 
 /*
  | A change nobody has looked at: it arrived while the tab was behind
- | another, and has stopped arriving. The marker stands there as a star with
- | six teardrop spokes (U+273B) until the tab is brought to the front
- | (ACC-CUE-201). It is drawn one level brighter than the label: JupyterLab
- | gives the label of a tab that is not selected the theme's text colour 1,
- | and the star takes text colour 0, which a dark theme makes brighter and a
- | light theme darker.
+ | another, and has stopped arriving. The marker stands there as a filled
+ | green dot 7 px across until the tab is brought to the front
+ | (ACC-CUE-201). The dot is a box this rule draws, not a character. A
+ | character is drawn by whichever installed font holds it, so its size and
+ | shape change from machine to machine; a box looks the same on every
+ | machine. The unread class only ever sits on a tab that also carries the
+ | updated class, so the rule of the arriving marker above gives the dot its
+ | display and its margin.
+ |
+ | The green is #116329 in a light theme and #66bb6a in a dark theme. A tab
+ | carries the dot only while it is not selected, so the dot is seen on the
+ | background of a tab that is not selected: the theme's layout colour 2, or
+ | the colour another extension gave the tab. The light green stands at 6.37
+ | to 1 on #eeeeee, 3.54 to 1 on #aeb4bc and 3.41 to 1 on #b0b0b0, the two
+ | Galaxa light themes, and at 4.32 to 1 or more on the light colours of the
+ | colourful tab extension. The dark green stands at 4.25 to 1 on #424242
+ | and 3.78 to 1 on #404b54. All are above the 3 to 1 that WCAG asks of a
+ | graphical object.
+ |
+ | The dot is centred on the height of a capital letter or a digit of the
+ | label: the vertical alignment raises the bottom of the box by half of
+ | what the cap height exceeds the 7 px of the dot. Middle alignment centred
+ | it on the lowercase letters, which left it low beside digits and
+ | capitals. The dot is shorter than the line of the tab, so the tab keeps
+ | its height. A forced-colours mode would paint the background of the box
+ | in the colour of the tab and hide the dot, so the rule keeps its own
+ | colours there.
  */
 
 .lm-TabBar-tab.jp-AdvancedMd-tabUnread .lm-TabBar-tabLabel::before {
-  color: var(--jp-ui-font-color0);
-  content: '\273B';
+  width: 7px;
+  height: 7px;
+  vertical-align: calc((1cap - 7px) / 2);
+  background-color: var(--jp-AdvancedMd-cue-unread);
+  border-radius: 50%;
+  content: '';
+  forced-color-adjust: none;
 }
 
 /*

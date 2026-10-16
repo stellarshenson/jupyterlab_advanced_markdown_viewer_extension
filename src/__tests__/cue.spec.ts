@@ -519,19 +519,45 @@ describe('tab cue', () => {
       );
     });
 
-    it('draws the unread marker as one character that stands still, one text colour level above the label', () => {
-      // ACC-CUE-201.
+    it('draws the unread marker as a still round box 7 px across in the unread colour, the one marker with no character', () => {
+      // ACC-CUE-201. A box looks the same on every machine; a character is
+      // drawn by whichever installed font holds it.
       const unread = markerRule(TAB_UNREAD_CLASS);
-      expect(glyphOf(unread)).toBe('\\273B');
-      expect(unread).toMatch(/color: var\(--jp-ui-font-color0\);/);
+      expect(glyphOf(unread)).toBe('');
+      expect(unread).toMatch(/\swidth: 7px;/);
+      expect(unread).toMatch(/\sheight: 7px;/);
+      expect(unread).toMatch(/border-radius: 50%;/);
+      expect(unread).toMatch(
+        /background-color: var\(--jp-AdvancedMd-cue-unread\);/
+      );
       expect(unread).not.toContain('animation');
+      // Every other marker is a character, so the dot differs from each of
+      // them by having none.
       for (const other of [
         TAB_UPDATED_CLASS,
         TAB_BLOCKED_CLASS,
         TAB_MISSING_CLASS
       ]) {
-        expect(glyphOf(unread)).not.toBe(glyphOf(markerRule(other)));
+        expect(glyphOf(markerRule(other))).not.toBe('');
       }
+    });
+
+    it('centres the unread dot on the cap height of the label and keeps its colour in a forced-colours mode', () => {
+      // ACC-CUE-201. Middle alignment centres the dot on the lowercase
+      // letters, which leaves it low beside digits and capitals.
+      const unread = markerRule(TAB_UNREAD_CLASS);
+      expect(unread).toMatch(/vertical-align: calc\(\(1cap - 7px\) \/ 2\);/);
+      expect(unread).toMatch(/forced-color-adjust: none;/);
+    });
+
+    it('sets the unread colour to rgb(17 99 41) in a light theme and rgb(102 187 106) in a dark theme', () => {
+      // ACC-CUE-201.
+      expect(ruleFor(':root')).toMatch(
+        /--jp-AdvancedMd-cue-unread: rgb\(17 99 41\);/
+      );
+      expect(ruleFor("body[data-jp-theme-light='false']")).toMatch(
+        /--jp-AdvancedMd-cue-unread: rgb\(102 187 106\);/
+      );
     });
 
     it('moves the marker only while changes arrive', () => {

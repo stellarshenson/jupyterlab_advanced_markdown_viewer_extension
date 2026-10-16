@@ -39,21 +39,13 @@ const UNREAD = 'jp-AdvancedMd-tabUnread';
 const CIRCLE = '"◐"';
 const SQUARE = '"◼"';
 const CROSS = '"✕"';
-const STAR = '"✻"';
 
 /**
- * The colour one of the theme's text colour levels gives text, as the
- * browser computes it: level 0 is the strongest, level 1 the usual one.
+ * What Chromium reports for the content of the unread marker. The stylesheet
+ * writes the content as an empty string, because the dot is a box and shows
+ * no character.
  */
-const themeColour = (page: any, level: number): Promise<string> =>
-  page.evaluate((variable: string) => {
-    const probe = document.createElement('span');
-    probe.style.color = `var(${variable})`;
-    document.body.appendChild(probe);
-    const colour = getComputedStyle(probe).color;
-    probe.remove();
-    return colour;
-  }, `--jp-ui-font-color${level}`);
+const NO_CHARACTER = '""';
 
 /**
  * Either character of a marker read while it alternates: which of the two is
@@ -107,6 +99,13 @@ const onDisk = (apiPath: string): string =>
  * The blocked colour of the light theme, which the lab opens in.
  */
 const BLOCKED_COLOUR = 'rgb(218, 54, 51)';
+
+/**
+ * The green of the unread dot in the light theme, which the lab opens in,
+ * and in the dark theme.
+ */
+const UNREAD_COLOUR = 'rgb(17, 99, 41)';
+const UNREAD_COLOUR_DARK = 'rgb(102, 187, 106)';
 
 /**
  * Open one preview holding unsaved edits, so the change written under it is
@@ -247,23 +246,47 @@ test.describe('the marker of a change that arrived', () => {
   }) => {
     const path = `${tmpPath}/${FILE}`;
 
-    // Writes 150 ms apart. The lab may take two of them in one read, so the
-    // gaps it sees are 150 to 300 ms: 0.25 s or 0.5 s a frame, never the 1 s
-    // of a change a second.
-    for (let i = 1; i <= 10; i++) {
+    // The controller times each change with Date.now when it applies it. The
+    // page's clock is held at a time this case sets for each write, so the
+    // gaps the controller measures are the 200 ms written here and not the
+    // time the lab took to take each change, which grows with the load on
+    // the machine (DEF-TEST-135).
+    await page.evaluate(() => {
+      const realNow = Date.now.bind(Date);
+      (window as any).heldNow = null;
+      Date.now = () => (window as any).heldNow ?? realNow();
+    });
+    const start = await page.evaluate(() => Date.now());
+    for (let i = 1; i <= 5; i++) {
+      await page.evaluate(
+        (now: number) => {
+          (window as any).heldNow = now;
+        },
+        start + i * 200
+      );
       await page.contents.uploadContent(
         `${REWRITTEN}\nFast write ${i}.\n`,
         'text',
         path
       );
-      await page.waitForTimeout(150);
+      // Each change is on screen before the next is written, so the lab never
+      // takes two of them in one read.
+      await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+        `Fast write ${i}.`,
+        { timeout: 20000 }
+      );
     }
+    // Five changes 200 ms apart: the mean gap rounds to 0.25 s a frame, and
+    // one run of the animation is two frames.
     await expect(page.locator(`.lm-TabBar-tab.${UPDATED}`)).toHaveClass(
-      /jp-AdvancedMd-tabFrame(250|500)\b/
+      /jp-AdvancedMd-tabFrame250\b/
     );
     const fast = await markerStyle(page, UPDATED);
     expect(fast.content).toMatch(EITHER_FRAME);
-    expect(fast.animationDuration).toMatch(/^(0\.5|1)s$/);
+    expect(fast.animationDuration).toBe('0.5s');
+    await page.evaluate(() => {
+      (window as any).heldNow = null;
+    });
 
     // Quiet again: the marker is kept and stands still.
     await expect(page.locator(`.lm-TabBar-tab.${ACTIVE}`)).toHaveCount(0, {
@@ -281,7 +304,7 @@ test.describe('the marker of a change on a tab behind another', () => {
   const FADE = 3000;
   test.use({ mockSettings: settings({ fadeDuration: FADE }) });
 
-  test('ACC-CUE-201 is a still unread marker once the changes stop, and ACC-CUE-29 leaves a fade duration after the tab comes to the front', async ({
+  test('ACC-CUE-201 is a still green dot once the changes stop, in the light and in the dark theme, and ACC-CUE-29 leaves a fade duration after the tab comes to the front', async ({
     page,
     tmpPath
   }) => {
@@ -296,23 +319,40 @@ test.describe('the marker of a change on a tab behind another', () => {
     const tab = page.locator(`.lm-TabBar-tab.${UPDATED}`);
     await expect(tab).toHaveCount(1, { timeout: 20000 });
     await expect(tab).toHaveClass(new RegExp(ACTIVE));
-    expect((await markerStyle(page, UPDATED)).animationName).toBe(
-      'jp-AdvancedMd-tab-turn'
-    );
+    const turning = await markerStyle(page, UPDATED);
+    expect(turning.content).toMatch(EITHER_FRAME);
+    expect(turning.animationName).toBe('jp-AdvancedMd-tab-turn');
 
-    // The writer is quiet and nobody has looked: the marker is the star, and
-    // it does not move.
+    // The writer is quiet and nobody has looked: the marker is a green dot
+    // 7 px across, a box with no character, and it does not move.
     await expect(page.locator(`.lm-TabBar-tab.${UNREAD}`)).toHaveCount(1, {
       timeout: 10000
     });
     const unread = await markerStyle(page, UPDATED);
-    expect(unread.content).toBe(STAR);
+    expect(unread.content).toBe(NO_CHARACTER);
+    expect(unread.width).toBe('7px');
+    expect(unread.height).toBe('7px');
+    expect(unread.borderRadius).toBe('50%');
+    expect(unread.backgroundColor).toBe(UNREAD_COLOUR);
     expect(unread.animationName).toBe('none');
-    // It is one level brighter than the label: the label of a tab that is
-    // not selected has the theme's text colour 1, the star colour 0.
-    expect(unread.labelColor).toBe(await themeColour(page, 1));
-    expect(unread.color).toBe(await themeColour(page, 0));
-    expect(unread.color).not.toBe(unread.labelColor);
+    // The dot is shorter than the line of the tab, so the tab is as high
+    // with the dot as it was with the half circle.
+    expect(unread.tabHeight).toBe(turning.tabHeight);
+
+    // The dark theme gives the dot a green of its own. The theme is a
+    // setting, and galata keeps the settings of a test in memory for that
+    // test alone, so the cases after this one open in the light theme again.
+    await page.theme.setDarkTheme();
+    await expect
+      .poll(async () => (await markerStyle(page, UPDATED)).backgroundColor)
+      .toBe(UNREAD_COLOUR_DARK);
+    // A forced-colours mode would paint the box in the colour of the tab;
+    // the dot keeps its own green there.
+    await page.emulateMedia({ forcedColors: 'active' });
+    expect((await markerStyle(page, UPDATED)).backgroundColor).toBe(
+      UNREAD_COLOUR_DARK
+    );
+    await page.emulateMedia({ forcedColors: 'none' });
     // ACC-CUE-202: the unread marker says in words what it means.
     expect(await tab.getAttribute('title')).toContain(
       'while this tab was behind another'
@@ -468,9 +508,13 @@ test.describe('the markers under reduced motion', () => {
 
     // Each marker keeps its own shape, and its own amount of movement: the
     // arriving circle alternated while the changes arrived and now stands
-    // as the star, the held square nudges, the cross of a file gone from disk
-    // stands still because nothing is waiting behind it.
-    expect(arriving.content).toBe(STAR);
+    // as the green dot, the held square nudges, the cross of a file gone
+    // from disk stands still because nothing is waiting behind it.
+    expect(arriving.content).toBe(NO_CHARACTER);
+    expect(arriving.width).toBe('7px');
+    expect(arriving.height).toBe('7px');
+    expect(arriving.borderRadius).toBe('50%');
+    expect(arriving.backgroundColor).toBe(UNREAD_COLOUR);
     expect(blocked.content).toBe(SQUARE);
     expect(gone.content).toBe(CROSS);
     expect(arriving.animationName).toBe('none');

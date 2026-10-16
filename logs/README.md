@@ -11,10 +11,12 @@ Names are `<kind>-<id>[<letter>][-<scope>].log`: `<id>` is the criterion or defe
 | `build-*.log`             | `make install`                           |
 | `publish-<version>.log`   | `make publish`                           |
 | `jest-*.log`              | `jlpm jest`                              |
+| `test-*.log`              | `make test`                              |
 | `lint-*.log`              | `jlpm run lint:check`                    |
 | `prettier-*.log`          | `jlpm prettier`                          |
 | `galata-*-full.log`       | the whole Playwright suite               |
 | `galata-*-notes.log`      | `ui-tests/tests/notes.spec.ts`           |
+| `galata-*-tab-cue.log`    | `ui-tests/tests/tab-cue.spec.ts`         |
 | `galata-*-probe.log`      | a few browser cases, named by `-g`       |
 | `galata-*-proof-*.log`    | browser cases against an older bundle    |
 | `galata-*-siblings*.log`  | the sibling-extension browser cases      |
