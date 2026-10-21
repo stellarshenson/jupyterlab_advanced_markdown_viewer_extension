@@ -550,13 +550,15 @@ describe('tab cue', () => {
       expect(unread).toMatch(/forced-color-adjust: none;/);
     });
 
-    it('sets the unread colour to rgb(17 99 41) in a light theme and rgb(102 187 106) in a dark theme', () => {
-      // ACC-CUE-201.
+    it('sets the unread colour to the theme accent colour in every theme', () => {
+      // ACC-CUE-201. One accent variable carries the colour in every theme,
+      // so the stylesheet names no hex of its own and no dark override
+      // remains.
       expect(ruleFor(':root')).toMatch(
-        /--jp-AdvancedMd-cue-unread: rgb\(17 99 41\);/
+        /--jp-AdvancedMd-cue-unread: var\(--jp-accent-color1\);/
       );
-      expect(ruleFor("body[data-jp-theme-light='false']")).toMatch(
-        /--jp-AdvancedMd-cue-unread: rgb\(102 187 106\);/
+      expect(ruleFor("body[data-jp-theme-light='false']")).not.toContain(
+        '--jp-AdvancedMd-cue-unread'
       );
     });
 

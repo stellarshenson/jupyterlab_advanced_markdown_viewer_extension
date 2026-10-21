@@ -13,7 +13,7 @@
   --jp-AdvancedMd-added-bg: rgb(46 160 67 / 35%);
   --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 31%);
   --jp-AdvancedMd-cue-blocked: rgb(218 54 51);
-  --jp-AdvancedMd-cue-unread: rgb(17 99 41);
+  --jp-AdvancedMd-cue-unread: var(--jp-accent-color1);
   --jp-AdvancedMd-mark-flash-bg: rgb(128 128 128 / 55%);
   --jp-AdvancedMd-flash-ring: var(--jp-content-font-color1);
   --jp-AdvancedMd-flash-beat: 900ms;
@@ -27,7 +27,6 @@ body[data-jp-theme-light='false'] {
   --jp-AdvancedMd-added-bg: rgb(63 185 80 / 31%);
   --jp-AdvancedMd-removed-bg: rgb(248 81 73 / 29%);
   --jp-AdvancedMd-cue-blocked: rgb(248 81 73);
-  --jp-AdvancedMd-cue-unread: rgb(102 187 106);
   --jp-AdvancedMd-mark-flash-bg: rgb(220 220 220 / 45%);
 }
 
@@ -246,23 +245,22 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
 /*
  | A change nobody has looked at: it arrived while the tab was behind
  | another, and has stopped arriving. The marker stands there as a filled
- | green dot 7 px across until the tab is brought to the front
- | (ACC-CUE-201). The dot is a box this rule draws, not a character. A
- | character is drawn by whichever installed font holds it, so its size and
- | shape change from machine to machine; a box looks the same on every
- | machine. The unread class only ever sits on a tab that also carries the
- | updated class, so the rule of the arriving marker above gives the dot its
- | display and its margin.
+ | dot 7 px across until the tab is brought to the front (ACC-CUE-201).
+ | The dot is a box this rule draws, not a character. A character is drawn
+ | by whichever installed font holds it, so its size and shape change from
+ | machine to machine; a box looks the same on every machine. The unread
+ | class only ever sits on a tab that also carries the updated class, so
+ | the rule of the arriving marker above gives the dot its display and its
+ | margin.
  |
- | The green is #116329 in a light theme and #66bb6a in a dark theme. A tab
- | carries the dot only while it is not selected, so the dot is seen on the
- | background of a tab that is not selected: the theme's layout colour 2, or
- | the colour another extension gave the tab. The light green stands at 6.37
- | to 1 on #eeeeee, 3.54 to 1 on #aeb4bc and 3.41 to 1 on #b0b0b0, the two
- | Galaxa light themes, and at 4.32 to 1 or more on the light colours of the
- | colourful tab extension. The dark green stands at 4.25 to 1 on #424242
- | and 3.78 to 1 on #404b54. All are above the 3 to 1 that WCAG asks of a
- | graphical object.
+ | The dot takes the theme accent colour, read from --jp-accent-color1, so
+ | it follows the theme in use instead of carrying a colour of its own. The
+ | colour is not chosen against the tab it stands on: the dot is seen only
+ | on an unselected tab, whose background is the theme's layout colour 2 or
+ | the colour another extension gave it, and a theme whose accent is close
+ | to that background shows a dot of low contrast, below the 3 to 1 WCAG
+ | asks of a graphical object. The dot's shape and its stillness tell it
+ | from the other markers where the colour cannot.
  |
  | The dot is centred on the height of a capital letter or a digit of the
  | label: the vertical alignment raises the bottom of the box by half of

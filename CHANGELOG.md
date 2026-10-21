@@ -2,6 +2,14 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.34] - 2026-10-21
+
+The unread dot follows the theme accent colour.
+
+### Changed
+
+- The unread dot on a tab takes the theme accent colour, `--jp-accent-color1`, instead of a fixed green. It stays green in the light and dark themes and follows any theme that sets its own accent
+
 ## [1.0.33] - 2026-10-16
 
 The tab marks changes nobody has looked at yet with a green dot.
