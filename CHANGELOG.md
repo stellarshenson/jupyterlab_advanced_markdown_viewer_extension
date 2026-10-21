@@ -2,6 +2,14 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.37] - 2026-10-21
+
+The unread dot follows the theme's second brand colour.
+
+### Changed
+
+- The unread dot on a tab takes the theme brand colour 2, `--jp-brand-color2`, instead of the accent green. The marker follows the brand ramp of the theme in use
+
 ## [1.0.34] - 2026-10-21
 
 The unread dot follows the theme accent colour.

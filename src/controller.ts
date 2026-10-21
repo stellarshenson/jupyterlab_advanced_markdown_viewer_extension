@@ -68,7 +68,7 @@ export const TAB_ACTIVE_CLASS = 'jp-AdvancedMd-tabActive';
  * Class marking a tab whose change the reader has not looked at: it arrived
  * while the tab was behind another, and has stopped arriving (ACC-CUE-201).
  * The marker stands there as the unread marker, which the stylesheet draws
- * as a dot in the theme accent colour, until the tab is brought to the front.
+ * as a dot in the theme brand colour, until the tab is brought to the front.
  */
 export const TAB_UNREAD_CLASS = 'jp-AdvancedMd-tabUnread';
 

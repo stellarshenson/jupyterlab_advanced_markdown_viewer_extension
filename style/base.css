@@ -13,7 +13,7 @@
   --jp-AdvancedMd-added-bg: rgb(46 160 67 / 35%);
   --jp-AdvancedMd-removed-bg: rgb(218 54 51 / 31%);
   --jp-AdvancedMd-cue-blocked: rgb(218 54 51);
-  --jp-AdvancedMd-cue-unread: var(--jp-accent-color1);
+  --jp-AdvancedMd-cue-unread: var(--jp-brand-color2);
   --jp-AdvancedMd-mark-flash-bg: rgb(128 128 128 / 55%);
   --jp-AdvancedMd-flash-ring: var(--jp-content-font-color1);
   --jp-AdvancedMd-flash-beat: 900ms;
@@ -253,11 +253,11 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
  | the rule of the arriving marker above gives the dot its display and its
  | margin.
  |
- | The dot takes the theme accent colour, read from --jp-accent-color1, so
+ | The dot takes the theme brand colour 2, read from --jp-brand-color2, so
  | it follows the theme in use instead of carrying a colour of its own. The
  | colour is not chosen against the tab it stands on: the dot is seen only
  | on an unselected tab, whose background is the theme's layout colour 2 or
- | the colour another extension gave it, and a theme whose accent is close
+ | the colour another extension gave it, and a theme whose brand is close
  | to that background shows a dot of low contrast, below the 3 to 1 WCAG
  | asks of a graphical object. The dot's shape and its stillness tell it
  | from the other markers where the colour cannot.

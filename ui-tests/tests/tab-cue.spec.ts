@@ -101,15 +101,15 @@ const onDisk = (apiPath: string): string =>
 const BLOCKED_COLOUR = 'rgb(218, 54, 51)';
 
 /**
- * The accent colour of the theme in use, read from the page so the assertions
+ * The brand colour of the theme in use, read from the page so the assertions
  * follow the theme rather than a fixed value. The probe carries the same
- * variable the dot takes, --jp-accent-color1, and opts out of forced colours,
+ * variable the dot takes, --jp-brand-color2, and opts out of forced colours,
  * which would otherwise repaint it.
  */
-const accentColour = (page: any): Promise<string> =>
+const brandColour = (page: any): Promise<string> =>
   page.evaluate(() => {
     const probe = document.createElement('div');
-    probe.style.backgroundColor = 'var(--jp-accent-color1)';
+    probe.style.backgroundColor = 'var(--jp-brand-color2)';
     probe.style.setProperty('forced-color-adjust', 'none');
     document.body.appendChild(probe);
     const colour = getComputedStyle(probe).backgroundColor;
@@ -314,7 +314,7 @@ test.describe('the marker of a change on a tab behind another', () => {
   const FADE = 3000;
   test.use({ mockSettings: settings({ fadeDuration: FADE }) });
 
-  test('ACC-CUE-201 is a still dot in the theme accent colour once the changes stop, in the light and in the dark theme, and ACC-CUE-29 leaves a fade duration after the tab comes to the front', async ({
+  test('ACC-CUE-201 is a still dot in the theme brand colour once the changes stop, in the light and in the dark theme, and ACC-CUE-29 leaves a fade duration after the tab comes to the front', async ({
     page,
     tmpPath
   }) => {
@@ -334,7 +334,7 @@ test.describe('the marker of a change on a tab behind another', () => {
     expect(turning.animationName).toBe('jp-AdvancedMd-tab-turn');
 
     // The writer is quiet and nobody has looked: the marker is a dot in the
-    // theme accent colour 7 px across, a box with no character, and it does
+    // theme brand colour 7 px across, a box with no character, and it does
     // not move.
     await expect(page.locator(`.lm-TabBar-tab.${UNREAD}`)).toHaveCount(1, {
       timeout: 10000
@@ -344,27 +344,27 @@ test.describe('the marker of a change on a tab behind another', () => {
     expect(unread.width).toBe('7px');
     expect(unread.height).toBe('7px');
     expect(unread.borderRadius).toBe('50%');
-    expect(unread.backgroundColor).toBe(await accentColour(page));
+    expect(unread.backgroundColor).toBe(await brandColour(page));
     expect(unread.animationName).toBe('none');
     // The dot is shorter than the line of the tab, so the tab is as high
     // with the dot as it was with the half circle.
     expect(unread.tabHeight).toBe(turning.tabHeight);
 
-    // The dark theme gives the dot its own accent colour. The theme is a
+    // The dark theme gives the dot its own brand colour. The theme is a
     // setting, and galata keeps the settings of a test in memory for that
     // test alone, so the cases after this one open in the light theme again.
     await page.theme.setDarkTheme();
     await expect
       .poll(async () => {
         const dot = (await markerStyle(page, UPDATED)).backgroundColor;
-        return dot === (await accentColour(page));
+        return dot === (await brandColour(page));
       })
       .toBe(true);
     // A forced-colours mode would paint the box in the colour of the tab;
-    // the dot keeps the theme accent there.
+    // the dot keeps the theme brand colour there.
     await page.emulateMedia({ forcedColors: 'active' });
     expect((await markerStyle(page, UPDATED)).backgroundColor).toBe(
-      await accentColour(page)
+      await brandColour(page)
     );
     await page.emulateMedia({ forcedColors: 'none' });
     // ACC-CUE-202: the unread marker says in words what it means.
@@ -522,14 +522,14 @@ test.describe('the markers under reduced motion', () => {
 
     // Each marker keeps its own shape, and its own amount of movement: the
     // arriving circle alternated while the changes arrived and now stands
-    // as the dot in the theme accent colour, the held square nudges, the
+    // as the dot in the theme brand colour, the held square nudges, the
     // cross of a file gone from disk stands still because nothing is waiting
     // behind it.
     expect(arriving.content).toBe(NO_CHARACTER);
     expect(arriving.width).toBe('7px');
     expect(arriving.height).toBe('7px');
     expect(arriving.borderRadius).toBe('50%');
-    expect(arriving.backgroundColor).toBe(await accentColour(page));
+    expect(arriving.backgroundColor).toBe(await brandColour(page));
     expect(blocked.content).toBe(SQUARE);
     expect(gone.content).toBe(CROSS);
     expect(arriving.animationName).toBe('none');

@@ -550,12 +550,12 @@ describe('tab cue', () => {
       expect(unread).toMatch(/forced-color-adjust: none;/);
     });
 
-    it('sets the unread colour to the theme accent colour in every theme', () => {
-      // ACC-CUE-201. One accent variable carries the colour in every theme,
+    it('sets the unread colour to the theme brand colour in every theme', () => {
+      // ACC-CUE-201. One brand variable carries the colour in every theme,
       // so the stylesheet names no hex of its own and no dark override
       // remains.
       expect(ruleFor(':root')).toMatch(
-        /--jp-AdvancedMd-cue-unread: var\(--jp-accent-color1\);/
+        /--jp-AdvancedMd-cue-unread: var\(--jp-brand-color2\);/
       );
       expect(ruleFor("body[data-jp-theme-light='false']")).not.toContain(
         '--jp-AdvancedMd-cue-unread'
