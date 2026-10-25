@@ -70,7 +70,7 @@ mkdir -p ~/.claude/skills && ln -sfn "$PWD/.agents/skills/jupyterlab-advanced-ma
 ## Limitations
 
 - A file open only in an editor is not followed; open it in the Markdown Preview. A preview opened over unsaved edits after the file had already changed holds that change back, and a save then meets JupyterLab's own File Changed dialog
-- On network drives, Windows drives under WSL2 and other mounts that raise no file events, the first change can take up to 10 seconds to show; after it, the file is checked every second
+- On network drives, Windows drives under WSL2 and other mounts that raise no file events, the first change can take up to 10 seconds (`poll_interval`) to show; after it, the file is checked every second
 - A line an agent appends during the few milliseconds a mark is being written can be lost
 - A program that keeps the file open while it writes has to open it for appending (`>>`, not `>`); a program that keeps the file open for plain writing overwrites its own newest text after each mark
 - On a file with mixed line endings, a mark made while an agent appends can still raise the File Changed dialog
@@ -82,17 +82,34 @@ mkdir -p ~/.claude/skills && ln -sfn "$PWD/.agents/skills/jupyterlab-advanced-ma
 
 All settings live under Settings, Advanced Settings Editor, Advanced Markdown Viewer.
 
-- `enabled` - on by default; off, the preview keeps what it showed until the document is reloaded; marks and notes have their own setting
-- `pollInterval` - the interval of the fallback check for filesystems that raise no file events, in seconds; file events through the server extension are the primary path, so a lower value does not make updates faster
-- `highlight` - green and red backgrounds on changed text
-- `highlightVisibility` - how strong those two backgrounds are: Low, Medium or High, Medium by default
-- `fadeDuration` - how long the highlight stays on changed text, in milliseconds; it rises over 0.5 s and fades away over the last 0.75 s
+- `enabled` - on by default; off, the preview keeps what it showed until the document is reloaded; marks and notes still work
 - `animation` - on by default; changes play out as typing
-- `animationSpeed` - typing and deletion speed in characters per second on average, 75 by default; 0 shows a change at once
-- `animationJitter` - how far each character's time may stray from the even time at that speed, as a share of that time, from 0 to 1, 0.25 by default; 0 types evenly
-- `tabCue` - the markers on the document tab
-- `notes` - on by default; off, the panel, the marks and the marking entries are hidden and the markers in the file are left alone
+- `highlight` - green and red backgrounds on changed text
 - `author` - the handle a note line opens with, without the leading @; empty writes `@user`, and the first note you write asks you for one
+
+## Server configuration
+
+An administrator sets the other options for every user in the Jupyter server configuration. A change takes effect when the server restarts and the page is reloaded. As JSON, in `jupyter_server_config.json` or in a file under `jupyter_server_config.d/`:
+
+```json
+{ "AdvancedMarkdownViewer": { "fade_duration": 3000 } }
+```
+
+In Python, in `jupyter_server_config.py`:
+
+```python
+c.AdvancedMarkdownViewer.fade_duration = 3000
+```
+
+A value in any `jupyter_server_config.json` or `jupyter_server_config.py` takes precedence over the same option in any file under `jupyter_server_config.d/`, whichever configuration directory each file is in.
+
+- `poll_interval` - 10 by default; the interval of the fallback check for filesystems that raise no file events, in seconds, at least 1; file events through the server extension are the primary path, so a lower value does not make updates faster
+- `fade_duration` - 5000 by default; how long the highlight stays on changed text, in milliseconds; it rises over 0.5 s and fades away over the last 0.75 s
+- `animation_speed` - 75 by default; typing and deletion speed in characters per second on average; 0 shows a change at once
+- `animation_jitter` - 0.25 by default; how far each character's time may stray from the even time at that speed, as a share of that time, from 0 to 1; 0 types evenly
+- `highlight_visibility` - `medium` by default; how strong the highlight backgrounds are: `low`, `medium` or `high`
+- `tab_cue` - on by default; the markers on the document tab
+- `notes` - on by default; off hides the panel, the marks and the marking entries, and leaves the markers in the file alone
 
 ## Requirements
 

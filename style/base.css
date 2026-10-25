@@ -354,8 +354,8 @@ body[data-jp-theme-light='false'] [data-jp-advancedmd-visibility='high'] {
  | (DEF-CUE-68). A Windows host reports that preference to every page whenever
  | its own animation switch is off, which readers turn off for performance,
  | and a marker held still says nothing about what happened to the file. The
- | switch that stops this motion is the extension's own tabCue setting, which
- | takes the marker away altogether - the Hide that WCAG 2.2.2 asks for.
+ | switch that stops this motion is the tab_cue server option, which takes the
+ | marker away altogether.
  */
 
 /*
@@ -475,12 +475,15 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
  | a lower alpha than its fill, so it reads as a darker edge and not a
  | brighter one (DEF-NOTES-113) - and it is the rim name the square binds to.
  | On a light page the two are the same colour. The square overrides the
- | background further down the file.
+ | background further down the file. The bar name holds the background's
+ | colour again for the ring around a marked picture, whose own background
+ | is the wash (ACC-NOTES-215).
  */
 
 .jp-AdvancedMd-swatch-yellow {
   --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-yellow, #9c890a);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-yellow, #dec40e);
+  --jp-AdvancedMd-swatch-bar: var(--jp-AdvancedMd-swatch-yellow, #9c890a);
 
   background-color: var(--jp-AdvancedMd-swatch-yellow, #9c890a);
 }
@@ -488,6 +491,7 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 .jp-AdvancedMd-swatch-blue {
   --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-blue, #0f70f0);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-blue, #0f70f0);
+  --jp-AdvancedMd-swatch-bar: var(--jp-AdvancedMd-swatch-blue, #0f70f0);
 
   background-color: var(--jp-AdvancedMd-swatch-blue, #0f70f0);
 }
@@ -495,6 +499,7 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 .jp-AdvancedMd-swatch-pink {
   --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-pink, #f631b1);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-pink, #f631b1);
+  --jp-AdvancedMd-swatch-bar: var(--jp-AdvancedMd-swatch-pink, #f631b1);
 
   background-color: var(--jp-AdvancedMd-swatch-pink, #f631b1);
 }
@@ -502,6 +507,7 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 .jp-AdvancedMd-swatch-orange {
   --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-orange, #c9740d);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-orange, #f19422);
+  --jp-AdvancedMd-swatch-bar: var(--jp-AdvancedMd-swatch-orange, #c9740d);
 
   background-color: var(--jp-AdvancedMd-swatch-orange, #c9740d);
 }
@@ -509,6 +515,7 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 .jp-AdvancedMd-swatch-red {
   --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-red, #e61e46);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-red, #e61e46);
+  --jp-AdvancedMd-swatch-bar: var(--jp-AdvancedMd-swatch-red, #e61e46);
 
   background-color: var(--jp-AdvancedMd-swatch-red, #e61e46);
 }
@@ -516,6 +523,7 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
 .jp-AdvancedMd-swatch-green {
   --jp-AdvancedMd-swatch-rim: var(--jp-AdvancedMd-swatch-edge-green, #179f26);
   --jp-AdvancedMd-swatch-fill: var(--jp-AdvancedMd-swatch-fill-green, #1ed232);
+  --jp-AdvancedMd-swatch-bar: var(--jp-AdvancedMd-swatch-green, #179f26);
 
   background-color: var(--jp-AdvancedMd-swatch-green, #179f26);
 }
@@ -604,6 +612,34 @@ body[data-jp-theme-light='false'] .jp-AdvancedMd-mark-green {
   50% {
     box-shadow: inset 0 0 0 2px var(--jp-AdvancedMd-flash-ring);
   }
+}
+
+/*
+ | A mark on a picture (ACC-NOTES-215). A picture takes no pseudo-element, so
+ | the wash a diagram is given cannot be laid over one, and a colour behind
+ | it shows only where it is transparent. The mark is a ring around it in
+ | the colour the bar of an unanchored mark takes, which stands against the
+ | page on both themes where a wash a few pixels wide would not, with the
+ | wash behind it. The rim of a swatch is not used: on a dark page it is the
+ | hue at a low alpha, made to read inside the square's fill, and against
+ | the page it is close to invisible. The ring is a shadow, so
+ | it takes no room and nothing reflows, and the picture is the renderer's
+ | own node, so nothing is added to the render. A closed mark's ring takes
+ | the colour a closed bar takes, and the flash a selected row runs is the
+ | bar's ring.
+ */
+.jp-AdvancedMd-markImage {
+  background-color: var(--jp-AdvancedMd-mark-wash);
+  box-shadow: 0 0 0 2px var(--jp-AdvancedMd-swatch-bar);
+  forced-color-adjust: none;
+}
+
+.jp-AdvancedMd-markImage.jp-AdvancedMd-mark-closed {
+  box-shadow: 0 0 0 2px var(--jp-content-font-color2);
+}
+
+.jp-AdvancedMd-markImage.jp-AdvancedMd-markFlash {
+  animation-name: jp-AdvancedMd-ring-flash;
 }
 
 /*
@@ -1248,7 +1284,8 @@ body
   :is(
     .jp-AdvancedMd-mark,
     .jp-AdvancedMd-notesTick,
-    .jp-AdvancedMd-markDiagram
+    .jp-AdvancedMd-markDiagram,
+    .jp-AdvancedMd-markImage
   ).jp-AdvancedMd-mark-closed {
   --jp-AdvancedMd-mark-wash: rgb(128 128 128 / 12%);
 }
@@ -1257,7 +1294,8 @@ body[data-jp-theme-light='false']
   :is(
     .jp-AdvancedMd-mark,
     .jp-AdvancedMd-notesTick,
-    .jp-AdvancedMd-markDiagram
+    .jp-AdvancedMd-markDiagram,
+    .jp-AdvancedMd-markImage
   ).jp-AdvancedMd-mark-closed {
   --jp-AdvancedMd-mark-wash: rgb(200 200 200 / 12%);
 }

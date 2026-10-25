@@ -56,39 +56,33 @@ export const REWRITTEN = [
 ].join('\n');
 
 /**
- * Settings that make the feature observable within a test: fall back to a
- * check every second, hold the highlight long enough to assert on it, and
- * show a change at once so the text read after a decoration appears is
- * complete; a describe with other needs passes its own overrides.
+ * The server options the suite runs under, as
+ * ui-tests/jupyter_server_test_config.py sets them, for the tests that compute
+ * a wait from one: the fallback check in seconds and the highlight duration in
+ * milliseconds.
+ */
+export const SUITE_POLL_INTERVAL = 30;
+export const SUITE_FADE_DURATION = 30000;
+
+/**
+ * Settings that make the feature observable within a test: show a change at
+ * once, so the text read after a decoration appears is complete; a describe
+ * with other needs passes its own overrides. The other options are server
+ * options, set once for the suite.
  */
 export function settings(overrides: Record<string, unknown> = {}) {
   return {
     ...galata.DEFAULT_SETTINGS,
     [PLUGIN_ID]: {
       enabled: true,
-      pollInterval: 1,
-      fadeDuration: 30000,
-      animation: true,
-      animationSpeed: 0,
-      animationJitter: 0,
+      animation: false,
       highlight: true,
-      tabCue: true,
       // A handle is set, so the question the extension puts to a reader who
       // has none (ACC-NOTES-178) stands only in the cases that ask for it.
       author: 'kj',
       ...overrides
     }
   };
-}
-
-/**
- * The settings store of a fresh install: nothing of this extension is written
- * to it, so every value it reads is the one the schema declares. A suite
- * asserting a shipped default uses this rather than `settings`, which writes
- * values chosen to make the feature observable.
- */
-export function shippedSettings(): Record<string, unknown> {
-  return { ...galata.DEFAULT_SETTINGS };
 }
 
 /**

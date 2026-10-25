@@ -597,9 +597,8 @@ describe('tab cue', () => {
       // DEF-CUE-68. A Windows host reports that preference to every page
       // whenever its own animation switch is off, which readers turn off for
       // performance, and a marker held still says nothing about what happened
-      // to the file. The switch that stops this motion is the extension's own
-      // tabCue setting, which takes the marker away altogether - the Hide
-      // WCAG 2.2.2 asks for.
+      // to the file. The switch that stops this motion is the tab_cue server
+      // option, which takes the marker away altogether.
       expect(stylesheet).not.toContain('prefers-reduced-motion');
     });
   });
@@ -648,5 +647,43 @@ describe('the settled marker at the shipped defaults', () => {
 
     jest.advanceTimersByTime(1);
     expect(tabClasses()).toEqual([]);
+  });
+});
+
+/**
+ * ACC-CUE-32. With the tab_cue server option off a change still lands, and no
+ * marker of any kind goes on the tab.
+ */
+describe('the tab cue turned off', () => {
+  let controller: LiveViewController;
+  let widget: any;
+  let watcher: any;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    ({ controller, widget, watcher } = start({
+      ...DEFAULT_SETTINGS,
+      tabCue: false
+    }));
+  });
+
+  afterEach(() => {
+    controller.dispose();
+    widget.node.remove();
+    jest.useRealTimers();
+  });
+
+  it('still updates the content but marks no tab', () => {
+    widget.content.update = jest.fn();
+
+    watcher.applied.emit(undefined);
+    expect(widget.content.update).toHaveBeenCalledTimes(1);
+    // Neither marker the reader has to act on: a change held back and a file
+    // gone from disk.
+    watcher.blocked.emit('dirty');
+    watcher.blocked.emit('missing');
+    jest.advanceTimersByTime(QUIET_MS);
+
+    expect(widget.title.className).toBe('');
   });
 });

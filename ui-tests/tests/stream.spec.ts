@@ -123,7 +123,7 @@ async function markUnderStream(page: any, word: string): Promise<number> {
 }
 
 test.describe('marking under a stream of writes', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('DEF-NOTES-33 writes a mark through the route and not through a save', async ({
     page,

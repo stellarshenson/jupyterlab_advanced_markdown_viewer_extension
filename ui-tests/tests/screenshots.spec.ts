@@ -141,7 +141,7 @@ test.describe('README screenshots of the marks and notes', () => {
 
 test.describe('README screenshots of a change', () => {
   test.skip(!process.env.SCREENSHOTS, 'run with SCREENSHOTS=1');
-  test.use({ ...WINDOW, mockSettings: settings({ animationSpeed: 25 }) });
+  test.use({ ...WINDOW, mockSettings: settings({ animation: true }) });
 
   test.beforeEach(async ({ page }) => {
     await page.theme.setTheme(THEME);

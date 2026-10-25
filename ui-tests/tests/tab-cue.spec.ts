@@ -6,6 +6,7 @@ import {
   FILE,
   INITIAL,
   REWRITTEN,
+  SUITE_FADE_DURATION,
   labFixtures,
   markerStyle,
   openPreview,
@@ -309,15 +310,17 @@ test.describe('the marker of a change that arrived', () => {
 });
 
 test.describe('the marker of a change on a tab behind another', () => {
-  // A fade duration short enough to wait out, and long enough to tell from
-  // a marker that leaves at once.
-  const FADE = 3000;
-  test.use({ mockSettings: settings({ fadeDuration: FADE }) });
+  // The suite's fade duration, long enough to tell from a marker that leaves
+  // at once.
+  const FADE = SUITE_FADE_DURATION;
+  test.use({ mockSettings: settings() });
 
   test('ACC-CUE-201 is a still dot in the theme brand colour once the changes stop, in the light and in the dark theme, and ACC-CUE-29 leaves a fade duration after the tab comes to the front', async ({
     page,
     tmpPath
   }) => {
+    // Two fade durations are waited out.
+    test.setTimeout(120000);
     const path = `${tmpPath}/${FILE}`;
     const other = `${tmpPath}/other.md`;
     await page.contents.uploadContent(INITIAL, 'text', path);

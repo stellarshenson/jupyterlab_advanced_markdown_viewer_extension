@@ -69,6 +69,7 @@ import {
   colourClass,
   DIAGRAM_CLASS,
   FLASH_CLASS,
+  IMAGE_CLASS,
   MARK_CLASS,
   MARK_CLOSED_CLASS,
   NotesPanel,
@@ -360,6 +361,20 @@ function selectRange(
       commonAncestorContainer: root,
       toString: () => (first.isConnected ? `${from}..${to}` : '')
     }),
+    // A node between the first word and the last, as the browser reads one.
+    containsNode: (node: Node) =>
+      !!(
+        first.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING
+      ) &&
+      !!(
+        range.endContainer.compareDocumentPosition(node) &
+        Node.DOCUMENT_POSITION_PRECEDING
+      ),
+    // A press that selects a picture moves the selection onto it.
+    setBaseAndExtent: (...args: [Node, number, Node, number]) => {
+      trackingSelection();
+      window.getSelection()!.setBaseAndExtent(...args);
+    },
     removeAllRanges: jest.fn(),
     collapseToEnd: jest.fn(),
     collapse: jest.fn(),
@@ -423,13 +438,44 @@ const washed = (root: HTMLElement): HTMLElement[] =>
   Array.from(root.querySelectorAll<HTMLElement>(`.${DIAGRAM_CLASS}`));
 
 /**
+ * A document holding the three image forms the preview draws: a Markdown
+ * image of a raster file, one of an SVG file, and an HTML img on a line of
+ * its own (ACC-NOTES-215).
+ */
+const PICTURES =
+  'Alpha beta.\n\n![raster dot](dot.png)\n\n![vector chart](chart.svg)\n\n' +
+  '<img src="dot.png" alt="html dot" width="40">\n\nGamma delta.\n';
+
+/**
+ * A document as JupyterLab draws it: through the parser it renders with, and
+ * with "Image" written on a picture whose image gives no alternative text,
+ * as its renderer writes it.
+ */
+const drawn = (source: string): string => {
+  const host = document.createElement('div');
+  host.innerHTML = markdown.parse(source) as string;
+  for (const image of Array.from(host.querySelectorAll('img'))) {
+    if (!image.alt) {
+      image.alt = 'Image';
+    }
+  }
+  return host.innerHTML;
+};
+
+/** The pictures a mark is painted on, in document order. */
+const ringed = (root: HTMLElement): HTMLElement[] =>
+  Array.from(root.querySelectorAll<HTMLElement>(`.${IMAGE_CLASS}`));
+
+/**
  * A window selection the press handler can move, as the browser's is.
  *
  * `selectAllChildren` is the one call the handler makes; from then on the
  * stub reports the range the browser would report over that node.
  */
 function trackingSelection(): () => Node | null {
-  let held: Node | null = null;
+  // The node the range is in and the children it spans: all of them after
+  // `selectAllChildren`, the one picture after the press on it.
+  let held: { node: Node; start: number; end: number } | null = null;
   stubSelection({
     get isCollapsed() {
       return held === null;
@@ -438,29 +484,41 @@ function trackingSelection(): () => Node | null {
       return held === null ? 0 : 1;
     },
     get anchorNode() {
-      return held;
+      return held?.node ?? null;
     },
     getRangeAt: () =>
       held === null
         ? null
         : {
-            startContainer: held,
-            startOffset: 0,
-            endContainer: held,
-            endOffset: held.childNodes.length,
+            startContainer: held.node,
+            startOffset: held.start,
+            endContainer: held.node,
+            endOffset: held.end,
             collapsed: false,
-            commonAncestorContainer: held,
-            toString: () => held?.textContent ?? ''
+            commonAncestorContainer: held.node,
+            toString: () =>
+              Array.from(held?.node.childNodes ?? [])
+                .slice(held?.start, held?.end)
+                .map(child => child.textContent)
+                .join('')
           },
     selectAllChildren: (node: Node) => {
-      held = node;
+      held = { node, start: 0, end: node.childNodes.length };
     },
+    setBaseAndExtent: (node: Node, start: number, _: Node, end: number) => {
+      held = { node, start, end };
+    },
+    containsNode: (node: Node) =>
+      held !== null &&
+      Array.from(held.node.childNodes)
+        .slice(held.start, held.end)
+        .some(child => child.contains(node)),
     removeAllRanges: jest.fn(),
     collapseToEnd: jest.fn(),
     collapse: jest.fn(),
     addRange: jest.fn()
   });
-  return () => held;
+  return () => held?.node ?? null;
 }
 
 /** Press a mouse button on a node, as the reader does on a picture. */
@@ -951,6 +1009,578 @@ describe('NotesController', () => {
 
       const [figure] = washed(h.root);
       expect(figure.classList.contains(MARK_CLOSED_CLASS)).toBe(true);
+    });
+  });
+
+  describe('a note on an image (ACC-NOTES-215-IMAGE-NOTE)', () => {
+    /**
+     * Each image form of {@link PICTURES}: the alternative text its picture
+     * carries, its construct, and that construct with a mark around it. The
+     * markers go around the whole construct as they go around a paragraph;
+     * an img tag's closing marker takes the line below, which keeps the tag
+     * an HTML block of its own.
+     */
+    const FORMS: Array<[string, string, (id: string) => string]> = [
+      [
+        'raster dot',
+        '![raster dot](dot.png)',
+        id =>
+          `<!-- mark:${id} note colour=yellow -->\n![raster dot](dot.png)<!-- /mark:${id} -->`
+      ],
+      [
+        'vector chart',
+        '![vector chart](chart.svg)',
+        id =>
+          `<!-- mark:${id} note colour=yellow -->\n![vector chart](chart.svg)<!-- /mark:${id} -->`
+      ],
+      [
+        'html dot',
+        '<img src="dot.png" alt="html dot" width="40">',
+        id =>
+          `<!-- mark:${id} note colour=yellow -->\n<img src="dot.png" alt="html dot" width="40">\n<!-- /mark:${id} -->`
+      ]
+    ];
+
+    /** The picture of one form in a render. */
+    const picture = (root: HTMLElement, alt: string): HTMLImageElement =>
+      root.querySelector(`img[alt="${alt}"]`)!;
+
+    /** Press on a picture and let the browser report the selection. */
+    const pressOn = (image: HTMLImageElement, button = 2): MouseEvent => {
+      const event = press(image, button);
+      document.dispatchEvent(new Event('selectionchange'));
+      return event;
+    };
+
+    it('selects the one picture from a left or a right press, as the menu needs', async () => {
+      for (const button of [0, 2]) {
+        const h = open(PICTURES);
+        await ready();
+        h.render(drawn(PICTURES));
+        trackingSelection();
+        for (const [alt] of FORMS) {
+          const image = picture(h.root, alt);
+          const event = pressOn(image, button);
+
+          // The press leaves the browser's own answer alone, as the press on
+          // a diagram does, and the range holds the picture and nothing else.
+          expect(event.defaultPrevented).toBe(false);
+          const range = window.getSelection()!.getRangeAt(0);
+          expect(range.startContainer.childNodes[range.startOffset]).toBe(
+            image
+          );
+          expect(range.endOffset).toBe(range.startOffset + 1);
+          expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
+          expect(h.controller.selection).not.toBeNull();
+        }
+      }
+    });
+
+    it('marks each image form around its whole construct, and the page draws as before', async () => {
+      for (const [alt, construct, marked] of FORMS) {
+        const h = open(PICTURES);
+        await ready();
+        h.render(drawn(PICTURES));
+        trackingSelection();
+        pressOn(picture(h.root, alt));
+
+        const id = await h.controller.mark('yellow');
+
+        expect(id).not.toBeNull();
+        expect(h.source()).toBe(PICTURES.replace(construct, marked(id!)));
+        expect(page(h.source())).toBe(page(PICTURES));
+        // The picture is painted on the render in place and listed as
+        // anchored, named by its alternative text.
+        expect(ringed(h.root)).toEqual([picture(h.root, alt)]);
+        expect(ringed(h.root)[0].dataset.mark).toBe(id);
+        const [row] = h.controller.marks;
+        expect(row.text).toBe(alt);
+        expect(row.unanchored).toBe(false);
+      }
+    });
+
+    it('paints the picture of each marked image in its colour, and paints no words', async () => {
+      const ids = [ONE, TWO, MANY[0]];
+      const source = FORMS.reduce(
+        (text, [, construct, marked], i) =>
+          text.replace(
+            construct,
+            marked(ids[i]).replace('colour=yellow', `colour=${MARK_COLOURS[i]}`)
+          ),
+        PICTURES
+      );
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      const pictured = ringed(h.root);
+      expect(pictured.map(image => image.getAttribute('alt'))).toEqual(
+        FORMS.map(([alt]) => alt)
+      );
+      pictured.forEach((image, i) => {
+        expect(image.dataset.mark).toBe(ids[i]);
+        expect(image.classList.contains(colourClass(MARK_COLOURS[i]))).toBe(
+          true
+        );
+        expect(image.classList.contains(swatchClass(MARK_COLOURS[i]))).toBe(
+          true
+        );
+      });
+      // A picture adds no node: nothing is wrapped and no bar stands for it.
+      expect(painted(h.root)).toHaveLength(0);
+      expect(bars(h.root)).toHaveLength(0);
+      expect(
+        h.controller.marks.map(mark => [mark.text, mark.unanchored])
+      ).toEqual(FORMS.map(([alt]) => [alt, false]));
+    });
+
+    it('names an img tag with no alternative text by its file', async () => {
+      const source =
+        'Alpha beta.\n\n' +
+        `<!-- mark:${ONE} note colour=yellow -->\n<img src="figures/plot.png?v=2">\n<!-- /mark:${ONE} -->\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toHaveLength(1);
+      expect(
+        h.controller.marks.map(mark => [mark.text, mark.unanchored])
+      ).toEqual([['image plot.png', false]]);
+    });
+
+    it('names an image with no alternative text by a file whose name holds brackets', async () => {
+      const source =
+        'Alpha beta.\n\n' +
+        `<!-- mark:${ONE} note colour=yellow -->\n![](dot_(v2).png)<!-- /mark:${ONE} -->\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toHaveLength(1);
+      expect(
+        h.controller.marks.map(mark => [mark.text, mark.unanchored])
+      ).toEqual([['image dot_(v2).png', false]]);
+    });
+
+    it('names an image with no alternative text by a file whose name the source escapes', async () => {
+      // The file is dot).png; the backslash is not part of its name.
+      const source =
+        'Alpha beta.\n\n' +
+        `<!-- mark:${ONE} note colour=yellow -->\n![](dot\\).png)<!-- /mark:${ONE} -->\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toHaveLength(1);
+      expect(
+        h.controller.marks.map(mark => [mark.text, mark.unanchored])
+      ).toEqual([['image dot).png', false]]);
+    });
+
+    it('names an img tag with no alternative text by a quoted src holding a space', async () => {
+      const source =
+        'Alpha beta.\n\n' +
+        `<!-- mark:${ONE} note colour=yellow -->\n<img src="Screenshot 2024.png">\n<!-- /mark:${ONE} -->\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toHaveLength(1);
+      expect(
+        h.controller.marks.map(mark => [mark.text, mark.unanchored])
+      ).toEqual([['image Screenshot 2024.png', false]]);
+    });
+
+    it('names an image with no alternative text by an angle-bracket target holding a space', async () => {
+      const source =
+        'Alpha beta.\n\n' +
+        `<!-- mark:${ONE} note colour=yellow -->\n![](<Screenshot 2024.png>)\n<!-- /mark:${ONE} -->\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toHaveLength(1);
+      expect(
+        h.controller.marks.map(mark => [mark.text, mark.unanchored])
+      ).toEqual([['image Screenshot 2024.png', false]]);
+    });
+
+    it('names an image with no alternative text by an angle-bracket target and a double-quoted title', async () => {
+      const source =
+        'Alpha beta.\n\n' +
+        `<!-- mark:${ONE} note colour=yellow -->\n![](<Screenshot 2024.png> "title")\n<!-- /mark:${ONE} -->\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toHaveLength(1);
+      expect(
+        h.controller.marks.map(mark => [mark.text, mark.unanchored])
+      ).toEqual([['image Screenshot 2024.png', false]]);
+    });
+
+    it('names an image with no alternative text by an angle-bracket target and a single-quoted title', async () => {
+      const source =
+        'Alpha beta.\n\n' +
+        `<!-- mark:${ONE} note colour=yellow -->\n![](<Screenshot 2024.png> 'title')\n<!-- /mark:${ONE} -->\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toHaveLength(1);
+      expect(
+        h.controller.marks.map(mark => [mark.text, mark.unanchored])
+      ).toEqual([['image Screenshot 2024.png', false]]);
+    });
+
+    it('paints an image a full stop is written flush after', async () => {
+      // The stop is a word of its own after the closing marker, outside the
+      // passage.
+      const source =
+        `See <!-- mark:${ONE} note colour=yellow -->![a dot](dot.png)` +
+        `<!-- /mark:${ONE} -->.\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toHaveLength(1);
+      expect(h.controller.marks[0].unanchored).toBe(false);
+    });
+
+    it('mutes a closed picture, and takes the paint off the same picture again', async () => {
+      const [[alt, construct, marked]] = FORMS;
+      const source = PICTURES.replace(
+        construct,
+        marked(ONE).replace('colour=yellow', 'colour=yellow status=closed')
+      );
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+      const image = picture(h.root, alt);
+      expect(ringed(h.root)).toHaveLength(0);
+
+      h.controller.setShowClosed(true);
+      expect(ringed(h.root)).toEqual([image]);
+      expect(image.classList.contains(MARK_CLOSED_CLASS)).toBe(true);
+      image.classList.add(FLASH_CLASS);
+
+      h.controller.setShowClosed(false);
+      expect(ringed(h.root)).toHaveLength(0);
+      expect(image.className).toBe('');
+      expect(image.dataset.mark).toBeUndefined();
+    });
+
+    it('lets the picture go for a caret placed in text, and for other words', async () => {
+      const h = open(PICTURES);
+      await ready();
+      h.render(drawn(PICTURES));
+      trackingSelection();
+      pressOn(picture(h.root, 'raster dot'));
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
+
+      collapseSelection(textNodes(h.root)[0]);
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(false);
+
+      trackingSelection();
+      pressOn(picture(h.root, 'raster dot'));
+      selectRange(h.root, 'Gamma', 'delta.');
+      const id = await h.controller.mark('yellow');
+      expect(h.source()).toContain(
+        `<!-- mark:${id} note colour=yellow -->\nGamma delta.<!-- /mark:${id} -->`
+      );
+      expect(h.source()).toContain('\n![raster dot](dot.png)\n');
+    });
+
+    it('takes the picture over from a text selection the right button leaves standing', async () => {
+      const h = open(PICTURES);
+      await ready();
+      h.render(drawn(PICTURES));
+      selectRange(h.root, 'Gamma', 'delta.');
+
+      trackingSelection();
+      pressOn(picture(h.root, 'vector chart'));
+      const id = await h.controller.mark('yellow');
+
+      const [, construct, marked] = FORMS[1];
+      expect(h.source()).toBe(PICTURES.replace(construct, marked(id!)));
+    });
+
+    it('keeps a text selection that holds the picture pressed on', async () => {
+      const h = open(PICTURES);
+      await ready();
+      h.render(drawn(PICTURES));
+      selectRange(h.root, 'Alpha', 'delta.');
+
+      pressOn(picture(h.root, 'vector chart'));
+      const id = await h.controller.mark('yellow');
+
+      const [, construct, marked] = FORMS[1];
+      expect(h.source()).not.toBe(PICTURES.replace(construct, marked(id!)));
+      expect(h.source()).toBe(
+        `<!-- mark:${id} note colour=yellow -->\n` +
+          PICTURES.replace(/\n$/, `<!-- /mark:${id} -->\n`)
+      );
+    });
+
+    it('writes nothing when the picture at its place carries other text', async () => {
+      // The render draws a picture the source does not say, so the place
+      // names another image, and no image is marked in its stead.
+      const h = open(PICTURES);
+      await ready();
+      h.render(
+        drawn(PICTURES).replace('alt="raster dot"', 'alt="another dot"')
+      );
+      trackingSelection();
+      pressOn(picture(h.root, 'another dot'));
+
+      expect(await h.controller.mark('yellow')).toBeNull();
+      expect(h.transactions).toHaveLength(0);
+    });
+
+    it('marks an image with no alternative text, which the renderer calls Image', async () => {
+      const source =
+        'Alpha beta.\n\n![](dot.png)\n\n<img src="chart.svg" width="40">\n\nGamma delta.\n';
+      const forms: Array<[string, string, (id: string) => string]> = [
+        [
+          'image dot.png',
+          '![](dot.png)',
+          id =>
+            `<!-- mark:${id} note colour=yellow -->\n![](dot.png)<!-- /mark:${id} -->`
+        ],
+        [
+          'image chart.svg',
+          '<img src="chart.svg" width="40">',
+          id =>
+            `<!-- mark:${id} note colour=yellow -->\n<img src="chart.svg" width="40">\n<!-- /mark:${id} -->`
+        ]
+      ];
+      for (const [i, [name, construct, marked]] of forms.entries()) {
+        const h = open(source);
+        await ready();
+        h.render(drawn(source));
+        trackingSelection();
+        const image = h.root.querySelectorAll('img')[i];
+        expect(image.alt).toBe('Image');
+        pressOn(image);
+
+        const id = await h.controller.mark('yellow');
+
+        expect(h.source()).toBe(source.replace(construct, marked(id!)));
+        expect(ringed(h.root)).toEqual([image]);
+        expect(
+          h.controller.marks.map(mark => [mark.text, mark.unanchored])
+        ).toEqual([[name, false]]);
+      }
+    });
+
+    it('passes over the icons of an alert title, which no image of the source stands behind', async () => {
+      const source = '> [!NOTE]\n> Keep the dot small.\n\n' + PICTURES;
+      // The alerts sibling draws its title with two icon pictures of its own.
+      const alert =
+        '<div class="markdown-alert markdown-alert-note">' +
+        '<p class="markdown-alert-title"><img class="octicon" alt="Image" src="data:,">' +
+        '<img class="octicon" alt="Image" src="data:,">Note</p>' +
+        '<p>Keep the dot small.</p></div>';
+      const h = open(source);
+      await ready();
+      h.render(
+        drawn(source).replace(/<blockquote>[\s\S]*?<\/blockquote>/, alert)
+      );
+      trackingSelection();
+      pressOn(h.root.querySelector<HTMLImageElement>('img.octicon')!);
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(false);
+
+      pressOn(picture(h.root, 'raster dot'));
+      const id = await h.controller.mark('yellow');
+
+      const [, construct, marked] = FORMS[0];
+      expect(h.source()).toBe(source.replace(construct, marked(id!)));
+      expect(ringed(h.root)).toEqual([picture(h.root, 'raster dot')]);
+    });
+
+    it('writes nothing, and paints no picture, while the pictures are not the images of the source', async () => {
+      // Each render draws pictures the scan does not read one for one: an
+      // img tag written over several lines of a blockquote, and an image
+      // reference with no definition, which the render shows as text. Every
+      // picture carries the same text, so a shifted place would name another
+      // image.
+      const tail = '![dot](dot.png "second")\n\n![dot](chart.svg "third")\n';
+      for (const head of [
+        '> <img src="dot.png" alt="dot"\n>      width="40">\n\n',
+        '![dot][nodef]\n\n'
+      ]) {
+        const source = 'Alpha beta.\n\n' + head + tail;
+        const h = open(source);
+        await ready();
+        h.render(drawn(source));
+        trackingSelection();
+        pressOn(h.root.querySelector<HTMLImageElement>('img[title="second"]')!);
+
+        expect(await h.controller.mark('yellow')).toBeNull();
+        expect(h.transactions).toHaveLength(0);
+      }
+      const source =
+        'Alpha beta.\n\n> <img src="dot.png" alt="dot"\n>      width="40">\n\n' +
+        `<!-- mark:${ONE} note colour=yellow -->\n![dot](chart.svg "third")<!-- /mark:${ONE} -->\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toHaveLength(0);
+      expect(h.controller.marks[0].unanchored).toBe(true);
+    });
+
+    it('carries the picture onto the render a change from disk rebuilds it in', async () => {
+      // rendermime writes the time on a local file's address at every render.
+      const at = (source: string, time: number): string =>
+        drawn(source).replace(/src="dot\.png"/g, `src="dot.png?${time}"`);
+      const h = open(PICTURES);
+      await ready();
+      h.render(at(PICTURES, 1792751870134));
+      trackingSelection();
+      pressOn(picture(h.root, 'raster dot'));
+
+      // The change is elsewhere, and its render rebuilds every picture while
+      // the menu stands over the one pressed on.
+      const changed = PICTURES.replace('Gamma delta.', 'Epsilon zeta.');
+      h.external(changed);
+      jest.advanceTimersByTime(20);
+      h.render(at(changed, 1792751874713));
+
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
+      // The selection is put back over the picture the render drew.
+      const range = window.getSelection()!.getRangeAt(0);
+      expect(range.startContainer.childNodes[range.startOffset]).toBe(
+        picture(h.root, 'raster dot')
+      );
+      const id = await h.controller.mark('yellow');
+
+      const [, construct, marked] = FORMS[0];
+      expect(h.source()).toBe(changed.replace(construct, marked(id!)));
+    });
+
+    it('keeps the picture through the settle of a change beside it', async () => {
+      const h = open(PICTURES);
+      await ready();
+      // While a change is decorated its added text is held out of the capture.
+      h.render(
+        drawn(PICTURES).replace(
+          'Gamma delta.',
+          '<span class="jp-AdvancedMd-decoration jp-AdvancedMd-added">Gamma delta.</span>'
+        )
+      );
+      trackingSelection();
+      pressOn(picture(h.root, 'vector chart'));
+
+      const added = h.root.querySelector('.jp-AdvancedMd-decoration')!;
+      added.replaceWith(...Array.from(added.childNodes));
+      h.settle();
+
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
+      const id = await h.controller.mark('yellow');
+      const [, construct, marked] = FORMS[1];
+      expect(h.source()).toBe(PICTURES.replace(construct, marked(id!)));
+    });
+
+    it('carries the second of two identical pictures onto the second one the render draws', async () => {
+      const source =
+        'Alpha beta.\n\n![dot](dot.png)\n\n![dot](dot.png)\n\nGamma delta.\n';
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+      trackingSelection();
+      pressOn(h.root.querySelectorAll('img')[1]);
+
+      const changed = source.replace('Gamma delta.', 'Epsilon zeta.');
+      h.external(changed);
+      jest.advanceTimersByTime(20);
+      h.render(drawn(changed));
+      const id = await h.controller.mark('yellow');
+
+      expect(h.source()).toBe(
+        changed.replace(
+          '![dot](dot.png)\n\nEpsilon',
+          `<!-- mark:${id} note colour=yellow -->\n![dot](dot.png)<!-- /mark:${id} -->\n\nEpsilon`
+        )
+      );
+    });
+
+    it('paints a marked picture that is all the render holds', async () => {
+      const source = `<!-- mark:${ONE} note colour=yellow -->\n![lonely dot](dot.png)<!-- /mark:${ONE} -->\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toEqual([picture(h.root, 'lonely dot')]);
+      expect(h.controller.marks[0].unanchored).toBe(false);
+    });
+
+    it('paints the picture of a marked image, not words of the render that read like it', async () => {
+      // The alt words stand in the prose as well, and a picture written
+      // flush between two words leaves them one word, which the passage
+      // overlaps.
+      for (const source of [
+        `The raster dot is small.\n\n<!-- mark:${ONE} note colour=yellow -->\n![raster dot](dot.png)<!-- /mark:${ONE} -->\n`,
+        `See<!-- mark:${ONE} note colour=yellow -->![raster dot](dot.png)<!-- /mark:${ONE} -->more.\n`
+      ]) {
+        const h = open(source);
+        await ready();
+        h.render(drawn(source));
+
+        expect(ringed(h.root)).toEqual([picture(h.root, 'raster dot')]);
+        expect(painted(h.root)).toHaveLength(0);
+      }
+    });
+
+    it('lets the picture go when a change takes it out', async () => {
+      const h = open(PICTURES);
+      await ready();
+      h.render(drawn(PICTURES));
+      trackingSelection();
+      pressOn(picture(h.root, 'raster dot'));
+
+      const changed = PICTURES.replace('![raster dot](dot.png)\n\n', '');
+      h.external(changed);
+      jest.advanceTimersByTime(20);
+      h.render(drawn(changed));
+
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(false);
+      expect(await h.controller.mark('yellow')).toBeNull();
+      expect(h.transactions).toHaveLength(0);
+    });
+
+    it('paints a passage holding an image and other words through its words, not on the picture', async () => {
+      const source =
+        `See <!-- mark:${ONE} note colour=yellow -->here ![a dot](dot.png) ` +
+        `and there<!-- /mark:${ONE} -->.\n`;
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+
+      expect(ringed(h.root)).toHaveLength(0);
+      // The closing marker cuts the word "there." and the word is taken
+      // whole; the word before the passage is not painted (DEF-NOTES-138).
+      expect(painted(h.root).map(span => span.textContent)).toEqual([
+        'here ',
+        ' and there',
+        '.'
+      ]);
+      expect(h.controller.marks[0].unanchored).toBe(false);
+    });
+
+    it('writes a selection over words and an image around those words (DEF-NOTES-138-IMAGE-WORDS)', async () => {
+      const source = 'See here ![a dot](dot.png) and there.\n';
+      const h = open(source);
+      await ready();
+      h.render(drawn(source));
+      selectRange(h.root, 'here', 'there.');
+
+      const id = await h.controller.mark('yellow');
+
+      expect(h.source()).toBe(
+        `See <!-- mark:${id} note colour=yellow -->here ![a dot](dot.png) ` +
+          `and there.<!-- /mark:${id} -->\n`
+      );
     });
   });
 
@@ -2172,10 +2802,12 @@ describe('NotesController', () => {
       // The place is the end of the link's last word, and the space after
       // the link is a node of the paragraph. Passing that space over as
       // structure would put the bar inside the anchor, where the underline
-      // is drawn through it and a click on it follows the link.
+      // is drawn through it and a click on it follows the link. The picture
+      // on screen carries other text than the image the marks hold, so it is
+      // not that image and the mark stands as a bar (ACC-NOTES-215).
       h.render(
         '<p>See <a href="https://example.test">the spec</a> ' +
-          '<img alt="img" src="m.png"> today.</p>'
+          '<img alt="an earlier picture" src="m.png"> today.</p>'
       );
 
       const [bar] = bars(h.root);
@@ -2237,10 +2869,12 @@ describe('NotesController', () => {
       // of the link's own last word and there is no text after it in the
       // block. A bar there is drawn with the link's underline through it and
       // answers the click the link would have answered, so the text before
-      // the link takes it: a word or two early, and outside the link.
+      // the link takes it: a word or two early, and outside the link. The
+      // picture carries other text than the image the marks hold, so the
+      // mark stands as a bar (ACC-NOTES-215).
       h.render(
         '<p>See <a href="https://example.test">the spec today</a>' +
-          '<img alt="pears" src="m.png"></p>'
+          '<img alt="earlier pears" src="m.png"></p>'
       );
 
       const [bar] = bars(h.root);
@@ -2280,13 +2914,14 @@ describe('NotesController', () => {
       // An agent writing an image with no alt text leaves markers around a
       // passage of no words at all, so there is nothing of it to quote. The
       // state word on its own does not say which note the bar belongs to,
-      // so what stands in the passage is named instead.
+      // so what stands in the passage is named instead. The screen does not
+      // draw the image yet, which leaves the mark a bar (ACC-NOTES-215).
       const h = open(
         `Alpha <!-- mark:${ONE} note colour=yellow -->![](img/m.png)` +
           `<!-- /mark:${ONE} --> delta.\n`
       );
       await ready();
-      h.render('<p>Alpha <img src="img/m.png"> delta.</p>');
+      h.render('<p>Alpha delta.</p>');
 
       expect(h.controller.marks[0].unanchored).toBe(true);
       expect(bars(h.root)[0].title).toBe('unanchored note\nimage m.png');
@@ -2300,7 +2935,7 @@ describe('NotesController', () => {
           `![](img/m.png "Figure 1")<!-- /mark:${ONE} --> delta.\n`
       );
       await ready();
-      h.render('<p>Alpha <img src="img/m.png" title="Figure 1"> delta.</p>');
+      h.render('<p>Alpha delta.</p>');
 
       expect(bars(h.root)[0].title).toBe('unanchored note\nimage m.png');
     });
@@ -2313,7 +2948,7 @@ describe('NotesController', () => {
           `<!-- /mark:${ONE} --> delta.\n\n[fig]: img/m.png\n`
       );
       await ready();
-      h.render('<p>Alpha <img src="img/m.png"> delta.</p>');
+      h.render('<p>Alpha delta.</p>');
 
       expect(bars(h.root)[0].title).toBe('unanchored note\nimage');
     });
@@ -2327,9 +2962,7 @@ describe('NotesController', () => {
           `![](https://example.test/a/chart.png?w=900#top)<!-- /mark:${ONE} --> delta.\n`
       );
       await ready();
-      h.render(
-        '<p>Alpha <img src="https://example.test/a/chart.png"> delta.</p>'
-      );
+      h.render('<p>Alpha delta.</p>');
 
       expect(bars(h.root)[0].title).toBe('unanchored note\nimage chart.png');
     });
@@ -2400,10 +3033,12 @@ describe('NotesController', () => {
       // The item holds no text of its own: its whole content is a link and
       // an image, and the one space between them is the seam being judged.
       // Reading that space as structure would put the bar inside the link,
-      // with the link's underline drawn through it.
+      // with the link's underline drawn through it. The picture carries other
+      // text than the image the marks hold, so the mark stands as a bar
+      // (ACC-NOTES-215).
       h.render(
         '<ul><li><a href="#one">Chapter one</a> ' +
-          '<img alt="diagram" src="m.png"></li>' +
+          '<img alt="an earlier diagram" src="m.png"></li>' +
           '<li><a href="#two">Appendix two</a></li></ul>'
       );
 
@@ -4235,6 +4870,10 @@ describe('NotesController', () => {
         rangeCount: 1,
         anchorNode: caret,
         getRangeAt: () => ({
+          startContainer: caret,
+          startOffset: 0,
+          endContainer: caret,
+          endOffset: 0,
           collapsed: true,
           commonAncestorContainer: h.root,
           toString: () => ''
@@ -4259,6 +4898,10 @@ describe('NotesController', () => {
         rangeCount: 1,
         anchorNode: h.root,
         getRangeAt: () => ({
+          startContainer: h.root,
+          startOffset: 0,
+          endContainer: h.root,
+          endOffset: 1,
           collapsed: false,
           commonAncestorContainer: h.root,
           toString: () => '\n'

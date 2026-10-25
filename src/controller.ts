@@ -157,10 +157,8 @@ export const QUIET_MS = 3000;
 export type HighlightVisibility = 'low' | 'medium' | 'high';
 
 /**
- * The choices the highlight visibility setting offers, in the order the
- * schema declares them. Named here rather than in the schema alone so the
- * plugin refuses a value the editor never saw and the schema test compares
- * the two lists.
+ * The choices the highlight visibility server option accepts, faintest
+ * first. The plugin refuses any other value and the default stands in.
  */
 export const HIGHLIGHT_VISIBILITIES: HighlightVisibility[] = [
   'low',
@@ -171,10 +169,10 @@ export const HIGHLIGHT_VISIBILITIES: HighlightVisibility[] = [
 /**
  * Attribute the visibility choice is written on, on the document widget node.
  *
- * The stylesheet keys the two highlight colour variables off it, so a change
- * of the setting recolours what is already on screen: the decorations are
- * inside the node and take the new value on the next style pass, with nothing
- * rebuilt and no render. It is never written on the render root, whose
+ * The stylesheet keys the two highlight colour variables off it, so a new
+ * value recolours what is already on screen: the decorations are inside the
+ * node and take it on the next style pass, with nothing rebuilt and no
+ * render. It is never written on the render root, whose
  * attributes and direct children sibling extensions read.
  */
 export const VISIBILITY_ATTRIBUTE = 'data-jp-advancedmd-visibility';
@@ -184,8 +182,8 @@ export const VISIBILITY_ATTRIBUTE = 'data-jp-advancedmd-visibility';
  *
  * The first eight are this controller's own. The last two belong to the notes
  * controller, which is created beside this one and handed the same object, so
- * the extension has one settings shape and the schema test one list to check
- * the declaration against.
+ * the extension has one settings shape for the four user settings and the
+ * seven server options alike.
  */
 export interface ILiveViewSettings {
   enabled: boolean;
@@ -202,7 +200,8 @@ export interface ILiveViewSettings {
 }
 
 /**
- * The values used when the settings registry has nothing to say.
+ * The values used when neither the settings registry nor the server
+ * configuration has anything to say.
  */
 export const DEFAULT_SETTINGS: ILiveViewSettings = {
   enabled: true,

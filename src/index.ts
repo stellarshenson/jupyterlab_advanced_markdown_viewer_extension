@@ -33,6 +33,7 @@ import {
   ICommandPalette,
   IThemeManager
 } from '@jupyterlab/apputils';
+import { PageConfig } from '@jupyterlab/coreutils';
 import { MimeData } from '@lumino/coreutils';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { ITranslator, nullTranslator } from '@jupyterlab/translation';
@@ -143,13 +144,18 @@ const IMAGE_SELECTOR = `${CONTEXT_SELECTOR} img`;
 const PANEL_ORDER: PanelState[] = ['expanded', 'minimap', 'hidden'];
 
 /**
- * The lowest value this code accepts for each numeric setting. A number below
- * its minimum is refused here and the default stands in. The settings schema
- * declares the same minimums so the editor refuses the value before it is
- * ever read, and the schema test compares the two, so a minimum is written
- * here once and nowhere else.
+ * The page config key the server extension puts the options an administrator
+ * set in the Jupyter server configuration under.
  */
-export const MINIMUMS: Record<
+const PAGE_CONFIG_KEY = 'advancedMarkdownViewer';
+
+/**
+ * The lowest value this code accepts for each numeric server option. A number
+ * below its minimum is refused here and the default stands in; the server
+ * configuration does not check it, so a minimum is written here and nowhere
+ * else.
+ */
+const MINIMUMS: Record<
   'pollInterval' | 'fadeDuration' | 'animationSpeed' | 'animationJitter',
   number
 > = {
@@ -160,20 +166,33 @@ export const MINIMUMS: Record<
 };
 
 /**
- * Read settings, falling back to a default for anything missing or invalid.
+ * Values read from the user settings or from the server options.
  */
-function readSettings(settings: ISettingRegistry.ISettings): ILiveViewSettings {
-  const composite = settings.composite as Partial<
-    Record<keyof ILiveViewSettings, unknown>
-  >;
-  const bool = (key: keyof ILiveViewSettings): boolean => {
-    const value = composite[key];
+type SettingValues = Partial<Record<keyof ILiveViewSettings, unknown>>;
+
+/**
+ * Read settings, falling back to a default for anything missing or invalid.
+ *
+ * The four the settings editor lists come from the user settings and the
+ * other seven from the server options only: the registry keeps a key the
+ * schema no longer declares in its composite, so a removed setting still in a
+ * user file would otherwise keep applying.
+ */
+function readSettings(
+  user: SettingValues,
+  server: SettingValues
+): ILiveViewSettings {
+  const bool = (
+    values: SettingValues,
+    key: keyof ILiveViewSettings
+  ): boolean => {
+    const value = values[key];
     return typeof value === 'boolean'
       ? value
       : (DEFAULT_SETTINGS[key] as boolean);
   };
   const num = (key: keyof typeof MINIMUMS): number => {
-    const value = composite[key];
+    const value = server[key];
     return typeof value === 'number' &&
       Number.isFinite(value) &&
       value >= MINIMUMS[key]
@@ -181,33 +200,31 @@ function readSettings(settings: ISettingRegistry.ISettings): ILiveViewSettings {
       : (DEFAULT_SETTINGS[key] as number);
   };
   const str = (key: keyof ILiveViewSettings): string => {
-    const value = composite[key];
+    const value = user[key];
     return typeof value === 'string'
       ? value
       : (DEFAULT_SETTINGS[key] as string);
   };
-  // A choice outside the declared list is refused here as well as by the
-  // editor, so a settings file edited by hand cannot leave the stylesheet
-  // keyed off a value no rule matches.
+  // A choice outside the list is refused, so a server configuration cannot
+  // leave the stylesheet keyed off a value no rule matches.
   const visibility = (): HighlightVisibility => {
-    const value = composite.highlightVisibility;
+    const value = server.highlightVisibility;
     return HIGHLIGHT_VISIBILITIES.includes(value as HighlightVisibility)
       ? (value as HighlightVisibility)
       : DEFAULT_SETTINGS.highlightVisibility;
   };
   return {
-    enabled: bool('enabled'),
+    enabled: bool(user, 'enabled'),
     pollInterval: num('pollInterval'),
     fadeDuration: num('fadeDuration'),
-    animation: bool('animation'),
+    animation: bool(user, 'animation'),
     animationSpeed: num('animationSpeed'),
-    // A share above the whole is read as the whole, as the schema's maximum
-    // has the editor refuse it.
+    // A share above the whole is read as the whole.
     animationJitter: Math.min(1, num('animationJitter')),
-    highlight: bool('highlight'),
+    highlight: bool(user, 'highlight'),
     highlightVisibility: visibility(),
-    tabCue: bool('tabCue'),
-    notes: bool('notes'),
+    tabCue: bool(server, 'tabCue'),
+    notes: bool(server, 'notes'),
     author: str('author')
   };
 }
@@ -274,7 +291,14 @@ const plugin: JupyterFrontEndPlugin<void> = {
     const contents = app.serviceManager.contents;
     const channel = new ChangeChannel(app.serviceManager.serverSettings);
     const attachments = new Map<MarkdownDocument, IAttachment>();
-    let current: ILiveViewSettings = { ...DEFAULT_SETTINGS };
+    // The server options are read once: they change only at server start.
+    const server: SettingValues = JSON.parse(
+      PageConfig.getOption(PAGE_CONFIG_KEY) || '{}'
+    );
+    let current = readSettings({}, server);
+    // Set before the first registration starts the poll, whose armed tick a
+    // later interval does not move.
+    channel.interval = current.pollInterval;
 
     const attach = (widget: MarkdownDocument): void => {
       if (attachments.has(widget)) {
@@ -696,8 +720,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
         .load(PLUGIN_ID)
         .then(settings => {
           const apply = () => {
-            current = readSettings(settings);
-            channel.interval = current.pollInterval;
+            current = readSettings(settings.composite as SettingValues, server);
             for (const attachment of attachments.values()) {
               attachment.live.updateSettings(current);
               // The notes controller reports the change, which is what puts

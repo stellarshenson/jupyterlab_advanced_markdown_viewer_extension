@@ -2,6 +2,26 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.38] - 2026-10-25
+
+The settings editor keeps four settings, the tuning values move to the Jupyter server configuration, and a reader can put a note on an image.
+
+### Added
+
+- A note can be put on an image from the context menu: a Markdown PNG or SVG, an HTML `<img>`, a reference image, an image inside a link, a list or a table, and a picture whose alternative text is empty or wraps over lines (DEF-NOTES-137)
+- The notes panel names an image by its file, including a file name with a space and a destination written in angle brackets with a title
+
+### Changed
+
+- The settings editor lists four settings: Enabled, Animate changes, Highlight changes and Author, with shorter descriptions
+- Seven tuning values - poll interval, fade duration, animation speed, animation jitter, highlight visibility, tab cue and notes - are traits of `AdvancedMarkdownViewer` in the Jupyter server configuration, read at server start and passed to the page, the pattern jupyter-lsp uses. The defaults stay in the extension
+- A server configuration section that is not an object, a wrong-type value or a non-finite number no longer stops the extension loading: the value is replaced by the frontend default, with one warning in the server log
+
+### Fixed
+
+- The image scan no longer carries rules for Markdown constructs outside the input the feature covers. `tokeniseSource` runs in 205 ms on an image-heavy sample of 100 documents, where it ran in 639 ms
+- A file that ends its lines with CRLF keeps its render when a note is put on an `<img>` alone on its line
+
 ## [1.0.37] - 2026-10-21
 
 The unread dot follows the theme's second brand colour.

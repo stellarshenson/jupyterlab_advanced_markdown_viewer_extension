@@ -182,9 +182,10 @@ Three shapes, and what each one must do:
   contain it
 - **Separating two stimuli that must land inside a window** - set the window, never hope
   about the gap. A sleep names a floor and never a ceiling, so a 50 ms gap against a 100 ms
-  window is decided by the load and not by the code. Where the window is a plugin setting,
-  `settings({ ... })` sets it; where it is a server constant, pytest reaches it with
-  `monkeypatch.setattr`
+  window is decided by the load and not by the code. Where the window is a server option
+  (the fallback interval, the fade, the animation speed), `jupyter_server_test_config.py`
+  sets it once for the suite and `helpers.ts` exports the value a wait is computed from;
+  where it is a server constant, pytest reaches it with `monkeypatch.setattr`
 - **Waiting to show that something did not happen** - a duration is the only way, since a
   non-event cannot be waited for. Derive it from the window the mechanism itself uses, say
   in a comment which window that is, and keep it far enough past it that the answer does

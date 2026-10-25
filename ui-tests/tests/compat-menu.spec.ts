@@ -102,7 +102,9 @@ async function expectOffered(page: any, label: string): Promise<void> {
 }
 
 test.describe("another extension's context menu entries", () => {
-  test.use({ mockSettings: settings({ fadeDuration: 2000 }) });
+  // Highlights off, so the menu opens over the repainted text without first
+  // waiting out the suite's 30 s highlight.
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test("ACC-COMPAT-162 offers them on the preview beside this extension's own", async ({
     page,
@@ -138,7 +140,8 @@ test.describe("another extension's context menu entries", () => {
     await page.contents.uploadContent(REWRITTEN, 'text', path);
     const root = page.locator('.jp-RenderedMarkdown:visible');
     await expect(root).toContainText('A rewrite.', { timeout: 20000 });
-    // Settled is a decoration count, not a wait of a chosen length.
+    // Settled is a decoration count, not a wait of a chosen length; with
+    // highlights off there is none to wait out.
     await expect(root.locator('.jp-AdvancedMd-added')).toHaveCount(0, {
       timeout: 20000
     });

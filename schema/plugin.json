@@ -7,49 +7,20 @@
     }
   ],
   "title": "Advanced Markdown Viewer",
-  "description": "Live updates for open Markdown previews when a file changes on disk.",
+  "description": "Updates open Markdown previews when their file changes on disk.",
   "type": "object",
   "properties": {
     "enabled": {
       "title": "Enabled",
-      "description": "Keep open Markdown previews live: a change made to the file outside JupyterLab is applied to the preview without a reload. Off, the preview keeps what it showed until the document is reloaded, and no file is watched, applied, highlighted or cued. Marks and notes are not covered by this switch and have their own setting.",
+      "description": "Apply changes made to the file outside JupyterLab to the open preview, without a reload. Off, the preview changes only when you reload it; marks and notes still work.",
       "type": "boolean",
       "default": true
-    },
-    "pollInterval": {
-      "title": "Fallback check interval (seconds)",
-      "description": "File events reported by the server are the primary path: a change is applied as soon as the file is written. This is how often every open file is checked in one batched request for filesystems that raise no events, such as network and bind-mounted drives.",
-      "type": "number",
-      "minimum": 1,
-      "default": 10
-    },
-    "fadeDuration": {
-      "title": "Highlight duration (milliseconds)",
-      "description": "How long the highlight stays on changed text before it is gone. It rises over half a second, holds its colour, and fades away over the last three quarters of a second.",
-      "type": "number",
-      "minimum": 0,
-      "default": 5000
     },
     "animation": {
       "title": "Animate changes",
-      "description": "Play out an external change as typing: added text appears letter by letter and removed text is deleted from its end after a pause. Off shows a change at once.",
+      "description": "Type added text in letter by letter and delete removed text from its end. Off, a change appears at once.",
       "type": "boolean",
       "default": true
-    },
-    "animationSpeed": {
-      "title": "Animation speed (characters per second)",
-      "description": "How fast added text is typed in and removed text is deleted from its end in the rendered view, on average. 0 shows a change at once.",
-      "type": "integer",
-      "minimum": 0,
-      "default": 75
-    },
-    "animationJitter": {
-      "title": "Animation jitter (0 to 1)",
-      "description": "How far the time of each typed or deleted character may stray from the even time at the animation speed, as a share of it: 0.25 lets a character take between three quarters and one and a quarter of its time, so the typing keeps the speed on average and does not tick like a clock. 0 types evenly; 1 lets a character take anything from no time to twice its time.",
-      "type": "number",
-      "minimum": 0,
-      "maximum": 1,
-      "default": 0.25
     },
     "highlight": {
       "title": "Highlight changes",
@@ -57,35 +28,11 @@
       "type": "boolean",
       "default": true
     },
-    "highlightVisibility": {
-      "title": "Highlight visibility",
-      "description": "How strong the green and red backgrounds of a change are. Medium is the shipped strength, Low a fainter wash for a reader who finds it loud, High a stronger one for a reader who loses it against the page.",
-      "type": "string",
-      "oneOf": [
-        { "const": "low", "title": "Low" },
-        { "const": "medium", "title": "Medium" },
-        { "const": "high", "title": "High" }
-      ],
-      "default": "medium"
-    },
-    "tabCue": {
-      "title": "Mark the document tab",
-      "description": "Mark the tab of a document with what happened to its file: a half-filled circle for a change that was applied, its filled half swapping sides while changes arrive, faster the more often they arrive, and a dot in the theme brand colour once they stop on a tab you have not looked at; a square for a change held back by unsaved edits or dropped where it overlapped or sat right beside them; a cross for a file that is gone from disk. Off, no tab is marked.",
-      "type": "boolean",
-      "default": true
-    },
-    "notes": {
-      "title": "Marks and notes",
-      "description": "Mark passages of a Markdown document and write notes on them, stored in the file itself as HTML comments. Off, no passage is painted, the panel stays hidden and the context menu offers nothing; the markers already in a document are left exactly as they are.",
-      "type": "boolean",
-      "default": true
-    },
     "author": {
       "title": "Note handle",
-      "description": "The handle written on every note line you add, without the leading @. Empty writes @user, and you are asked for a handle the first time you write a note. Set note handle in the command palette puts the same question again.",
+      "description": "The handle written on your notes, without the @. Empty writes @user and asks for a handle at your first note.",
       "type": "string",
       "default": ""
     }
-  },
-  "additionalProperties": false
+  }
 }

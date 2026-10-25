@@ -4,11 +4,11 @@ import {
   FILE,
   INITIAL,
   REWRITTEN,
+  SUITE_FADE_DURATION,
   highlightAlphas,
   labFixtures,
   openPreview,
   settings,
-  shippedSettings,
   typeInEditor,
   typeInEditorAfter
 } from './helpers';
@@ -249,9 +249,7 @@ test.describe('live preview with a long highlight', () => {
 });
 
 test.describe('fading', () => {
-  test.use({
-    mockSettings: settings({ fadeDuration: 1000 })
-  });
+  test.use({ mockSettings: settings() });
 
   test('takes the decorations back out once the fade has run', async ({
     page,
@@ -266,8 +264,9 @@ test.describe('fading', () => {
         timeout: 20000
       }
     );
+    // The suite's fade, with ten seconds to spare.
     await expect(page.locator('.jp-AdvancedMd-decoration')).toHaveCount(0, {
-      timeout: 20000
+      timeout: SUITE_FADE_DURATION + 10000
     });
     // The document itself is untouched by the decorations coming and going.
     await expect(
@@ -301,40 +300,6 @@ test.describe('highlighting turned off', () => {
     await expect(
       page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
     ).toHaveCount(1);
-  });
-});
-
-test.describe('the tab cue turned off', () => {
-  test.use({
-    mockSettings: settings({ tabCue: false })
-  });
-
-  test('still updates the content but marks no tab', async ({
-    page,
-    tmpPath
-  }) => {
-    await page.contents.uploadContent(INITIAL, 'text', `${tmpPath}/${FILE}`);
-    await openPreview(page, `${tmpPath}/${FILE}`);
-    await page.contents.uploadContent(REWRITTEN, 'text', `${tmpPath}/${FILE}`);
-
-    await expect(
-      page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
-    ).toContainText('A third paragraph appeared.', { timeout: 20000 });
-    // The live update is unaffected: the change landed and is highlighted.
-    await expect(
-      page.locator('.jp-AdvancedMd-decoration').first()
-    ).toBeVisible();
-    // Neither marker: not the arriving one, and not either of the two the
-    // reader has to act on.
-    await expect(
-      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
-    ).toHaveCount(0);
-    await expect(
-      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabBlocked')
-    ).toHaveCount(0);
-    await expect(
-      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabMissing')
-    ).toHaveCount(0);
   });
 });
 
@@ -797,11 +762,11 @@ test.describe('the reader position', () => {
 });
 
 test.describe('change animation', () => {
-  // 20 characters per second: the third paragraph (27 characters) types for
-  // 1350 ms and the ghost 'apples.' is held for its 500 ms rise and the
-  // 250 ms strike over it, then deleted over 350 ms, all long enough to
-  // sample every 20 ms.
-  test.use({ mockSettings: settings({ animationSpeed: 20 }) });
+  // The suite speed, 20 characters per second with no jitter: the third
+  // paragraph (27 characters) types for 1350 ms and the ghost 'apples.' is
+  // held for its 500 ms rise and the 250 ms strike over it, then deleted over
+  // 350 ms, all long enough to sample every 20 ms.
+  test.use({ mockSettings: settings({ animation: true }) });
 
   const THIRD = 'A third paragraph appeared.';
 
@@ -832,8 +797,8 @@ test.describe('change animation', () => {
     }
     expect(new Set(samples).size).toBeGreaterThan(5);
     expect(samples[samples.length - 1]).toBe(THIRD.length);
-    // At the default speed of 200 the same text would type in 135 ms, which
-    // is seven samples; the low speed set here is what makes it slow.
+    // At the shipped speed of 75 the same text would type in 360 ms, which
+    // is eighteen samples; the low suite speed is what makes it slow.
     const growing = samples.filter(length => (length as number) < THIRD.length);
     expect(growing.length).toBeGreaterThanOrEqual(40);
 
@@ -1118,12 +1083,10 @@ const sampleFade = (
   );
 
 test.describe('the fade over the life of a highlight', () => {
-  // The fade duration is the schema default. The change animation is off, so
+  // The fade duration is the suite value. The change animation is off, so
   // the whole change is on screen at once and the colour is the only thing
   // that moves.
-  test.use({
-    mockSettings: settings({ fadeDuration: 3000, animation: false })
-  });
+  test.use({ mockSettings: settings() });
 
   test('rises, holds, then drains over the last part of its life without moving the text', async ({
     page,
@@ -1135,7 +1098,8 @@ test.describe('the fade over the life of a highlight', () => {
 
     // Sampling is started before the write, so the first sample is taken
     // within 20 ms of the decoration appearing.
-    const sampling = sampleFade(page, 20, 220);
+    // The whole life, the 500 ms rise and a margin past the drain.
+    const sampling = sampleFade(page, 20, (SUITE_FADE_DURATION + 1400) / 20);
     await page.contents.uploadContent(REWRITTEN, 'text', path);
     const samples = await sampling;
 
@@ -1152,7 +1116,10 @@ test.describe('the fade over the life of a highlight', () => {
     // sample taken while the viewer was replacing the DOM sees no decoration
     // at all and says nothing about the colour, so it is left out.
     const held = samples.filter(
-      sample => sample.at >= 600 && sample.at <= 2500 && sample.bg !== null
+      sample =>
+        sample.at >= 600 &&
+        sample.at <= SUITE_FADE_DURATION - 500 &&
+        sample.bg !== null
     );
     expect(held.length).toBeGreaterThan(80);
     for (const sample of held) {
@@ -1323,9 +1290,10 @@ test.describe('a change inside a fenced code block', () => {
     );
     await expect(added.first()).toBeVisible({ timeout: 20000 });
     // Both renders of the change are over: past the viewer's own 1000 ms
-    // render timeout, which is when the block is rebuilt, with margin. At the
-    // animation speed of 0 this describe uses, the text lands whole at apply,
-    // so waiting for it would return before the render this case survives.
+    // render timeout, which is when the block is rebuilt, with margin. With
+    // the animation off, as this describe has it, the text lands whole at
+    // apply, so waiting for it would return before the render this case
+    // survives.
     await page.waitForTimeout(2000);
     expect((await added.allTextContents()).join('')).toContain('33');
 
@@ -1352,12 +1320,6 @@ test.describe('a change inside a fenced code block', () => {
     expect(colours.color).toBe(colours.around);
   });
 });
-
-/**
- * A sentence of exactly sixty characters, so how long it takes to type says
- * what the speed is.
- */
-const SIXTY = 'The fox jumped over the lazy brown dogs and ran home to rest';
 
 /**
  * Sample the total length of the added highlights at a fixed interval,
@@ -1407,43 +1369,16 @@ const sampleTyping = (
     [everyMs, count, waitMs]
   );
 
-test.describe('a fresh install with no setting touched', () => {
-  // Nothing of this extension is written to the settings store, so the speed
-  // in force is the one the schema declares.
-  test.use({ mockSettings: shippedSettings() });
-
-  test('ACC-ANIM-143 types a change in at 75 characters per second, its timing jittered (ACC-ANIM-158)', async ({
-    page,
-    tmpPath
-  }) => {
-    expect(SIXTY.length).toBe(60);
-    const path = `${tmpPath}/${FILE}`;
-    await page.contents.uploadContent(INITIAL, 'text', path);
-    await openPreview(page, path);
-
-    // Sampling is started before the write, so the first sample is taken
-    // within 50 ms of the highlight appearing.
-    const sampling = sampleTyping(page, 50, 50, 30000);
-    await page.contents.uploadContent(`${INITIAL}\n${SIXTY}\n`, 'text', path);
-    const samples = await sampling;
-
-    const whole = Math.max(...samples.map(sample => sample.length));
-    expect(whole).toBeGreaterThanOrEqual(SIXTY.length);
-
-    // Four hundred milliseconds in, a sixty character sentence at 75
-    // characters a second is half way through; with every draw of the
-    // quarter jitter at its bottom it would still need 600 ms.
-    const early = samples.filter(sample => sample.at <= 400);
-    expect(early.length).toBeGreaterThan(4);
-    expect(early[early.length - 1].length).toBeLessThan(whole);
-
-    // And it is complete inside 1.1 seconds: 800 ms on average, a second
-    // with every draw at its top. At the 50 characters a second of the
-    // earlier 1.0.9 builds the same sentence would take 1.2 s even.
-    const done = samples.find(sample => sample.length === whole);
-    expect((done as { at: number }).at).toBeLessThanOrEqual(1100);
-  });
-});
+/**
+ * How opaque the added and the removed highlight are at each strength, in each
+ * theme. Medium is the pair the extension ships with, Low ten percentage
+ * points under it and High ten over.
+ */
+const STRENGTHS = [
+  { name: 'low', light: [0.25, 0.21], dark: [0.21, 0.19] },
+  { name: 'medium', light: [0.35, 0.31], dark: [0.31, 0.29] },
+  { name: 'high', light: [0.45, 0.41], dark: [0.41, 0.39] }
+];
 
 test.describe('the strength of the change highlights', () => {
   test.use({ mockSettings: settings() });
@@ -1476,10 +1411,49 @@ test.describe('the strength of the change highlights', () => {
     expect(dark.added).toBeCloseTo(0.31, 2);
     expect(dark.removed).toBeCloseTo(0.29, 2);
   });
+
+  test('ACC-HILITE-140 offers three strengths, each a pair of its own in each theme', async ({
+    page,
+    tmpPath
+  }) => {
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await openPreview(page, path);
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await expect(page.locator('.jp-AdvancedMd-removed').first()).toBeVisible({
+      timeout: 20000
+    });
+
+    // The strength is a server option, read once at start and written on the
+    // document widget node, where the stylesheet reads it; writing the
+    // attribute there reads every strength off the one pair of highlights
+    // the suite's 30 s fade keeps on screen.
+    for (const theme of ['light', 'dark'] as const) {
+      if (theme === 'dark') {
+        await page.theme.setDarkTheme();
+      }
+      for (const strength of STRENGTHS) {
+        await page.evaluate((value: string) => {
+          for (const node of document.querySelectorAll(
+            '[data-jp-advancedmd-visibility]'
+          )) {
+            node.setAttribute('data-jp-advancedmd-visibility', value);
+          }
+        }, strength.name);
+        await expect
+          .poll(async () => (await highlightAlphas(page)).added)
+          .toBeCloseTo(strength[theme][0], 2);
+        expect((await highlightAlphas(page)).removed).toBeCloseTo(
+          strength[theme][1],
+          2
+        );
+      }
+    }
+  });
 });
 
 test.describe('the change animation under reduced motion', () => {
-  test.use({ mockSettings: settings({ animationSpeed: 25 }) });
+  test.use({ mockSettings: settings({ animation: true }) });
 
   test('DEF-CUE-68 types the added text in rather than landing it at once', async ({
     page,
@@ -1502,7 +1476,7 @@ test.describe('the change animation under reduced motion', () => {
 
     // The reader on a machine reporting the preference sees the change typed
     // in, because the browser preference is not this extension's switch: the
-    // animation setting and a speed of 0 are.
+    // animation setting and an animation_speed of 0 are.
     const whole = Math.max(...samples.map(sample => sample.length));
     expect(whole).toBeGreaterThan(10);
     expect(samples[0].length).toBeLessThan(whole);

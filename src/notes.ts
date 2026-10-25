@@ -32,7 +32,10 @@ import { IMessageHandler, Message, MessageLoop } from '@lumino/messaging';
 import { ISignal, Signal } from '@lumino/signaling';
 
 import {
+  imageToSource,
   IRenderedRange,
+  ISelectionRange,
+  ISourceImage,
   ISourceScan,
   itemContinuation,
   markerText,
@@ -41,7 +44,9 @@ import {
   renderedToDomRange,
   renderedToSource,
   renderedWords,
+  sameImages,
   selectionOffsets,
+  sourceImages,
   tokeniseSource
 } from './anchor';
 import { diffWords, mapOffsets } from './diff';
@@ -51,11 +56,13 @@ import {
   ITextSnapshot,
   ITextSpan
 } from './highlight';
+import { imageKey } from './imagereuse';
 import {
   CARET_CLASS,
   colourClass,
   DIAGRAM_CLASS,
   FLASH_CLASS,
+  IMAGE_CLASS,
   MARK_CLASS,
   markedBy,
   MARK_CLOSED_CLASS,
@@ -140,6 +147,12 @@ export const SELECTING_CLASS = 'jp-AdvancedMd-selecting';
  * it is.
  */
 const DIAGRAM_SELECTOR = '.jp-RenderedMermaid:not(.jp-mod-warning)';
+
+/**
+ * The title the GitHub alerts sibling writes over an alert, holding icon
+ * pictures of its own that no image of the source stands behind.
+ */
+const ALERT_TITLE_SELECTOR = '.markdown-alert-title';
 
 /**
  * Handle written on a note line while the author setting is empty.
@@ -248,6 +261,25 @@ interface ICaret {
  */
 interface ISelectionRecord extends IRenderedRange {
   text: string;
+  /**
+   * The picture the selection is, where it is one (ACC-NOTES-215). A picture
+   * adds no text to the capture, so the offsets are empty and the mark goes
+   * around the image the picture was drawn from.
+   */
+  image?: HTMLImageElement;
+  /**
+   * The picture's place among the pictures of its text and file, which
+   * finds it again in a render that rebuilt it.
+   */
+  place?: number;
+}
+
+/**
+ * A mark on the one image its passage is, and the picture drawn from it.
+ */
+interface IPictured {
+  mark: IMark;
+  image: HTMLImageElement;
 }
 
 /** Everything a marker's own line may hold before it. */
@@ -292,6 +324,62 @@ export function handleOf(raw: string): string {
 function selectedRange(selection: Selection): Range | null {
   const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
   return range && range.toString().trim() !== '' ? range : null;
+}
+
+/**
+ * The pictures of a render a note can go on, in document order: every one
+ * but the picture a drawn diagram is, whose mark goes on its fence, and an
+ * alert title's icons.
+ */
+function pictures(root: HTMLElement): HTMLImageElement[] {
+  return Array.from(root.querySelectorAll('img')).filter(
+    image => !image.closest(`${DIAGRAM_SELECTOR}, ${ALERT_TITLE_SELECTOR}`)
+  );
+}
+
+/**
+ * What tells a picture from the others across renders: its text and its
+ * file, without the time rendermime writes on a local file's address at
+ * every render.
+ */
+function pictureKey(image: HTMLImageElement): string {
+  const src = image.getAttribute('src') ?? '';
+  return `${image.alt}\n${imageKey(src) ?? src}`;
+}
+
+/**
+ * The pictures of a render that carry the text and the file of one, in
+ * document order.
+ */
+function twins(root: HTMLElement, image: HTMLImageElement): HTMLImageElement[] {
+  const key = pictureKey(image);
+  return pictures(root).filter(other => pictureKey(other) === key);
+}
+
+/**
+ * Select a picture as the one node it is, the range {@link imageOf} reads.
+ */
+function selectPicture(selection: Selection, image: HTMLImageElement): void {
+  const parent = image.parentNode!;
+  const at = Array.prototype.indexOf.call(parent.childNodes, image);
+  selection.setBaseAndExtent(parent, at, parent, at + 1);
+}
+
+/**
+ * The picture a range holds and nothing else, or null: the range a press on
+ * a picture leaves (ACC-NOTES-215).
+ */
+function imageOf(
+  range: ISelectionRange,
+  root: HTMLElement
+): HTMLImageElement | null {
+  const node = range.startContainer.childNodes[range.startOffset];
+  return range.endContainer === range.startContainer &&
+    range.endOffset === range.startOffset + 1 &&
+    node instanceof HTMLImageElement &&
+    pictures(root).includes(node)
+    ? node
+    : null;
 }
 
 /**
@@ -536,24 +624,39 @@ function passageText(
  * gives one - the last segment of the target, a whole URL being longer than
  * the line has room for. A query string and a fragment go with the rest of
  * the URL, neither being part of the name. A title after the target is
- * passed over. Only a target in round brackets is read: a reference-style
- * image gives a label, which is not a file name, and naming the label is
- * worse than naming nothing.
+ * passed over. Only a target in round brackets is read, or an img tag's
+ * source: a reference-style image gives a label, which is not a file name,
+ * and naming the label is worse than naming nothing. The scan reads no
+ * words from an image's alternative text, which the render writes on the
+ * picture alone, so that text names it first (ACC-NOTES-215).
  */
 function imageText(passage: ISpan, scan: ISourceScan, source: string): string {
-  const span = scan.protectedSpans.find(
-    entry =>
-      entry.kind === 'image' &&
-      entry.end > passage.start &&
-      entry.start < passage.end
+  const image = sourceImages(scan, source).find(
+    entry => entry.end > passage.start && entry.start < passage.end
   );
-  if (!span) {
+  if (!image) {
     return '';
   }
-  const target = /\(([^\s)]*)(?:\s+(?:"[^"]*"|'[^']*'))?\)\s*$/.exec(
-    source.slice(span.start, span.end)
-  );
-  const path = target ? target[1].split(/[?#]/)[0] : '';
+  if (image.alt) {
+    return image.alt;
+  }
+  const written = source.slice(image.start, image.end);
+  // A target may hold parentheses in balanced pairs, as the scan reads it; an
+  // angle-bracket target and a quoted src may hold a space, which a bare one
+  // may not.
+  const target =
+    /\(<([^<>\n]*)>(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)\s*$/.exec(written) ??
+    /\(((?:\\.|[^\s()\\]|\([^\s()]*\))*)(?:\s+(?:"[^"]*"|'[^']*'))?\)\s*$/.exec(
+      written
+    ) ??
+    /\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^"'\s>]*))/i.exec(written);
+  // A backslash before a punctuation character escapes it, and is no part
+  // of the file name.
+  const path = target
+    ? (target[1] ?? target[2] ?? target[3] ?? '')
+        .replace(/\\([!-/:-@[-`{-~])/g, '$1')
+        .split(/[?#]/)[0]
+    : '';
   const name = path.split('/').pop() ?? '';
   return name ? `image ${name}` : 'image';
 }
@@ -583,6 +686,30 @@ function onDiagram(
         MERMAID_FENCE.test(source.slice(span.start, span.end))
     )
   );
+}
+
+/**
+ * The place among the images of the source of the one image a passage is,
+ * or -1 where the passage holds no image, more than one, or a word outside
+ * it (ACC-NOTES-215). A word written flush against both sides of the image
+ * runs on across it, as it does in the render, and is not outside it.
+ */
+function imageIndex(
+  passage: ISpan,
+  scan: ISourceScan,
+  images: ISourceImage[]
+): number {
+  const inside = images.filter(
+    image => image.start >= passage.start && image.end <= passage.end
+  );
+  const image = inside.length === 1 ? inside[0] : null;
+  const stray = scan.tokens.some(
+    token =>
+      token.end > passage.start &&
+      token.start < passage.end &&
+      (!image || token.end <= image.start || token.start >= image.end)
+  );
+  return image && !stray ? images.indexOf(image) : -1;
 }
 
 /**
@@ -876,6 +1003,41 @@ function unwashDiagram(box: HTMLElement): void {
 }
 
 /**
+ * Paint a picture in the colour of the marks over the image it was drawn
+ * from (ACC-NOTES-215), the way a drawn diagram is washed: several marks
+ * share the one picture, which takes the colour and the state of the last,
+ * and names every one of them. A picture takes no wash over it, so the
+ * swatch colour rings it. Its title is the document's own and is left as
+ * the renderer wrote it; the notes are read from the row.
+ */
+function paintImage(image: HTMLImageElement, marks: IMark[]): void {
+  const last = marks[marks.length - 1];
+  image.classList.add(
+    IMAGE_CLASS,
+    colourClass(last.colour),
+    swatchClass(last.colour)
+  );
+  if (last.closed) {
+    image.classList.add(MARK_CLOSED_CLASS);
+  }
+  image.dataset.mark = marks.map(mark => mark.id).join(' ');
+}
+
+/**
+ * Take the paint off a picture, the flash with it, as off a diagram.
+ */
+function unpaintImage(image: HTMLElement): void {
+  image.classList.remove(
+    IMAGE_CLASS,
+    FLASH_CLASS,
+    MARK_CLOSED_CLASS,
+    ...MARK_COLOURS.map(colourClass),
+    ...MARK_COLOURS.map(swatchClass)
+  );
+  delete image.dataset.mark;
+}
+
+/**
  * Paint the marked passages of a render.
  *
  * Each text node the passages reach is rebuilt once from its own slices, so
@@ -891,12 +1053,14 @@ function unwashDiagram(box: HTMLElement): void {
  * @param anchored - the marks to paint and where their passages sit
  * @param carets - the marks with no passage in this render, and where they
  * sit
+ * @param pictured - the marks whose passage is one image, and its picture
  */
 function paintMarks(
   snapshot: ITextSnapshot,
   root: HTMLElement,
   anchored: IAnchored[],
-  carets: ICaret[]
+  carets: ICaret[],
+  pictured: IPictured[]
 ): void {
   const work = new Map<
     Text,
@@ -937,6 +1101,14 @@ function paintMarks(
 
   for (const [box, marks] of washes) {
     washDiagram(box, marks);
+  }
+
+  const images = new Map<HTMLImageElement, IMark[]>();
+  for (const item of pictured) {
+    images.set(item.image, [...(images.get(item.image) ?? []), item.mark]);
+  }
+  for (const [image, marks] of images) {
+    paintImage(image, marks);
   }
 
   const bars = new Map<Text, Array<{ at: number; caret: ICaret }>>();
@@ -1008,14 +1180,19 @@ function paintMarks(
  * Take every mark span out of a render, putting back the text it wrapped.
  *
  * A bar wraps nothing, so the same unwrapping removes it and leaves the text
- * around it alone. A washed diagram wraps nothing either and is not a span
- * at all, so its classes come off the block first.
+ * around it alone. A washed diagram and a painted picture wrap nothing
+ * either and are not spans at all, so their classes come off them first.
  */
 function unpaintMarks(root: HTMLElement): void {
   for (const box of Array.from(
     root.querySelectorAll<HTMLElement>(`.${DIAGRAM_CLASS}`)
   )) {
     unwashDiagram(box);
+  }
+  for (const image of Array.from(
+    root.querySelectorAll<HTMLElement>(`.${IMAGE_CLASS}`)
+  )) {
+    unpaintImage(image);
   }
   for (const element of Array.from(
     root.querySelectorAll(`.${MARK_CLASS}, .${CARET_CLASS}`)
@@ -1239,9 +1416,18 @@ export class NotesController implements IDisposable {
       // it holds the text of the render as it stands, which a carried record
       // always does.
       const selection = used;
+      // A picture is found by its place among the pictures on screen, and a
+      // render that took it out leaves it no place (ACC-NOTES-215).
+      const shown = pictures(root);
       const range =
         selection && selection.text === captureText(root).text
-          ? renderedToSource(selection, root, source)
+          ? selection.image
+            ? imageToSource(
+                shown.indexOf(selection.image),
+                shown.map(image => image.alt),
+                source
+              )
+            : renderedToSource(selection, root, source)
           : null;
       if (!range) {
         return [];
@@ -1521,14 +1707,17 @@ export class NotesController implements IDisposable {
   }
 
   /**
-   * Select a drawn diagram the reader presses on.
+   * Select a drawn diagram or a picture the reader presses on.
    *
    * A picture holds no words, so a drag across one selects nothing: the
    * browser starts to drag the picture instead. A press puts the selection
    * over the whole block, which is the unit a note goes on, and it is the
    * press rather than the click so the context menu a right button opens is
-   * offered the selection its Mark entry needs (ACC-NOTES-182). The press
-   * selects whether or not the diagram is already marked, as a press on a
+   * offered the selection its Mark entry needs (ACC-NOTES-182). Any other
+   * picture is selected as the one node it is, which the record reads as
+   * that picture, and it replaces a text selection the right button would
+   * leave standing elsewhere (ACC-NOTES-215). The press selects whether or
+   * not the diagram or the picture is already marked, as a press on a
    * painted passage does; the note on it is read from its row in the panel.
    *
    * The browser's own answer to the press is left alone. It focuses the
@@ -1549,6 +1738,21 @@ export class NotesController implements IDisposable {
     const target = event.target as Element | null;
     const diagram = target?.closest?.(DIAGRAM_SELECTOR) ?? null;
     const selection = window.getSelection();
+    if (
+      root &&
+      selection &&
+      target instanceof HTMLImageElement &&
+      pictures(root).includes(target)
+    ) {
+      // A press inside a selection that already holds the picture keeps it.
+      // Only a whole picture counts: the selection a press on a picture
+      // written flush before this one leaves ends where this one begins.
+      if (!selection.isCollapsed && selection.containsNode(target, false)) {
+        return;
+      }
+      selectPicture(selection, target);
+      return;
+    }
     if (!root || !diagram || !root.contains(diagram) || !selection) {
       return;
     }
@@ -1685,6 +1889,24 @@ export class NotesController implements IDisposable {
     }
     const range = selectedRange(selection);
     if (!range) {
+      const live = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      // A range over one picture holds no text and is a press on it: the
+      // record is the picture, with no offsets (ACC-NOTES-215).
+      const image = live ? imageOf(live, root) : null;
+      if (image) {
+        const text = captureText(root).text;
+        const held = this._selection;
+        if (held?.image !== image || held.text !== text) {
+          this._setSelection({
+            start: 0,
+            end: 0,
+            text,
+            image,
+            place: twins(root, image).indexOf(image)
+          });
+        }
+        return;
+      }
       // Nothing is selected. A live range over no text, as a drag across a
       // rule leaves, is a deselection. So is a caret placed in text, which is
       // the reader's click there, and a selection gone altogether, which is
@@ -1692,7 +1914,6 @@ export class NotesController implements IDisposable {
       // move, which keeps the record. The exception is a selection gone while
       // a menu holds the focus: macOS Safari drops the selection for the menu
       // it opened, and the reader still means the words (DEF-NOTES-111).
-      const live = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
       if (live?.collapsed === false) {
         this._setSelection(null);
         return;
@@ -1757,6 +1978,19 @@ export class NotesController implements IDisposable {
       return;
     }
     const text = captureText(root).text;
+    // A picture holds no text for the diff to carry: it is carried onto the
+    // picture at its place among those of its text and file, which is itself
+    // or the one a render rebuilt it as, and let go where the change took it
+    // out (ACC-NOTES-215).
+    if (record.image) {
+      const image = twins(root, record.image)[record.place!];
+      if (image) {
+        Object.assign(record, { image, text });
+      } else {
+        this._setSelection(null);
+      }
+      return;
+    }
     if (text === record.text) {
       return;
     }
@@ -1800,6 +2034,11 @@ export class NotesController implements IDisposable {
     }
     const selection = window.getSelection();
     if (!selection) {
+      return;
+    }
+    // A picture is put back as the one node it is, as the press selected it.
+    if (record.image) {
+      selectPicture(selection, record.image);
       return;
     }
     const range = renderedToDomRange(record, root);
@@ -2117,15 +2356,23 @@ export class NotesController implements IDisposable {
       return;
     }
     // Before the first render there is nothing to find a passage in, and a
-    // mark is not unanchored for want of a render.
-    if (!root.textContent?.trim()) {
+    // mark is not unanchored for want of a render. A render of nothing but a
+    // picture is a render.
+    if (!root.textContent?.trim() && !root.querySelector('img')) {
       return;
     }
     const source = this._source;
     // The words of the source and the words of the render are the same for
-    // every mark, so both are read once here rather than once per mark.
+    // every mark, so both are read once here rather than once per mark, and
+    // so are the images of each.
     const scan = tokeniseSource(source);
     const words = renderedWords(captureText(root).text);
+    const images = sourceImages(scan, source);
+    const shown = pictures(root);
+    const matched = sameImages(
+      shown.map(image => image.alt),
+      images
+    );
     // While a change is decorated the text it added is held out of the
     // capture, so a passage inside it is not there to be found and says
     // nothing about the mark. The guard at the end of this pass has always
@@ -2134,6 +2381,7 @@ export class NotesController implements IDisposable {
     const decorated = !!root.querySelector(`.${DECORATION_CLASS}`);
     const anchored: IAnchored[] = [];
     const carets: ICaret[] = [];
+    const pictured: IPictured[] = [];
     const lost = new Set<string>();
     for (const mark of this._marks) {
       // A document note paints nothing and stands nowhere, even one a
@@ -2150,6 +2398,18 @@ export class NotesController implements IDisposable {
         continue;
       }
       if (mark.passage) {
+        // A passage that is one image is painted on the picture at the same
+        // place among the pictures, while the pictures are the images of the
+        // source. It is looked for first: a word written flush against both
+        // sides of the picture runs on across it, and the render holds that
+        // word as well (ACC-NOTES-215).
+        const image = matched
+          ? shown[imageIndex(mark.passage, scan, images)]
+          : undefined;
+        if (image) {
+          pictured.push({ mark, image });
+          continue;
+        }
         const range = passageToRendered(mark.passage, scan, words);
         if (range && range.end > range.start) {
           anchored.push({ mark, range });
@@ -2202,11 +2462,15 @@ export class NotesController implements IDisposable {
       ...carets.map(
         caret =>
           `caret ${caret.mark.id} ${caret.mark.colour} ${caret.mark.closed} ${caret.at} ${JSON.stringify(caret.text)} ${JSON.stringify(tooltip(caret.mark))}`
+      ),
+      ...pictured.map(
+        item =>
+          `image ${item.mark.id} ${item.mark.colour} ${item.mark.closed} ${shown.indexOf(item.image)}`
       )
     ].join('\n');
     if (signature !== this._painted) {
       unpaintMarks(root);
-      paintMarks(captureText(root), root, anchored, carets);
+      paintMarks(captureText(root), root, anchored, carets, pictured);
       this._painted = signature;
     }
 

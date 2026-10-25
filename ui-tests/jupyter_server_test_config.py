@@ -24,5 +24,19 @@ c.FileContentsManager.delete_to_trash = False
 # where the extension is not installed, as in CI.
 c.GalaxaHubMotd.open_on_start = False
 
+# The server options of this extension, set once for the whole suite. All
+# seven are set, the defaults included, so a developer's own server
+# configuration cannot reach the suite. The fallback check every 30 s never
+# fires inside a test that must not see it and fires within the wait of the
+# two that need it; a highlight stands for 30 s; added text types at 20
+# characters a second with no jitter, where a test turns the animation on.
+c.AdvancedMarkdownViewer.poll_interval = 30
+c.AdvancedMarkdownViewer.fade_duration = 30000
+c.AdvancedMarkdownViewer.animation_speed = 20
+c.AdvancedMarkdownViewer.animation_jitter = 0
+c.AdvancedMarkdownViewer.highlight_visibility = "medium"
+c.AdvancedMarkdownViewer.tab_cue = True
+c.AdvancedMarkdownViewer.notes = True
+
 # Uncomment to set server log level to debug level
 # c.ServerApp.log_level = "DEBUG"

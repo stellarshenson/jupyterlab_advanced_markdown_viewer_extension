@@ -6,6 +6,7 @@ import {
   TYPING_CLASS
 } from '../animate';
 import { ADDED_CLASS, captureText, decorate, undecorate } from '../highlight';
+import { DEFAULT_SETTINGS } from '../controller';
 
 // The test compiler options carry the jest types alone, so the two things
 // this file needs from the module system are declared where they are used.
@@ -138,6 +139,22 @@ describe('ChangeAnimator', () => {
       expect(texts(created).map(text => text!.length)).toEqual([9, 9]);
       jest.advanceTimersByTime(32);
       expect(texts(created)).toEqual(['first para', 'other para']);
+    });
+
+    it('types sixty characters in under a second and a tenth at the defaults (ACC-ANIM-143)', () => {
+      // 800 ms even at 75 a second: 600 ms with every draw at its bottom,
+      // 1000 ms with every draw at its top.
+      const at = (random: () => number, ms: number) => {
+        const root = render(`<p>${'x'.repeat(60)}</p>`);
+        const created = decorateFrom(root, '');
+        animator.jitter = DEFAULT_SETTINGS.animationJitter;
+        animator.random = random;
+        animator.start(created, DEFAULT_SETTINGS.animationSpeed);
+        jest.advanceTimersByTime(ms);
+        return root.textContent!.length;
+      };
+      expect(at(() => 0, 400)).toBeLessThan(60);
+      expect(at(() => 1, 1100)).toBe(60);
     });
   });
 

@@ -6,11 +6,12 @@
  * it drives the real notes controller and the real panel against a stand-in
  * document and a stand-in lab: a command registry that keeps what was declared
  * so the test can ask a command whether it is visible and then run it, a
- * context menu that keeps what was added to it, and a settings registry whose
- * composite the test writes.
+ * context menu that keeps what was added to it, a settings registry whose
+ * composite the test writes, and the page config the server options arrive in.
  */
 
 import { Clipboard, InputDialog } from '@jupyterlab/apputils';
+import { PageConfig } from '@jupyterlab/coreutils';
 import { MimeData } from '@lumino/coreutils';
 import { Signal } from '@lumino/signaling';
 import { BoxLayout, Widget } from '@lumino/widgets';
@@ -30,15 +31,21 @@ jest.mock('@jupyterlab/settingregistry', () => ({}));
 
 /**
  * The change channel opens a WebSocket to the server, which no unit test has.
+ * The stand-in keeps the interval the plugin sets.
  */
-jest.mock('../channel', () => ({
-  ChangeChannel: class {
-    interval = 10;
+jest.mock('../channel', () => {
+  const instances: any[] = [];
+  class ChangeChannel {
+    interval: number | undefined;
+    constructor() {
+      instances.push(this);
+    }
     dispose(): void {
       /* nothing to close */
     }
   }
-}));
+  return { ChangeChannel, __instances: instances };
+});
 
 /**
  * The file watcher polls the server. The wiring only has to reach its refresh,
@@ -80,7 +87,11 @@ jest.mock('../request', () => ({
 }));
 
 import { ISelectionRange } from '../anchor';
-import { DEFAULT_SETTINGS, VISIBILITY_ATTRIBUTE } from '../controller';
+import {
+  DEFAULT_SETTINGS,
+  LiveViewController,
+  VISIBILITY_ATTRIBUTE
+} from '../controller';
 import { MARK_COLOURS, parseMarks, parseSettings } from '../marks';
 import { MARK_ORIGIN } from '../notes';
 import { CLOSE_CLASS, ROW_CLASS } from '../notes-panel';
@@ -93,6 +104,12 @@ const route = fetchAPI as jest.Mock;
 /** The watcher instances the mock has built, newest last. */
 const watchers = (): any[] =>
   (jest.requireMock('../watcher') as any).__instances;
+
+/** The change channel the mock built last. */
+const channel = (): any => {
+  const instances = (jest.requireMock('../channel') as any).__instances;
+  return instances[instances.length - 1];
+};
 
 /**
  * A stand-in for the command registry, keeping what the plugin declared so a
@@ -235,9 +252,14 @@ class Document extends Widget {
 }
 
 /**
- * Everything one activation of the plugin gives a test.
+ * Everything one activation of the plugin gives a test. `server` is what the
+ * server extension put into the page config from the server configuration.
  */
-function activate(source: string, composite: Record<string, unknown> = {}) {
+function activate(
+  source: string,
+  composite: Record<string, unknown> = {},
+  server: Record<string, unknown> = {}
+) {
   const commands = new Commands();
   const menu: any[] = [];
   const palette: any[] = [];
@@ -300,6 +322,9 @@ function activate(source: string, composite: Record<string, unknown> = {}) {
   };
   const registry: any = { load: async () => settings };
 
+  // The page sends the server options as JSON text, which PageConfig hands on
+  // as it is.
+  PageConfig.setOption('advancedMarkdownViewer', JSON.stringify(server));
   plugin.activate(app, tracker, registry, {
     addItem: (item: any) => palette.push(item)
   });
@@ -537,9 +562,10 @@ describe('the plugin', () => {
 
   const start = async (
     source: string,
-    composite: Record<string, unknown> = {}
+    composite: Record<string, unknown> = {},
+    server: Record<string, unknown> = {}
   ): Promise<IActivation> => {
-    const activation = activate(source, composite);
+    const activation = activate(source, composite, server);
     live.push(activation);
     await activation.ready();
     return activation;
@@ -931,7 +957,7 @@ describe('the plugin', () => {
     });
 
     it('falls back to the declared defaults for a value it cannot use', async () => {
-      const lab = await start(MARKED, { author: 42, notes: 'yes' });
+      const lab = await start(MARKED, { author: 42 }, { notes: 'yes' });
       lab.widget.render(MARKED_HTML);
 
       // author fell back to the empty default, which signs the line author,
@@ -952,6 +978,93 @@ describe('the plugin', () => {
       await writeNote(lab, ID, 'A note.');
 
       expect(parseMarks(lab.widget.text)[0].notes[0].author).toBe('claude');
+    });
+  });
+
+  describe('the server options it reads', () => {
+    /** The settings the live controller was last handed. */
+    let handed: jest.SpyInstance;
+
+    beforeEach(() => {
+      handed = jest.spyOn(LiveViewController.prototype, 'updateSettings');
+    });
+
+    afterEach(() => {
+      handed.mockRestore();
+    });
+
+    const last = (): unknown =>
+      handed.mock.calls[handed.mock.calls.length - 1][0];
+
+    it('takes the seven server options from the page config', async () => {
+      const server = {
+        pollInterval: 30,
+        fadeDuration: 3000,
+        animationSpeed: 20,
+        animationJitter: 0,
+        highlightVisibility: 'high',
+        tabCue: false,
+        notes: false
+      };
+      const user = {
+        enabled: false,
+        animation: false,
+        highlight: false,
+        author: 'kj'
+      };
+      const activation = activate(SOURCE, user, server);
+      live.push(activation);
+      // Set at activation, before the settings load and before any
+      // registration starts the poll.
+      expect(channel().interval).toBe(30);
+      await activation.ready();
+
+      expect(last()).toEqual({ ...server, ...user });
+    });
+
+    it('keeps the default for an option the page config leaves out', async () => {
+      await start(SOURCE, {}, { fadeDuration: 3000 });
+
+      expect(last()).toEqual({ ...DEFAULT_SETTINGS, fadeDuration: 3000 });
+      expect(channel().interval).toBe(10);
+    });
+
+    it('refuses a server option it cannot use and keeps the default (ACC-CONFIG-34)', async () => {
+      await start(
+        SOURCE,
+        {},
+        {
+          pollInterval: 0,
+          fadeDuration: -1,
+          animationSpeed: 'fast',
+          animationJitter: 2,
+          highlightVisibility: 'garish',
+          tabCue: 'no',
+          notes: 1
+        }
+      );
+
+      // A share above the whole is read as the whole.
+      expect(last()).toEqual({ ...DEFAULT_SETTINGS, animationJitter: 1 });
+      expect(channel().interval).toBe(10);
+    });
+
+    it('ignores a removed key the user settings still hold', async () => {
+      // A user settings file written by an older release keeps its keys,
+      // and the registry keeps them in the composite.
+      await start(SOURCE, {
+        enabled: false,
+        pollInterval: 1,
+        fadeDuration: 1,
+        animationSpeed: 20,
+        animationJitter: 0,
+        highlightVisibility: 'high',
+        tabCue: false,
+        notes: false
+      });
+
+      expect(last()).toEqual({ ...DEFAULT_SETTINGS, enabled: false });
+      expect(channel().interval).toBe(10);
     });
   });
 
@@ -1438,6 +1551,76 @@ describe('the plugin', () => {
       expect(offered).toEqual([false, false, false, true, true]);
     });
 
+    it('offers Mark and Add Comment after a press on an image (ACC-NOTES-215-IMAGE-NOTE)', async () => {
+      const source =
+        'Alpha beta gamma delta.\n\n![a photo](/files/photo.png)\n\n![a chart](/files/chart.svg)\n';
+      const lab = await start(source);
+      lab.widget.render(
+        '<p>Alpha beta gamma delta.</p><p><img src="/files/photo.png" alt="a photo"></p>' +
+          '<p><img src="/files/chart.svg" alt="a chart"></p>'
+      );
+      const [photo, chart] = Array.from(
+        lab.widget.rendered.querySelectorAll('img')
+      );
+      for (const image of [photo, chart]) {
+        Object.defineProperty(image, 'naturalWidth', { value: 40 });
+      }
+      selectNothing();
+      expect(lab.commands.isVisible(COMMANDS.addNote)).toBe(false);
+
+      // The browser's selection as the press leaves it: the one picture.
+      let held: { node: Node; at: number } | null = null;
+      stubSelection({
+        get rangeCount() {
+          return held ? 1 : 0;
+        },
+        get anchorNode() {
+          return held?.node ?? null;
+        },
+        getRangeAt: () => ({
+          startContainer: held!.node,
+          startOffset: held!.at,
+          endContainer: held!.node,
+          endOffset: held!.at + 1,
+          collapsed: false,
+          commonAncestorContainer: held!.node,
+          toString: () => ''
+        }),
+        setBaseAndExtent: (node: Node, at: number) => {
+          held = { node, at };
+        },
+        containsNode: (node: Node) =>
+          held?.node.childNodes[held.at].contains(node) ?? false,
+        removeAllRanges: () => undefined,
+        collapseToEnd: () => undefined,
+        collapse: () => undefined,
+        addRange: () => undefined
+      });
+      for (const image of [photo, chart]) {
+        image.dispatchEvent(
+          new MouseEvent('mousedown', { bubbles: true, button: 2 })
+        );
+        lab.openedOver(image);
+        expect(
+          lab.commands.isVisible(COMMANDS.mark, { colour: 'yellow' })
+        ).toBe(true);
+        expect(lab.commands.isVisible(COMMANDS.addNote)).toBe(true);
+      }
+      // Copy image stays where it was: on the raster picture alone.
+      lab.openedOver(photo);
+      expect(lab.commands.isVisible(COMMANDS.copyImage)).toBe(true);
+      lab.openedOver(chart);
+      expect(lab.commands.isVisible(COMMANDS.copyImage)).toBe(false);
+
+      await lab.commands.execute(COMMANDS.addNote);
+
+      const [mark] = parseMarks(lab.widget.text);
+      expect(
+        lab.widget.text.slice(mark.passage!.start, mark.passage!.end)
+      ).toBe('\n![a chart](/files/chart.svg)');
+      expect(lab.panel().node.querySelector('textarea')).not.toBeNull();
+    });
+
     it('copies the rendered document as basic HTML and as text (ACC-COPY-160)', async () => {
       const lab = await start(MARKED);
       lab.widget.render(MARKED_HTML);
@@ -1552,7 +1735,7 @@ describe('the plugin', () => {
     it('copies the document while the marks and notes are switched off', async () => {
       // The copy is not one of the notes: it reads the rendered view and
       // writes nothing, so the setting that hides the marks leaves it alone.
-      const lab = await start(SOURCE, { notes: false });
+      const lab = await start(SOURCE, {}, { notes: false });
       lab.widget.render(HTML);
       const copied = Clipboard.copyToSystem as jest.Mock;
       copied.mockClear();
@@ -1697,12 +1880,9 @@ describe('the plugin', () => {
 
   describe('the notes setting turned off', () => {
     it('hides the panel, the marks and the menu entries, and keeps the file', async () => {
-      const lab = await start(MARKED);
+      const lab = await start(MARKED, {}, { notes: false });
       lab.widget.render(MARKED_HTML);
       select(lab.widget.rendered, 'beta', 'gamma');
-      expect(lab.panel().state).toBe('expanded');
-
-      lab.set({ notes: false });
       await lab.ready();
 
       expect(lab.panel().state).toBe('hidden');
@@ -1727,9 +1907,8 @@ describe('the plugin', () => {
       // (DEF-NOTES-63).
       // An unmarked document, so the controller's own state is hidden and
       // the badge's ask for the expanded state reaches the write guard.
-      const lab = await start(SOURCE);
+      const lab = await start(SOURCE, {}, { notes: false });
       lab.widget.render(HTML);
-      lab.set({ notes: false });
       await lab.ready();
 
       expect(lab.panel().badge.hidden).toBe(true);
@@ -1737,22 +1916,6 @@ describe('the plugin', () => {
       await lab.ready();
       expect(lab.panel().state).toBe('hidden');
       expect(lab.widget.text).toBe(SOURCE);
-    });
-
-    it('gives the marks back when the setting comes back', async () => {
-      const lab = await start(MARKED);
-      lab.widget.render(MARKED_HTML);
-
-      lab.set({ notes: false });
-      await lab.ready();
-      lab.set({ notes: true });
-      await lab.ready();
-      lab.widget.render(MARKED_HTML);
-
-      expect(lab.panel().state).toBe('expanded');
-      expect(
-        lab.widget.rendered.querySelectorAll('[data-mark]').length
-      ).toBeGreaterThan(0);
     });
   });
 
@@ -1769,14 +1932,16 @@ describe('the plugin', () => {
       expect(Object.keys(DEFAULT_SETTINGS)).toContain('author');
     });
 
-    it('hands it the highlight strength, and refuses one the schema forbids', async () => {
-      const lab = await start(SOURCE, { highlightVisibility: 'high' });
+    it('hands it the highlight strength, and refuses one outside the three', async () => {
+      const lab = await start(SOURCE, {}, { highlightVisibility: 'high' });
       expect(lab.widget.node.getAttribute(VISIBILITY_ATTRIBUTE)).toBe('high');
-      // A settings file edited by hand can carry a fourth value; it falls back
-      // to the default rather than leaving the stylesheet keyed off a value no
-      // rule matches.
-      lab.set({ highlightVisibility: 'garish' });
-      expect(lab.widget.node.getAttribute(VISIBILITY_ATTRIBUTE)).toBe('medium');
+      // A server configuration can carry a fourth value; it falls back to the
+      // default rather than leaving the stylesheet keyed off a value no rule
+      // matches.
+      const garish = await start(SOURCE, {}, { highlightVisibility: 'garish' });
+      expect(garish.widget.node.getAttribute(VISIBILITY_ATTRIBUTE)).toBe(
+        'medium'
+      );
     });
   });
 });

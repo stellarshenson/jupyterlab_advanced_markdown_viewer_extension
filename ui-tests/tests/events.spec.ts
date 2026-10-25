@@ -6,6 +6,7 @@ import {
   FILE,
   INITIAL,
   REWRITTEN,
+  SUITE_POLL_INTERVAL,
   labFixtures,
   openPreview,
   settings
@@ -14,18 +15,18 @@ import {
 /**
  * Integration tests of change detection by file events.
  *
- * The fallback check interval is left at its default of ten seconds, so
- * within the few seconds a test takes only the event channel can carry a
- * change. Writes made through the filesystem land in `ui-tests/`, the root
- * of the test server, at the same path the contents API addresses.
+ * The fallback check runs every 30 s, the suite value in
+ * jupyter_server_test_config.py, so within the few seconds a test takes only
+ * the event channel can carry a change. Writes made through the filesystem
+ * land in `ui-tests/`, the root of the test server, at the same path the
+ * contents API addresses.
  *
  * Three describes below take the event channel away instead, each in the way
  * one criterion names: a write through a second name for the same file stands
  * for a filesystem that raises no events, a socket closed mid-test stands for
  * a dropped connection, and a 404 on every route of the server extension
- * stands for a lab whose server side is not installed. They shorten the
- * fallback interval through the settings so the wait is seconds rather than
- * the ten of the default.
+ * stands for a lab whose server side is not installed. The two that need the
+ * fallback check wait one suite interval for it.
  */
 
 const NAMESPACE = 'jupyterlab-advanced-markdown-viewer-extension';
@@ -87,7 +88,7 @@ async function closeWidget(page: any, id: string): Promise<void> {
 }
 
 test.describe('file events', () => {
-  test.use({ mockSettings: settings({ pollInterval: 10 }) });
+  test.use({ mockSettings: settings() });
 
   /**
    * Settles once the document has finished opening. A rendered preview does
@@ -320,7 +321,7 @@ test.describe('file events', () => {
 });
 
 test.describe('ten quiet previews', () => {
-  test.use({ mockSettings: settings({ pollInterval: 60 }) });
+  test.use({ mockSettings: settings() });
 
   test('share one connection and send no request while nothing changes', async ({
     page,
@@ -366,7 +367,7 @@ test.describe('ten quiet previews', () => {
 });
 
 test.describe('a filesystem that raises no events', () => {
-  test.use({ mockSettings: settings({ pollInterval: 3 }) });
+  test.use({ mockSettings: settings() });
 
   test('finds the change by the fallback and checks that path every second', async ({
     page,
@@ -395,16 +396,18 @@ test.describe('a filesystem that raises no events', () => {
     fs.linkSync(onDisk(target), second);
     fs.writeFileSync(second, REWRITTEN);
 
+    // The write lands about a second after the check the channel makes as it
+    // starts, so the next one, a suite interval later, is what finds it.
     await expect(
       page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
     ).toContainText(THIRD, {
-      timeout: 4500
+      timeout: SUITE_POLL_INTERVAL * 1000 + 10000
     });
 
     // A change the check found that no event announced marks the path, one
     // second after the check, as one whose events do not arrive; from then on
-    // it is checked every second. The batched poll alone would send at most
-    // two requests in the four seconds counted below.
+    // it is checked every second. The batched poll, a suite interval apart,
+    // sends none in the four seconds counted below.
     await page.waitForTimeout(1500);
     const before = stats.length;
     await page.waitForTimeout(4000);
@@ -413,7 +416,7 @@ test.describe('a filesystem that raises no events', () => {
 });
 
 test.describe('a dropped event connection', () => {
-  test.use({ mockSettings: settings({ pollInterval: 60 }) });
+  test.use({ mockSettings: settings() });
 
   test('applies a write made while the connection was down', async ({
     page,
@@ -433,8 +436,8 @@ test.describe('a dropped event connection', () => {
     await expect.poll(() => routes.length).toBe(1);
     await page.waitForTimeout(1000);
 
-    // The fallback interval is a minute, so nothing but the check the channel
-    // makes when it has reconnected can find this write.
+    // The fallback interval is half a minute, so nothing but the check the
+    // channel makes when it has reconnected can find this write.
     await routes[0].close();
     await page.contents.uploadContent(REWRITTEN, 'text', target);
 
@@ -494,7 +497,7 @@ test.describe('a dropped event connection', () => {
 });
 
 test.describe('the server extension absent', () => {
-  test.use({ mockSettings: settings({ pollInterval: 3 }) });
+  test.use({ mockSettings: settings() });
 
   test('warns once and keeps the preview current through the contents API', async ({
     page,
@@ -528,7 +531,7 @@ test.describe('the server extension absent', () => {
     await expect(
       page.locator('.jp-MarkdownViewer .jp-RenderedMarkdown')
     ).toContainText(THIRD, {
-      timeout: 6000
+      timeout: SUITE_POLL_INTERVAL * 1000 + 10000
     });
     expect(warnings).toHaveLength(1);
   });

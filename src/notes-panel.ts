@@ -147,6 +147,13 @@ export const MARK_CLOSED_CLASS = 'jp-AdvancedMd-mark-closed';
  */
 export const DIAGRAM_CLASS = 'jp-AdvancedMd-markDiagram';
 /**
+ * Class a picture carries while a mark covers the image it was drawn from
+ * (ACC-NOTES-215). A picture holds no words either, and it carries the same
+ * attribute a passage does, so the panel scrolls to it and flashes it
+ * through the one query.
+ */
+export const IMAGE_CLASS = 'jp-AdvancedMd-markImage';
+/**
  * Class of the bar that stands where an unanchored mark sits (ACC-NOTES-180).
  * It carries the same attribute a passage does, so the panel reaches it by
  * the one query and scrolls and flashes it as it does a passage.

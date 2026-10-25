@@ -1,4 +1,5 @@
 import {
+  imageToSource,
   IPassage,
   inTableRow,
   IRenderedRange,
@@ -10,10 +11,14 @@ import {
   passageToRendered,
   renderedToSource,
   renderedWords,
+  sameImages,
   selectionOffsets,
+  sourceImages,
   tokeniseSource
 } from '../anchor';
 import { marked } from 'marked';
+
+import cases from './anchor-cases.json';
 
 import { captureText } from '../highlight';
 
@@ -254,7 +259,7 @@ describe('tokeniseSource', () => {
     ]);
   });
 
-  it('keeps the text of a link and the alt of an image', () => {
+  it('keeps the text of a link, and the alt of an image on its span and not among the words', () => {
     const source =
       'See [the docs](http://example.com/x) and ![a chart](c.png).';
     const { tokens, protectedSpans } = tokeniseSource(source);
@@ -263,8 +268,7 @@ describe('tokeniseSource', () => {
       'the',
       'docs',
       'and',
-      'a',
-      'chart.'
+      '.'
     ]);
     expect(protectedSpans).toContainEqual({
       kind: 'link',
@@ -274,8 +278,28 @@ describe('tokeniseSource', () => {
     expect(protectedSpans).toContainEqual({
       kind: 'image',
       start: source.indexOf('![a chart]'),
-      end: source.length - 1
+      end: source.length - 1,
+      alt: 'a chart'
     });
+  });
+
+  it('keeps a word written flush before an image as a word of the source (DEF-NOTES-138)', () => {
+    const source = 'See![a dot](dot.png) more.\n';
+    expect(tokeniseSource(source).tokens.map(token => token.text)).toEqual([
+      'See',
+      'more.'
+    ]);
+    const root = render('<p>See<img src="dot.png" alt="a dot"> more.</p>');
+    expect(renderedToSource({ start: 0, end: 3 }, root, source)).not.toBeNull();
+  });
+
+  it('runs a word written flush on both sides of an image on across it, as the render does (DEF-NOTES-138)', () => {
+    const source = 'See![a dot](dot.png)more.\n';
+    expect(tokeniseSource(source).tokens.map(token => token.text)).toEqual([
+      'Seemore.'
+    ]);
+    const root = render('<p>See<img src="dot.png" alt="a dot">more.</p>');
+    expect(renderedToSource({ start: 0, end: 8 }, root, source)).not.toBeNull();
   });
 
   it('keeps the text of an autolink without its brackets', () => {
@@ -375,6 +399,14 @@ describe('tokeniseSource', () => {
     expect(tokens.map(token => token.text)).toEqual(['Mind', 'the', 'gap.']);
   });
 
+  it('reads a definition-shaped line after an alert line as words', () => {
+    // The alerts extension consumes the alert line, so no anchor-cases.json
+    // source can hold one; the line after it is a paragraph's line, not a
+    // definition (DEF-NOTES-120).
+    const { tokens } = tokeniseSource('[!NOTE]\n[a]: a.png\n');
+    expect(tokens.map(token => token.text)).toEqual(['[a]:', 'a.png']);
+  });
+
   it('strips table pipes and the separator row', () => {
     const { tokens } = tokeniseSource(
       '| head | tail |\n| --- | --- |\n| one | two |'
@@ -421,6 +453,108 @@ describe('tokeniseSource', () => {
       start: source.indexOf('<b>'),
       end: source.indexOf('<b>') + 3
     });
+  });
+
+  it('drops a tag whose attributes wrap onto later lines, and keeps a < the render shows (DEF-NOTES-140-WRAPPED-IMG)', () => {
+    const words = (source: string): string[] =>
+      tokeniseSource(source).tokens.map(token => token.text);
+    expect(words('See <img src="a.png"\n  alt="b"\n/> here.\n')).toEqual([
+      'See',
+      'here.'
+    ]);
+    // A quote marker, a bullet or a word no attribute starts with ends the
+    // tag, so the render shows the '<' and the words after it.
+    expect(words('> a <b\n> c\n')).toEqual(['a', '<b', 'c']);
+    expect(words('- a <b\n- c > d\n')).toEqual(['a', '<b', 'c', '>', 'd']);
+    expect(words('if i<n\nthen x -> y\n')).toEqual([
+      'if',
+      'i<n',
+      'then',
+      'x',
+      '->',
+      'y'
+    ]);
+    // A line that ends the paragraph ends the tag: a blank line, a '>'
+    // opening the line, which is a blockquote, a thematic break and a setext
+    // underline. A heading is one line. Four columns in, a '>' goes on the
+    // paragraph and closes the tag.
+    const tags = (source: string): number =>
+      tokeniseSource(source).protectedSpans.filter(span => span.kind === 'html')
+        .length;
+    expect(words('if a<b\n\nthen c>d\n')).toEqual(['if', 'a<b', 'then', 'c>d']);
+    expect(words('<img src="a.png"\n>\n')).toEqual(['<img', 'src="a.png"']);
+    expect(words('Text <b\n___\nc> d\n')).toEqual(['Text', '<b', 'c>', 'd']);
+    expect(tags('Text <b c\n=\nd> e\n')).toBe(0);
+    expect(words('# a <b\nc> d\n')).toEqual(['a', '<b', 'c>', 'd']);
+    expect(words('<img src="a.png"\n    >\n')).toEqual([]);
+    // In a list item the columns count from the item's text, and the next
+    // item opens a block of its own, which no HTML block above runs into.
+    expect(tags('- <img src="a.png"\n    >\n')).toBe(0);
+    expect(tags('- <img src="a.png"\n      >\n')).toBe(1);
+    expect(words('- <p>x</p>\n- <img src="a.png"\n  >\n')).toEqual([
+      'x',
+      '<img',
+      'src="a.png"'
+    ]);
+    // A block-level tag, whatever follows it, or a line of one whole tag
+    // opens an HTML block, where a tag closes on any line. One inside a
+    // blockquote is left to the paragraph's rules.
+    expect(tags('<div><img src="a.png"\n>\n</div>\n')).toBe(3);
+    expect(tags('<a href="x">\n<img src="a.png"\n>\n</a>\n')).toBe(3);
+    expect(tags('> <div>\n> <img src="a.png"\n> >\n')).toBe(1);
+    // Inside an HTML block a block-level tag opens nothing new, and a comment
+    // on the line after a line of one whole tag ends nothing.
+    expect(tags('<div>\n> <p>\n<img src="a.png"\n>\n</div>\n')).toBe(4);
+    expect(
+      tags('<a href="x">\n  <!-- c -->\n<img src="a.png"\n>\n</a>\n')
+    ).toBe(3);
+    // On a line that goes on a paragraph a block-level tag ends it only from
+    // the first column, as a comment does (DEF-NOTES-142-BLOCK-AFTER-1).
+    expect(
+      words(
+        'Para\n <p align="center">\n  <img src="a.png" alt="x"\n  >\n</p>\n'
+      )
+    ).toEqual(['Para', '<img', 'src="a.png"', 'alt="x"']);
+    expect(words('Para\n  <div>\n# x\n')).toEqual(['Para', 'x']);
+    expect(words('Para\n<div class="x">\n# x\n')).toEqual(['Para', '#', 'x']);
+    // A closed fence, a heading, a thematic break and a setext underline end
+    // their block, so a line of one whole tag after them opens an HTML block;
+    // inside an HTML block a fence, a thematic break and a setext underline
+    // end nothing (DEF-NOTES-142-BLOCK-AFTER).
+    expect(tags('```\nc\n```\n<a href="x">\n<img src="a.png"\n>\n</a>\n')).toBe(
+      3
+    );
+    expect(tags('# T\n<a href="x">\n<img src="a.png"\n>\n</a>\n')).toBe(3);
+    expect(tags('---\n<a href="x">\n<img src="a.png"\n>\n</a>\n')).toBe(3);
+    expect(
+      tags('Title\n=====\n<a href="x">\n<img src="a.png"\n>\n</a>\n')
+    ).toBe(3);
+    // Only a paragraph line takes one, and a bullet's text is no underline.
+    expect(tags('# H\n===\n<a href="x">\n<img src="a.png"\n>\n</a>\n')).toBe(2);
+    expect(words('Foo\n- ===\n')).toEqual(['Foo', '===']);
+    expect(tags('<div>\n```\n<img src="a.png"\n>\n</div>\n')).toBe(3);
+    expect(tags('<div>\n---\n<img src="a.png"\n>\n</div>\n')).toBe(3);
+    expect(tags('<div>\nfoo\n--\n<img src="a.png"\n>\n</div>\n')).toBe(3);
+    // Outside a list item only a bullet, or a number starting a list at 1,
+    // followed by a space or a tab ends the paragraph, with or without text
+    // after it, and not four columns or a tab in; inside one any list item
+    // does, the render reading its lines one at a time
+    // (DEF-NOTES-143-ALT-NUMBER).
+    expect(tags('Sales <img src="a.png" alt="x\n2024. y">\n')).toBe(1);
+    expect(tags('Sales <img src="a.png" alt="x\n3) y">\n')).toBe(1);
+    expect(tags('Sales <img src="a.png" alt="x\n1. y">\n')).toBe(0);
+    for (const marker of ['* ', '+ ', '1. ', '1) ', '-\t', '*\t']) {
+      expect(tags(`Sales <img src="a.png" alt="x\n${marker}\ny">\n`)).toBe(0);
+    }
+    expect(tags('Sales <img src="a.png" alt="x\n\t* y">\n')).toBe(1);
+    expect(tags('1. <img src="a.png" alt="x\n2. y">\n')).toBe(0);
+    // So do a heading, a fence and a bullet, inside a quoted value as well.
+    expect(tags('Text <img src="a.png" alt="x\n# y">\n')).toBe(0);
+    expect(tags('Text <img src="a.png" alt="x\n```\ny">\n')).toBe(0);
+    expect(tags('Text <img src="a.png" alt="x\n- y">\n')).toBe(0);
+    // A line a list item's text does not reach ends the item, and a line of
+    // one whole tag there opens an HTML block.
+    expect(tags('- item\n<a href="x">\n<img src="a.png"\n>\n</a>\n')).toBe(3);
   });
 
   it('reads a character reference as the character it stands for (ACC-NOTES-183)', () => {
@@ -1411,12 +1545,394 @@ function inRender(
   );
 }
 
+describe('imageToSource', () => {
+  // Each image is found by its place among the images of the source, which
+  // the alternative text of every picture of the render confirms, and the
+  // markers written where the mark would write them; the render of the
+  // marked source must show the reader exactly what the bare source did.
+  const cases: [string, string, number, string[], string][] = [
+    [
+      'an image that is a paragraph of its own',
+      'Alpha.\n\n![a dot](dot.png)\n\nOmega.\n',
+      0,
+      ['a dot'],
+      'Alpha.\n\n<!-- mark:m note -->\n![a dot](dot.png)<!-- /mark:m -->\n\nOmega.\n'
+    ],
+    [
+      'an image of an SVG file inside a sentence',
+      'See ![a chart](chart.svg) here.\n',
+      0,
+      ['a chart'],
+      'See <!-- mark:m note -->![a chart](chart.svg)<!-- /mark:m --> here.\n'
+    ],
+    [
+      'an img tag on a line of its own, which stays an HTML block',
+      'Alpha.\n\n<img src="dot.png" alt="a dot" width="40">\n\nOmega.\n',
+      0,
+      ['a dot'],
+      'Alpha.\n\n<!-- mark:m note -->\n<img src="dot.png" alt="a dot" width="40">\n' +
+        '<!-- /mark:m -->\n\nOmega.\n'
+    ],
+    [
+      'an img tag inside a sentence',
+      "See <img src='dot.png' alt='a dot'> here.\n",
+      0,
+      ['a dot'],
+      "See <!-- mark:m note --><img src='dot.png' alt='a dot'><!-- /mark:m --> here.\n"
+    ],
+    [
+      'an img tag whose alternative text holds a character reference',
+      'See <img src="dot.png" alt="Tom &amp; Jerry"> here.\n',
+      0,
+      ['Tom & Jerry'],
+      'See <!-- mark:m note --><img src="dot.png" alt="Tom &amp; Jerry"><!-- /mark:m --> here.\n'
+    ],
+    [
+      'an img tag whose alternative text holds a numeric character reference',
+      'See <img src="dot.png" alt="&#169; 2024"> here.\n',
+      0,
+      ['© 2024'],
+      'See <!-- mark:m note --><img src="dot.png" alt="&#169; 2024"><!-- /mark:m --> here.\n'
+    ],
+    [
+      'an img tag whose alternative text holds a hexadecimal reference and a named one holding a digit',
+      'See <img src="dot.png" alt="&#x41; &frac12;"> here.\n',
+      0,
+      ['A ½'],
+      'See <!-- mark:m note --><img src="dot.png" alt="&#x41; &frac12;"><!-- /mark:m --> here.\n'
+    ],
+    ...[
+      'chart?a=1&region=eu',
+      'a.php?x=1&copy=2',
+      'AT&ampT',
+      'x&lt3',
+      // These four end with no ';' (DEF-NOTES-144-ALT-SEMICOLON).
+      '&copy 2024 Acme',
+      '&#169 2024 Acme',
+      'Tom &amp Jerry',
+      '5 &lt 6',
+      // These five hold a ';' only past the reference's name or number
+      // (DEF-NOTES-144-ALT-SEMICOLON-1).
+      '&#169x;',
+      '&#x41g;',
+      '&#65a;',
+      '&#38amp;',
+      '&amp_x;'
+    ].map((alt): [string, string, number, string[], string] => [
+      `an img tag whose alternative text holds ${alt}, a reference the render leaves as written`,
+      `See <img src="dot.png" alt="${alt}"> here.\n`,
+      0,
+      [alt],
+      `See <!-- mark:m note --><img src="dot.png" alt="${alt}"><!-- /mark:m --> here.\n`
+    ]),
+    [
+      'an img tag whose attributes the writer wrapped onto a second line (DEF-NOTES-140-WRAPPED-IMG)',
+      'Alpha.\n\n<img src="dot.png" alt="dot"\n     width="40">\n\n![second dot](dot.png)\n',
+      0,
+      ['dot', 'second dot'],
+      'Alpha.\n\n<!-- mark:m note -->\n<img src="dot.png" alt="dot"\n     width="40">\n' +
+        '<!-- /mark:m -->\n\n![second dot](dot.png)\n'
+    ],
+    [
+      'the image after an img tag whose attributes the writer wrapped',
+      'Alpha.\n\n<img src="dot.png" alt="dot"\n     width="40">\n\n![second dot](dot.png)\n',
+      1,
+      ['dot', 'second dot'],
+      'Alpha.\n\n<img src="dot.png" alt="dot"\n     width="40">\n\n' +
+        '<!-- mark:m note -->\n![second dot](dot.png)<!-- /mark:m -->\n'
+    ],
+    [
+      'an img tag wrapped inside an HTML block, as a README centres a picture',
+      '<p align="center">\n  <img src="dot.png" alt="dot"\n       width="40">\n</p>\n',
+      0,
+      ['dot'],
+      '<p align="center"><!-- mark:m note -->\n  <img src="dot.png" alt="dot"\n' +
+        '       width="40"><!-- /mark:m -->\n</p>\n'
+    ],
+    [
+      'an img tag in an HTML block whose ">" stands on a line of its own',
+      '<p align="center">\n  <img src="dot.png" alt="dot"\n       width="40"\n  >\n</p>\n',
+      0,
+      ['dot'],
+      '<p align="center"><!-- mark:m note -->\n  <img src="dot.png" alt="dot"\n' +
+        '       width="40"\n  ><!-- /mark:m -->\n</p>\n'
+    ],
+    // A heading, a thematic break, a closing fence and a setext underline
+    // end their block, and a block-level tag ends a paragraph, so the HTML
+    // block opens on the next line (DEF-NOTES-142-BLOCK-AFTER).
+    ...[
+      ['a heading', '# Title\n'],
+      ['a thematic break', 'Intro.\n\n---\n'],
+      ['a closed fence', '```\ncode\n```\n'],
+      ['a setext underline', 'Title\n=====\n'],
+      ['a paragraph line', 'Intro text.\n']
+    ].map(([what, above]): [string, string, number, string[], string] => [
+      `an img tag whose ">" stands on a line of its own, in an HTML block right under ${what}`,
+      `${above}<p align="center">\n  <img src="dot.png" alt="dot"\n       width="40"\n  >\n</p>\n`,
+      0,
+      ['dot'],
+      `${above}<p align="center"><!-- mark:m note -->\n  <img src="dot.png" alt="dot"\n` +
+        '       width="40"\n  ><!-- /mark:m -->\n</p>\n'
+    ]),
+    [
+      'an img tag whose alternative text wraps before a number, which ends no paragraph (DEF-NOTES-143-ALT-NUMBER)',
+      'Sales <img src="a.png" alt="Revenue by year, to\n2024. Source: finance">\n',
+      0,
+      ['Revenue by year, to\n2024. Source: finance'],
+      'Sales <!-- mark:m note --><img src="a.png" alt="Revenue by year, to\n' +
+        '2024. Source: finance"><!-- /mark:m -->\n'
+    ],
+    [
+      'an img tag with text after it on its line, which opens no HTML block, so a tag wrapped below it stays text',
+      '<img src="a.png" alt="a"> tail\n<img src="b.png" alt="y"\n>\n',
+      0,
+      ['a'],
+      '<!-- mark:m note -->\n<img src="a.png" alt="a"><!-- /mark:m --> tail\n' +
+        '<img src="b.png" alt="y"\n>\n'
+    ],
+    [
+      'an img tag in an HTML block past a "# x" line, which is raw HTML there',
+      '<div>\n# x\n<img src="a.png" alt="x"\n>\n</div>\n',
+      0,
+      ['x'],
+      '<div>\n# x<!-- mark:m note -->\n<img src="a.png" alt="x"\n><!-- /mark:m -->\n</div>\n'
+    ],
+    // A line of one whole tag opens an HTML block only while it holds the
+    // tag alone, so the opening marker takes a line of its own below it
+    // (DEF-NOTES-146-TAG-MARKER).
+    [
+      'an img tag in an HTML block a line of one whole tag opens',
+      '<a href="x">\n<img src="a.png" alt="x">\n</a>\n',
+      0,
+      ['x'],
+      '<a href="x">\n<!-- mark:m note -->\n<img src="a.png" alt="x">\n<!-- /mark:m -->\n</a>\n'
+    ],
+    [
+      'an img tag whose ">" stands on a line of its own, in an HTML block a line of one whole tag opens',
+      '<a href="x">\n<img src="a.png" alt="x"\n>\n</a>\n',
+      0,
+      ['x'],
+      '<a href="x">\n<!-- mark:m note -->\n<img src="a.png" alt="x"\n>\n<!-- /mark:m -->\n</a>\n'
+    ],
+    [
+      'an img tag in a blockquote, in an HTML block a line of one whole tag opens',
+      '> <a href="x">\n> <img src="a.png" alt="x">\n> </a>\n',
+      0,
+      ['x'],
+      '> <a href="x">\n> <!-- mark:m note -->\n> <img src="a.png" alt="x">\n> <!-- /mark:m -->\n> </a>\n'
+    ],
+    // Inside a list item marked reads a tab as four spaces, so there a tab
+    // between the attributes opens the HTML block all the same
+    // (DEF-NOTES-146-TAG-MARKER).
+    [
+      'an img tag under a line of one tag with a tab between its attributes, in a list item',
+      '- x\n\n  <a\thref="x">\n  <img src="a.png" alt="x">\n',
+      0,
+      ['x'],
+      '- x\n\n  <a\thref="x">\n  <!-- mark:m note -->\n  <img src="a.png" alt="x">\n' +
+        '  <!-- /mark:m -->\n'
+    ],
+    // A line of one tag with spaces after it stops no setext heading, so the
+    // dashes under it underline the paragraph and the marker stays off them.
+    [
+      'an img tag under a setext heading whose text ends in a tag and spaces',
+      'Para\n<span>  \n--\n<img src="a.png" alt="x">\n',
+      0,
+      ['x'],
+      'Para\n<span>  \n--\n<!-- mark:m note -->\n<img src="a.png" alt="x">\n' +
+        '<!-- /mark:m -->\n'
+    ],
+    [
+      'an img tag in a paragraph whose ">" stands four columns in on a line of its own',
+      'Alpha.\n\n<img src="dot.png" alt="dot"\n     width="40"\n    >\n\n![second dot](dot.png)\n',
+      0,
+      ['dot', 'second dot'],
+      'Alpha.\n\n<!-- mark:m note -->\n<img src="dot.png" alt="dot"\n     width="40"\n    >\n' +
+        '<!-- /mark:m -->\n\n![second dot](dot.png)\n'
+    ],
+    [
+      'an image inside a link, which the markers go outside',
+      'See [![a dot](dot.png)](https://example.com) here.\n',
+      0,
+      ['a dot'],
+      'See <!-- mark:m note -->[![a dot](dot.png)](https://example.com)<!-- /mark:m --> here.\n'
+    ],
+    [
+      'an image in a table cell, where both markers stay in the cell',
+      '| a | b |\n| - | - |\n| ![a dot](dot.png) | x |\n',
+      0,
+      ['a dot'],
+      '| a | b |\n| - | - |\n| <!-- mark:m note -->![a dot](dot.png)<!-- /mark:m --> | x |\n'
+    ],
+    [
+      'an image opening a list item (DEF-NOTES-114)',
+      '- ![a dot](dot.png)\n- two\n',
+      0,
+      ['a dot'],
+      '- <!-- mark:m note -->\n  ![a dot](dot.png)<!-- /mark:m -->\n- two\n'
+    ],
+    [
+      'a reference-style image',
+      'See ![a dot][d] here.\n\n[d]: dot.png\n',
+      0,
+      ['a dot'],
+      'See <!-- mark:m note -->![a dot][d]<!-- /mark:m --> here.\n\n[d]: dot.png\n'
+    ],
+    [
+      'an image whose file name holds brackets',
+      'Alpha.\n\n![a dot](dot_(v2).png)\n\nOmega.\n',
+      0,
+      ['a dot'],
+      'Alpha.\n\n<!-- mark:m note -->\n![a dot](dot_(v2).png)<!-- /mark:m -->\n\nOmega.\n'
+    ],
+    [
+      'an image with no alternative text, which the renderer calls Image',
+      'See ![](dot.png) here.\n',
+      0,
+      ['Image'],
+      'See <!-- mark:m note -->![](dot.png)<!-- /mark:m --> here.\n'
+    ],
+    [
+      'an image whose text the writer wrapped onto a second line',
+      'Alpha.\n\n![a dot whose text\nwraps](dot.png)\n\n![second dot](dot.png)\n',
+      0,
+      ['a dot whose text\nwraps', 'second dot'],
+      'Alpha.\n\n<!-- mark:m note -->\n![a dot whose text\nwraps](dot.png)<!-- /mark:m -->' +
+        '\n\n![second dot](dot.png)\n'
+    ],
+    [
+      'the image after an image whose text the writer wrapped',
+      'Alpha.\n\n![a dot whose text\nwraps](dot.png)\n\n![second dot](dot.png)\n',
+      1,
+      ['a dot whose text\nwraps', 'second dot'],
+      'Alpha.\n\n![a dot whose text\nwraps](dot.png)\n\n' +
+        '<!-- mark:m note -->\n![second dot](dot.png)<!-- /mark:m -->\n'
+    ],
+    [
+      'a shortcut reference image, whose label the source defines',
+      'See ![logo] here.\n\n[logo]: dot.png\n',
+      0,
+      ['logo'],
+      'See <!-- mark:m note -->![logo]<!-- /mark:m --> here.\n\n[logo]: dot.png\n'
+    ],
+    [
+      'a shortcut reference image whose definition writes the label in another case',
+      'See ![logo] here.\n\n[Logo]: dot.png\n',
+      0,
+      ['logo'],
+      'See <!-- mark:m note -->![logo]<!-- /mark:m --> here.\n\n[Logo]: dot.png\n'
+    ],
+    [
+      'an image after a shortcut reference the source does not define, which is text',
+      'See ![logo] and ![a dot](dot.png).\n',
+      0,
+      ['a dot'],
+      'See ![logo] and <!-- mark:m note -->![a dot](dot.png)<!-- /mark:m -->.\n'
+    ],
+    [
+      'the second of two images in a line, an img tag counted among them',
+      'A <img src="a.png" alt="one"> and ![two *words*](b.png).\n',
+      1,
+      ['one', 'two words'],
+      'A <img src="a.png" alt="one"> and <!-- mark:m note -->![two *words*](b.png)<!-- /mark:m -->.\n'
+    ],
+    [
+      'an img tag alone on a line ending in a carriage return',
+      'Alpha.\r\n\r\n<img src="dot.png" alt="dot">\r\n\r\nOmega.\r\n',
+      0,
+      ['dot'],
+      'Alpha.\r\n\r\n<!-- mark:m note -->\n<img src="dot.png" alt="dot">\n' +
+        '<!-- /mark:m -->\r\n\r\nOmega.\r\n'
+    ]
+  ];
+
+  it.each(cases)(
+    'maps an image to its whole source construct (ACC-NOTES-215-IMAGE-NOTE): %s',
+    (_, source, index, alts, expected) => {
+      const range = imageToSource(index, alts, source);
+      expect(range).not.toBeNull();
+      const marked = applyMarkers(source, range!);
+      expect(marked).toBe(expected);
+      expect(renderedWithoutComments(marked)).toBe(
+        renderedWithoutComments(source)
+      );
+    }
+  );
+
+  it('marks no image unless every picture carries the text of the image at its place', () => {
+    const source = 'A ![one](a.png) and ![two](b.png).\n';
+    expect(imageToSource(0, ['one', 'two'], source)).not.toBeNull();
+    expect(imageToSource(1, ['one', 'one'], source)).toBeNull();
+    expect(imageToSource(-1, ['one', 'two'], source)).toBeNull();
+    // The render drew a picture the source does not hold, which shifts the
+    // place of every picture after it.
+    expect(imageToSource(1, ['extra', 'one', 'two'], source)).toBeNull();
+    // Images of the same text shift with no text to tell: an image reference
+    // with no definition is text in the render.
+    const same = '![dot][none] and ![dot](a.png) and ![dot](b.png).\n';
+    expect(imageToSource(0, ['dot', 'dot'], same)).toBeNull();
+    expect(imageToSource(1, ['dot', 'dot'], same)).toBeNull();
+    // The text of an image runs on to the next line, never past the blank
+    // line that ends its paragraph.
+    expect(imageToSource(0, ['a b'], 'See ![a\n\nb](x.png).\n')).toBeNull();
+    // Its destination ends on the line its text ends on.
+    expect(
+      imageToSource(0, ['a'], 'See ![a](x.png\nand more) here.\n')
+    ).toBeNull();
+  });
+});
+
+describe('the scan, read against marked', () => {
+  // Whether the scan reads a source as marked renders it: the words of the
+  // render, its pictures, and for each picture markers that leave the
+  // render as it was.
+  const readsAsMarked = (source: string): boolean => {
+    const root = document.createElement('div');
+    root.innerHTML = marked.parse(source) as string;
+    const words = (root.textContent ?? '').split(/\s+/).filter(Boolean);
+    const alts = Array.from(root.querySelectorAll('img')).map(
+      img => img.getAttribute('alt') ?? ''
+    );
+    const scan = tokeniseSource(source);
+    return (
+      JSON.stringify(scan.tokens.map(token => token.text)) ===
+        JSON.stringify(words) &&
+      sameImages(alts, sourceImages(scan, source)) &&
+      alts.every((_, index) => {
+        const range = imageToSource(index, alts, source);
+        return (
+          range !== null &&
+          renderedWithoutComments(applyMarkers(source, range)) ===
+            renderedWithoutComments(source)
+        );
+      })
+    );
+  };
+
+  // One source per kind of image the extension is built for, and the
+  // repro of each image-scan defect DEF-NOTES-137 to DEF-NOTES-146 (review
+  // fix run 7, tmp/workflows/review-settings-image/r7/gate-cases.json).
+  it('reads every source of anchor-cases.json as marked renders it', () => {
+    expect(
+      (cases as string[]).filter(source => !readsAsMarked(source))
+    ).toEqual([]);
+  });
+});
+
 describe('marker placement, read against the renderer', () => {
   // Each source is rendered by the parser JupyterLab renders with, the
   // passage from the first word to the last is selected in that render, and
   // the markers are written where the mark would write them. The render of
   // the marked source must show the reader exactly what the bare source did.
   const cases: [string, string, string, string, string][] = [
+    [
+      'a link whose destination holds brackets, which the markers go outside',
+      'Read the [linked page](https://example.com/Foo_(bar)) today.\n',
+      'linked',
+      'page',
+      'Read the <!-- mark:m note -->[linked page](https://example.com/Foo_(bar))' +
+        '<!-- /mark:m --> today.\n'
+    ],
     [
       'a fence on the bullet line of a tight list (DEF-NOTES-114)',
       '- a\n- ```js\n  code line\n  ```\n- c\n',
@@ -2035,8 +2551,8 @@ describe('markerToRendered', () => {
   });
 
   it('still reports nothing where that document also carries words the render does not write', () => {
-    // The same document with one image in it. The words of its alt text are
-    // in the file and in no text node, and a tolerance that answers to the
+    // The same document with one link reference definition in it. Its words
+    // are in the file and in no text node, and a tolerance that answers to the
     // count of such words over the whole document widens by them here, where
     // they are nowhere near the marker - far enough to take in the copy of
     // the sentence the case above rejects.
@@ -2046,7 +2562,7 @@ describe('markerToRendered', () => {
       '',
       `${repeated} cancel.`,
       '',
-      '![dialog](f.png)',
+      '[dialog]: f.png',
       '',
       '## Release 1.3',
       '',
@@ -2055,7 +2571,6 @@ describe('markerToRendered', () => {
     const root = render(
       '<h2>Release 1.2</h2>' +
         `<p>${repeated} cancel.</p>` +
-        '<p><img alt="dialog" src="f.png" /></p>' +
         '<h2>Release 1.3</h2>' +
         '<p>Rewritten entirely with nothing of the old sentence left here ' +
         'at all.</p>'
@@ -2066,13 +2581,13 @@ describe('markerToRendered', () => {
   });
 
   it('stands the place where the words the render never writes are all ahead of the marker', () => {
-    // A report opening with a cover figure. Its alt words are source tokens
-    // and no text node, and they all stand before a mark near the top, so
-    // the render is short of the source by the whole of them by the time
-    // the marker is reached. A bound that gives the marker a share of them
-    // in proportion to how far through the document it sits gives an early
-    // marker almost none, and refuses a run standing in the render once and
-    // word for word.
+    // A report opening with a link reference definition. Its words are
+    // source tokens and no text node, and they all stand before a mark near
+    // the top, so the render is short of the source by the whole of them by
+    // the time the marker is reached. A bound that gives the marker a share
+    // of them in proportion to how far through the document it sits gives an
+    // early marker almost none, and refuses a run standing in the render once
+    // and word for word.
     const alt = Array.from({ length: 17 }, (_, i) => `cover${i}`).join(' ');
     const paragraph = (n: number): string =>
       `Paragraph ${n} of the report carries a sentence worth reading here.`;
@@ -2080,13 +2595,12 @@ describe('markerToRendered', () => {
     const marked =
       'The opening line of the report itself stands here and it reads';
     const source = [
-      `![${alt}](cover.png)`,
+      `[${alt}]: cover.png`,
       `${marked} <!-- mark:a note -->deleted passage<!-- /mark:a --> and ends here.`,
       ...rest
     ].join('\n\n');
     const root = render(
-      ['<p><img alt="cover" src="cover.png" /></p>']
-        .concat([`<p>${marked} and ends here.</p>`])
+      [`<p>${marked} and ends here.</p>`]
         .concat(rest.map(line => `<p>${line}</p>`))
         .join('')
     );
@@ -2101,10 +2615,10 @@ describe('markerToRendered', () => {
 
   it('stands the place on a document whose source carries far more words than the render shows', () => {
     // The render is short of the source by every token it does not write,
-    // and a marked passage an agent rewrote into an image is exactly that:
-    // its alt words are in the file and in no text node. The place is
-    // expected in proportion, so the further through such a document the
-    // marker sits the further that estimate drifts. A tolerance that does
+    // and a link reference definition is exactly that: its words are in the
+    // file and in no text node. The place is expected in proportion, so the
+    // further through such a document the marker sits the further that
+    // estimate drifts. A tolerance that does
     // not answer to the drift loses the place on a document of any ordinary
     // length, which is every document this feature is for.
     const alt = Array.from({ length: 30 }, (_, i) => `word${i}`).join(' ');
@@ -2115,8 +2629,9 @@ describe('markerToRendered', () => {
     const marked = 'The marked line reads';
     const source = [
       ...ahead,
-      `${marked} <!-- mark:a note -->![${alt}](m.png)` +
+      `${marked} <!-- mark:a note -->deleted passage` +
         '<!-- /mark:a --> and ends here.',
+      `[${alt}]: m.png`,
       ...behind
     ].join('\n\n');
     const root = render(

@@ -207,17 +207,20 @@ const MANY_MARKS = [
 
 /**
  * Wait until the file on disk says what the test waits for, and answer with
- * it. A write is finished when the save has landed, not when the panel has
- * redrawn, so every assertion about the document reads the file itself.
+ * that read. A write is finished when the save has landed, not when the panel
+ * has redrawn, so every assertion about the document reads the file itself.
+ * A save empties the file before it writes it, so `holds` names text the
+ * file keeps, never only text that has gone (DEF-TEST-145-EMPTY-READ).
  */
 async function fileWhen(
   apiPath: string,
   holds: (text: string) => boolean
 ): Promise<string> {
+  let text = '';
   await expect
-    .poll(() => holds(fileText(apiPath)), { timeout: 15000 })
+    .poll(() => holds((text = fileText(apiPath))), { timeout: 15000 })
     .toBe(true);
-  return fileText(apiPath);
+  return text;
 }
 
 /** The identifiers of every opening marker, in document order. */
@@ -347,9 +350,10 @@ async function savedCleanly(page: any): Promise<void> {
 }
 
 test.describe('marking a passage', () => {
-  // A short fade so a test that writes the file externally does not wait out
-  // the highlight, and no typing animation so the change is on screen at once.
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  // No highlight, so a test that writes the file externally does not wait out
+  // the suite's 30 s fade, and no typing animation so the change is on screen
+  // at once.
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test.beforeEach(async ({ page, tmpPath }) => {
     await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
@@ -875,7 +879,10 @@ test.describe('marking a passage', () => {
     await panelButton(page, 'Cancel').click();
 
     await removeButton(page).click();
-    const after = await fileWhen(path, holds => !documentMarker.test(holds));
+    const after = await fileWhen(
+      path,
+      holds => holds.includes(FIRST) && !documentMarker.test(holds)
+    );
     expect(openingIds(after)).toHaveLength(0);
   });
 
@@ -1947,7 +1954,7 @@ test.describe('marking a passage', () => {
       .click();
     const reopened = await fileWhen(
       file,
-      holds => !holds.includes('status=closed')
+      holds => holds.includes('Settled.') && !holds.includes('status=closed')
     );
     expect(reopened).toMatch(/note colour=\w+ @/);
     expect(reopened).not.toContain('status=');
@@ -2306,7 +2313,7 @@ test.describe('marking a passage', () => {
 
     const text = await fileWhen(
       `${tmpPath}/${FILE}`,
-      holds => openingIds(holds).length === 0
+      holds => holds.includes(FIRST) && openingIds(holds).length === 0
     );
     // The identifier is gone from the whole file, so neither marker is left
     // behind under any spelling.
@@ -2338,9 +2345,13 @@ test.describe('marking a passage', () => {
     const changed = DOC.replace('cherries and figs', 'quinces and medlars');
     // The write and the mark are not separated by a wait: whether the change
     // has reached the document by the time the marker is written or is still
-    // only on disk, the save carries both and raises no dialog.
+    // only on disk, the save carries both and raises no dialog. The menu is
+    // opened first: a right click that lands while the change renders finds
+    // no selection, and the menu offers no Mark (DEF-TEST-139-MARK-RACE).
+    await openMenu(page, await select(page, P1));
+    await openMarkMenu(page);
     await writeExternally(page, target, changed);
-    await mark(page, P1);
+    await choose(page, colourLabel('yellow'));
 
     const text = await fileWhen(
       target,
@@ -2461,7 +2472,10 @@ test.describe('marking a passage', () => {
     await expect(ticks(page)).toHaveCount(0);
     // A break is deleted only once it has stood for the settle, so the file
     // is waited on rather than read the moment the panel has caught up.
-    await fileWhen(target, holds => !holds.includes(only));
+    await fileWhen(
+      target,
+      holds => holds.includes('quinces and medlars') && !holds.includes(only)
+    );
   });
 
   test('ACC-NOTES-144 deletes the closing marker a rewrite left behind', async ({
@@ -2483,7 +2497,10 @@ test.describe('marking a passage', () => {
     // The leftover marker is deleted from the file itself, so an agent
     // reading the file next finds nothing of the mark either. The deletion
     // waits out the settle first, which is what this poll waits through.
-    await fileWhen(target, holds => !holds.includes(only));
+    await fileWhen(
+      target,
+      holds => holds.includes(P1) && !holds.includes(only)
+    );
     await expect(rows(page)).toHaveCount(0);
     await expect(painted(page)).toHaveCount(0);
     expect(fileText(target)).toContain(P1);
@@ -2507,7 +2524,10 @@ test.describe('marking a passage', () => {
     await writeExternally(page, target, text.replace(P1, ' '));
 
     // Both markers go once the break has stood for the settle.
-    await fileWhen(target, holds => !holds.includes(only));
+    await fileWhen(
+      target,
+      holds => holds.includes(P2) && !holds.includes(only)
+    );
     await expect(rows(page)).toHaveCount(0);
     await expect(painted(page)).toHaveCount(0);
     await savedCleanly(page);
@@ -2651,7 +2671,7 @@ test.describe('marking a passage', () => {
 });
 
 test.describe('a document that already carries marks', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test.beforeEach(async ({ page, tmpPath }) => {
     await page.contents.uploadContent(MARKED, 'text', `${tmpPath}/${FILE}`);
@@ -3198,7 +3218,7 @@ test.describe('a document that already carries marks', () => {
 });
 
 test.describe('a marker written by hand inside a word', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('ACC-NOTES-56 paints the whole passage when a marker splits its last word', async ({
     page,
@@ -3216,7 +3236,7 @@ test.describe('a marker written by hand inside a word', () => {
 });
 
 test.describe('a document whose panel opens as a minimap', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test.beforeEach(async ({ page, tmpPath }) => {
     await page.contents.uploadContent(
@@ -3296,7 +3316,7 @@ test.describe('a document whose panel opens as a minimap', () => {
 });
 
 test.describe('a file with CRLF line endings', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('DEF-APPLY-27 keeps one carriage return per line through two marks', async ({
     page,
@@ -3328,7 +3348,7 @@ test.describe('a file with CRLF line endings', () => {
 });
 
 test.describe('the panel state stored in the document', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('DEF-NOTES-134 two changes of the panel state inside one round trip leave one settings marker, holding the second state', async ({
     page,
@@ -3472,7 +3492,7 @@ test.describe('the panel state stored in the document', () => {
 });
 
 test.describe('revealing a mark from the panel', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('ACC-NOTES-55 scrolls the preview to the passage of the chosen mark', async ({
     page,
@@ -3566,11 +3586,7 @@ test.describe('a change waiting on disk while the reader marks', () => {
   // write asks for it. This is the case ACC-NOTES-100 names: a change that
   // arrived between the reader's selection and the write.
   test.use({
-    mockSettings: settings({
-      pollInterval: 60,
-      fadeDuration: 500,
-      animation: false
-    })
+    mockSettings: settings({ highlight: false })
   });
 
   test('ACC-NOTES-100 applies the change, marks, and saves without a dialog', async ({
@@ -3686,11 +3702,7 @@ test.describe('a lab that names its user', () => {
   test.use({
     // No handle is set, so these cases are the first-run ones: the extension
     // asks for initials (ACC-NOTES-178).
-    mockSettings: settings({
-      fadeDuration: 500,
-      animation: false,
-      author: ''
-    }),
+    mockSettings: settings({ highlight: false, author: '' }),
     // The lab knows exactly who the reader is, and it makes no difference:
     // the setting alone names a note line.
     mockUser: identity('kj', 'Konrad Jelen')
@@ -3831,11 +3843,7 @@ test.describe('a lab that names its user', () => {
 
 test.describe('the author setting', () => {
   test.use({
-    mockSettings: settings({
-      fadeDuration: 500,
-      animation: false,
-      author: 'kj'
-    }),
+    mockSettings: settings({ highlight: false, author: 'kj' }),
     // The identity says one thing and the setting another, so the answer says
     // which of the two wins.
     mockUser: identity('someone-else', 'Someone Else')
@@ -3861,14 +3869,10 @@ test.describe('the author setting', () => {
   });
 });
 
-test.describe('notes turned off', () => {
-  test.use({
-    mockSettings: settings({
-      fadeDuration: 500,
-      animation: false,
-      notes: false
-    })
-  });
+test.describe('a marked document', () => {
+  // The paint wraps the marked text and adds none, so the marked preview
+  // reads as the plain one with notes on.
+  test.use({ mockSettings: settings() });
 
   test('ACC-NOTES-49 renders a marked document as the plain one', async ({
     page,
@@ -3891,41 +3895,10 @@ test.describe('notes turned off', () => {
     expect(withMarkers).toBe(without);
     expect(withMarkers).not.toContain('mark:');
   });
-
-  test('ACC-NOTES-63 hides the panel, the marks and the menu entries', async ({
-    page,
-    tmpPath
-  }) => {
-    const target = `${tmpPath}/${FILE}`;
-    await page.contents.uploadContent(MARKED, 'text', target);
-    await openPreview(page, target, FIRST);
-
-    await expect(panel(page)).toHaveCount(0);
-    await expect(painted(page)).toHaveCount(0);
-
-    // The menu may hold nothing at all with every entry of this extension
-    // gone, so the right click is made without waiting for one.
-    await clearSelection(page);
-    const at = await previewCentre(page);
-    await page.mouse.click(at.x, at.y, { button: 'right' });
-    await page.waitForTimeout(500);
-    await expect(
-      page.locator('.lm-Menu-item:not(.lm-mod-hidden)', {
-        has: page.locator('.lm-Menu-itemLabel', {
-          hasText:
-            /^(Mark \w+|Add Comment|Show notes|Show notes minimap|Hide notes|Hide minimap)$/
-        })
-      })
-    ).toHaveCount(0);
-    await page.keyboard.press('Escape');
-
-    // The markers the document carries are left exactly as they were.
-    expect(fileText(target)).toBe(MARKED);
-  });
 });
 
 test.describe('a mark taken over an indented code block', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('ACC-NOTES-101 closes the mark on a line of its own, leaving the code as it was', async ({
     page,
@@ -3957,7 +3930,7 @@ test.describe('a mark taken over an indented code block', () => {
 });
 
 test.describe('a mark written while the editor holds unsaved edits', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('DEF-APPLY-22 writes the mark into the document and puts nothing on disk', async ({
     page,
@@ -3999,7 +3972,7 @@ test.describe('a mark written while the editor holds unsaved edits', () => {
 });
 
 test.describe('a long document carrying many marks', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('DEF-HILITE-21 paints every passage from the one scan of the source and the render', async ({
     page,
@@ -4028,7 +4001,7 @@ test.describe('a long document carrying many marks', () => {
 });
 
 test.describe('typing a note into a row', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('ACC-NOTES-104 leaves Enter to the note box rather than selecting the row', async ({
     page,
@@ -4136,17 +4109,10 @@ test.describe('typing a note into a row', () => {
 });
 
 test.describe('live updates turned off while a change waits on disk', () => {
-  // The socket is answered and silent and the fallback check is a minute
-  // away, so the refresh the marker write asks for is the only thing that
-  // could read the file.
-  test.use({
-    mockSettings: settings({
-      enabled: false,
-      pollInterval: 60,
-      fadeDuration: 500,
-      animation: false
-    })
-  });
+  // The socket is answered and silent and the fallback check is half a
+  // minute away, so the refresh the marker write asks for is the only thing
+  // that could read the file.
+  test.use({ mockSettings: settings({ enabled: false, highlight: false }) });
 
   test('DEF-CONFIG-23 reads nothing on the refresh a marker write asks for', async ({
     page,
@@ -4242,7 +4208,7 @@ const selectedText = (page: any): Promise<string> =>
   page.evaluate(() => window.getSelection()?.toString() ?? '');
 
 test.describe('a stream of writes while the reader marks', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test.beforeEach(async ({ page, tmpPath }) => {
     await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
@@ -4331,7 +4297,7 @@ test.describe('a stream of writes while the reader marks', () => {
 });
 
 test.describe('marking from the keyboard', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test.beforeEach(async ({ page, tmpPath }) => {
     await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
@@ -4398,7 +4364,7 @@ test.describe('marking from the keyboard', () => {
 });
 
 test.describe('a note being written when the mark vanished', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('ACC-NOTES-144 takes the row and its open entry with a mark the file lost', async ({
     page,
@@ -4431,11 +4397,7 @@ test.describe('a note answered after the mark vanished', () => {
   // The handle is unset, so the question stands between the note and the
   // file and the mark can go while it is up.
   test.use({
-    mockSettings: settings({
-      fadeDuration: 500,
-      animation: false,
-      author: ''
-    })
+    mockSettings: settings({ highlight: false, author: '' })
   });
 
   test('ACC-NOTES-178 keeps the lab when the mark goes while the question is up', async ({
@@ -4476,7 +4438,7 @@ test.describe('a note answered after the mark vanished', () => {
 });
 
 test.describe('the list a screen reader moves through', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('ACC-CUE-115 lists the marks as list items', async ({
     page,
@@ -4571,11 +4533,7 @@ test.describe('the list a screen reader moves through', () => {
 
 test.describe('marking with live updates off', () => {
   test.use({
-    mockSettings: settings({
-      enabled: false,
-      fadeDuration: 500,
-      animation: false
-    })
+    mockSettings: settings({ enabled: false, highlight: false })
   });
 
   test('ACC-NOTES-112 saves through the Context and not through the route', async ({
@@ -4610,7 +4568,7 @@ test.describe('marking with live updates off', () => {
 });
 
 test.describe('the comment thread of a mark', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test.beforeEach(async ({ page, tmpPath }) => {
     await page.contents.uploadContent(DOC, 'text', `${tmpPath}/${FILE}`);
@@ -4791,7 +4749,9 @@ test.describe('the comment thread of a mark', () => {
     await remove.click();
     const one = await fileWhen(
       file,
-      holds => !holds.includes('First thought, revised.')
+      holds =>
+        holds.includes('Second thought.') &&
+        !holds.includes('First thought, revised.')
     );
     expect(noteLines(one)).toEqual([lines[1]]);
     await expect(page.locator('.jp-Dialog')).toHaveCount(0);
@@ -4802,7 +4762,8 @@ test.describe('the comment thread of a mark', () => {
       .click();
     const bare = await fileWhen(
       file,
-      holds => !holds.includes('Second thought.')
+      holds =>
+        openingIds(holds).length === 1 && !holds.includes('Second thought.')
     );
     expect(noteLines(bare)).toEqual([]);
     expect(openingIds(bare)).toHaveLength(1);
@@ -4884,7 +4845,10 @@ test.describe('the comment thread of a mark', () => {
     await reopen.click();
     const reopened = await fileWhen(
       file,
-      holds => !holds.includes('status=closed')
+      holds =>
+        holds.includes('One.') &&
+        holds.includes('Two.') &&
+        !holds.includes('status=closed')
     );
     expect(reopened).toContain('One.');
     expect(reopened).toContain('Two.');
@@ -4981,7 +4945,7 @@ test.describe('the comment thread of a mark', () => {
 });
 
 test.describe('the first note of a long document', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   test('DEF-NOTES-51 keeps the passage in view when the panel opens beside it', async ({
     page,
@@ -5033,22 +4997,24 @@ test.describe('the first note of a long document', () => {
 });
 
 test.describe('a mark the render has no passage for', () => {
-  test.use({ mockSettings: settings({ fadeDuration: 500, animation: false }) });
+  test.use({ mockSettings: settings({ highlight: false }) });
 
   /**
-   * DOC with its first sentence replaced, between the markers, by an image.
+   * DOC with its first sentence replaced, between the markers, by markup
+   * that holds its words in an attribute and shows nothing.
    *
-   * The alt text is an attribute and not a text node, so the words between
-   * the markers are in the file and in nothing the render holds: the mark is
+   * The title is an attribute and not a text node, so the words between the
+   * markers are in the file and in nothing the render holds: the mark is
    * listed, it is unanchored, and there is no passage to paint. This is the
    * shape a reader meets when an agent rewrites a marked passage into
-   * something the renderer draws rather than writes.
+   * markup the renderer does not write as text. An image is not that shape:
+   * its picture carries the mark (ACC-NOTES-215).
    */
-  const IMAGED = [
+  const UNSHOWN = [
     '# Report',
     '',
     `The first paragraph mentions apples and ${opening(ONE)}` +
-      `![pears and plums](missing.png)${closing(ONE)} at the end.`,
+      `<abbr title="pears and plums"></abbr>${closing(ONE)} at the end.`,
     '',
     'The second paragraph mentions oranges and plums.',
     ''
@@ -5059,7 +5025,7 @@ test.describe('a mark the render has no passage for', () => {
     tmpPath
   }) => {
     const target = `${tmpPath}/${FILE}`;
-    await page.contents.uploadContent(IMAGED, 'text', target);
+    await page.contents.uploadContent(UNSHOWN, 'text', target);
     await openPreview(page, target, 'The first paragraph mentions apples');
 
     // The mark is listed and says its passage is not in the view, and there
@@ -5141,7 +5107,7 @@ test.describe('a mark the render has no passage for', () => {
     tmpPath
   }) => {
     const target = `${tmpPath}/${FILE}`;
-    await page.contents.uploadContent(IMAGED, 'text', target);
+    await page.contents.uploadContent(UNSHOWN, 'text', target);
     await openPreview(page, target, 'The first paragraph mentions apples');
 
     const bar = page.locator(
@@ -5169,7 +5135,7 @@ test.describe('a mark the render has no passage for', () => {
     '# Report',
     '',
     `- The first item mentions apples and ${opening(ONE)}` +
-      `![pears and plums](missing.png)${closing(ONE)}`,
+      `<abbr title="pears and plums"></abbr>${closing(ONE)}`,
     '- The second item mentions oranges',
     ''
   ].join('\n');
@@ -5408,6 +5374,366 @@ test.describe('a note on a drawn diagram (ACC-NOTES-182)', () => {
     expect(fileText(`${tmpPath}/${FILE}`)).toContain(
       'Redraw this as a sequence.'
     );
+  });
+});
+
+test.describe('a note on an image (ACC-NOTES-215-IMAGE-NOTE)', () => {
+  test.use({ mockSettings: settings() });
+
+  /** A red picture of 40 by 30 pixels. */
+  const PNG =
+    'iVBORw0KGgoAAAANSUhEUgAAACgAAAAeCAIAAADRv8uKAAAAK0lEQVR4nO3NMQ0AAAgDsEma/wtpyICjSf9m2hMRi8VisVgsFovFYvHfeAEsRkZM5VHYZQAAAABJRU5ErkJggg==';
+
+  /** A blue picture of the same size, drawn as SVG. */
+  const SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="40" height="30" fill="#4682b4"/></svg>';
+
+  /**
+   * A document holding a Markdown image of each kind of file, and an img tag
+   * on a line of its own.
+   */
+  const PICTURES = [
+    '# Report',
+    '',
+    'The first paragraph is unchanged.',
+    '',
+    '![raster dot](dot.png)',
+    '',
+    '![vector chart](chart.svg)',
+    '',
+    '<img src="dot.png" alt="html dot" width="40">',
+    '',
+    'The last paragraph mentions cherries and figs.',
+    ''
+  ].join('\n');
+
+  test('ACC-NOTES-215-IMAGE-NOTE writes a note on a raster image, an SVG image and an img tag from a right click', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(PNG, 'base64', `${tmpPath}/dot.png`);
+    await page.contents.uploadContent(SVG, 'text', `${tmpPath}/chart.svg`);
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(PICTURES, 'text', target);
+    await openPreview(page, target);
+
+    const forms: [string, string, string, boolean][] = [
+      ['raster dot', '![raster dot](dot.png)', 'Crop the dot.', true],
+      ['vector chart', '![vector chart](chart.svg)', 'Label the axes.', false],
+      [
+        'html dot',
+        '<img src="dot.png" alt="html dot" width="40">',
+        'Enlarge the dot.',
+        true
+      ]
+    ];
+    for (const [index, [alt, construct, note, raster]] of forms.entries()) {
+      const image = page.locator(
+        `.jp-RenderedMarkdown:visible img[alt="${alt}"]`
+      );
+      await expect
+        .poll(() =>
+          image.evaluate((node: HTMLImageElement) => node.naturalWidth)
+        )
+        .toBe(40);
+      // A picture holds no words, so the press that opens the menu is what
+      // selects it, and the menu offers the entries a text selection is
+      // offered. Copy image stays where it was: on the raster picture alone.
+      const box = (await image.boundingBox())!;
+      await openMenu(page, {
+        x: box.x + box.width / 2,
+        y: box.y + box.height / 2
+      });
+      await expect(entry(page, 'Mark')).toBeVisible();
+      await expect(entry(page, 'Add Comment')).toBeVisible();
+      if (raster) {
+        await expect(entry(page, 'Copy image')).toBeVisible();
+      } else {
+        await expect(entry(page, 'Copy image')).toBeHidden();
+      }
+      await choose(page, 'Add Comment');
+      await writeNote(page, note);
+
+      // The markers stand around the whole construct in the file on disk,
+      // the opening one on its own line above it, holding the note; an img
+      // tag's closing marker takes the line below it.
+      await expect.poll(() => fileText(target)).toContain(note);
+      const text = fileText(target);
+      const closed = new RegExp(
+        `${construct.replace(/[[\]().]/g, '\\$&')}\\n?<!-- /mark:([0-9a-f-]+) -->\\n`
+      ).exec(text);
+      const id = closed?.[1] ?? '';
+      expect(id).toMatch(UUID);
+      expect(text.slice(0, text.indexOf(construct))).toMatch(
+        new RegExp(
+          `\\n<!-- mark:${id} note colour=yellow[^>]*${note.replace('.', '\\.')}[^>]*-->\\n$`
+        )
+      );
+
+      // The picture carries the mark, and the panel lists it as anchored,
+      // named by the image's alternative text.
+      await expect(image).toHaveClass(/jp-AdvancedMd-markImage/);
+      await expect(image).toHaveAttribute('data-mark', id);
+      const row = rows(page).nth(index);
+      await expect(row.locator('.jp-AdvancedMd-notesPassage')).toHaveText(alt);
+      await expect(row).not.toContainText('unanchored');
+    }
+    await expect(rows(page)).toHaveCount(3);
+
+    // On the dark theme each ring stands at three to one or more against the
+    // page behind the picture, as the bar of an unanchored mark does.
+    await page.theme.setDarkTheme();
+    const ratios = await page
+      .locator('.jp-RenderedMarkdown:visible img.jp-AdvancedMd-markImage')
+      .evaluateAll((images: HTMLImageElement[]) => {
+        const channels = (colour: string): number[] => {
+          const parts = colour.match(/[\d.]+/g)!.map(Number);
+          return parts.length > 3 ? parts : [...parts, 1];
+        };
+        const luminance = (colour: number[]): number => {
+          const [red, green, blue] = colour.slice(0, 3).map(channel => {
+            const part = channel / 255;
+            return part <= 0.03928
+              ? part / 12.92
+              : Math.pow((part + 0.055) / 1.055, 2.4);
+          });
+          return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+        };
+        return images.map(image => {
+          let behind = [255, 255, 255, 1];
+          for (
+            let walk = image.parentElement;
+            walk;
+            walk = walk.parentElement
+          ) {
+            const colour = channels(getComputedStyle(walk).backgroundColor);
+            if (colour[3] > 0) {
+              behind = colour;
+              break;
+            }
+          }
+          const ring = channels(
+            /rgba?\([^)]*\)/.exec(getComputedStyle(image).boxShadow)![0]
+          );
+          // The ring may carry an alpha: what shows is it over the page.
+          const seen = [0, 1, 2].map(
+            at => ring[3] * ring[at] + (1 - ring[3]) * behind[at]
+          );
+          const [high, low] = [luminance(seen), luminance(behind)].sort(
+            (a, b) => b - a
+          );
+          return (high + 0.05) / (low + 0.05);
+        });
+      });
+    expect(ratios).toHaveLength(3);
+    for (const ratio of ratios) {
+      expect(ratio).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  test('ACC-NOTES-215-IMAGE-NOTE writes a note on an image with no alternative text and on one whose file name holds brackets, after an alert', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(PNG, 'base64', `${tmpPath}/dot.png`);
+    await page.contents.uploadContent(PNG, 'base64', `${tmpPath}/dot_(v2).png`);
+    const target = `${tmpPath}/${FILE}`;
+    // The alerts sibling draws the alert's title with icon pictures of its
+    // own, and the renderer writes "Image" on a picture with no text.
+    await page.contents.uploadContent(
+      [
+        '# Report',
+        '',
+        'The first paragraph is unchanged.',
+        '',
+        '> [!NOTE]',
+        '> Keep the dots small.',
+        '',
+        '![](dot.png)',
+        '',
+        '![paren dot](dot_(v2).png)',
+        '',
+        'The last paragraph mentions cherries.',
+        ''
+      ].join('\n'),
+      'text',
+      target
+    );
+    await openPreview(page, target);
+    const root = page.locator('.jp-RenderedMarkdown:visible');
+    await expect(root.locator('.markdown-alert-title img')).toHaveCount(2);
+
+    const forms: [string, string, string, string][] = [
+      [
+        'img[alt="Image"]:not(.octicon)',
+        '![](dot.png)',
+        'Crop it.',
+        'image dot.png'
+      ],
+      [
+        'img[alt="paren dot"]',
+        '![paren dot](dot_(v2).png)',
+        'Name it.',
+        'paren dot'
+      ]
+    ];
+    for (const [index, [selector, construct, note, name]] of forms.entries()) {
+      const image = root.locator(selector);
+      await expect
+        .poll(() =>
+          image.evaluate((node: HTMLImageElement) => node.naturalWidth)
+        )
+        .toBe(40);
+      const box = (await image.boundingBox())!;
+      await openMenu(page, {
+        x: box.x + box.width / 2,
+        y: box.y + box.height / 2
+      });
+      await choose(page, 'Add Comment');
+      await writeNote(page, note);
+
+      // The closing marker stands after the whole construct, never inside
+      // its destination.
+      await expect.poll(() => fileText(target)).toContain(note);
+      const closed = new RegExp(
+        `\\n${construct.replace(/[[\]().]/g, '\\$&')}<!-- /mark:([0-9a-f-]+) -->\\n`
+      ).exec(fileText(target));
+      expect(closed?.[1] ?? '').toMatch(UUID);
+      await expect(image).toHaveAttribute('data-mark', closed![1]);
+      const row = rows(page).nth(index);
+      await expect(row.locator('.jp-AdvancedMd-notesPassage')).toHaveText(name);
+      await expect(row).not.toContainText('unanchored');
+    }
+    await expect(root.locator('.jp-AdvancedMd-markImage')).toHaveCount(2);
+
+    // The file still draws both pictures once it is read back.
+    await page.reload();
+    await openPreview(page, target);
+    await expect
+      .poll(() =>
+        root
+          .locator('img.jp-AdvancedMd-markImage')
+          .evaluateAll((images: HTMLImageElement[]) =>
+            images.map(image => image.naturalWidth)
+          )
+      )
+      .toEqual([40, 40]);
+  });
+
+  test('ACC-NOTES-215-IMAGE-NOTE marks the picture pressed on when another is written flush before it', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(PNG, 'base64', `${tmpPath}/dot.png`);
+    await page.contents.uploadContent(SVG, 'text', `${tmpPath}/chart.svg`);
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(
+      [
+        '# Report',
+        '',
+        'The first paragraph is unchanged.',
+        '',
+        '![raster dot](dot.png)![vector chart](chart.svg)',
+        '',
+        'The last paragraph mentions cherries and figs.',
+        ''
+      ].join('\n'),
+      'text',
+      target
+    );
+    await openPreview(page, target);
+
+    // The press on the first picture leaves a selection that ends where the
+    // second begins. It does not hold the second, so the press on the second
+    // selects the second.
+    for (const alt of ['raster dot', 'vector chart']) {
+      const image = page.locator(
+        `.jp-RenderedMarkdown:visible img[alt="${alt}"]`
+      );
+      await expect
+        .poll(() =>
+          image.evaluate((node: HTMLImageElement) => node.naturalWidth)
+        )
+        .toBe(40);
+      const box = (await image.boundingBox())!;
+      await openMenu(page, {
+        x: box.x + box.width / 2,
+        y: box.y + box.height / 2
+      });
+      if (alt === 'raster dot') {
+        await closeMenus(page);
+      }
+    }
+    await openMarkMenu(page);
+    await choose(page, colourLabel('yellow'));
+
+    await expect.poll(() => fileText(target)).toContain('<!-- /mark:');
+    const id = /<!-- \/mark:([0-9a-f-]+) -->/.exec(fileText(target))![1];
+    expect(fileText(target)).toContain(
+      `\n![raster dot](dot.png)<!-- mark:${id} note colour=yellow -->![vector chart](chart.svg)<!-- /mark:${id} -->\n`
+    );
+  });
+
+  test('ACC-NOTES-215-IMAGE-NOTE writes a note on an img tag whose attributes wrap onto a second line (DEF-NOTES-140-WRAPPED-IMG)', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(PNG, 'base64', `${tmpPath}/dot.png`);
+    const target = `${tmpPath}/${FILE}`;
+    const construct = '<img src="dot.png" alt="wrapped dot"\n     width="40">';
+    await page.contents.uploadContent(
+      [
+        '# Report',
+        '',
+        'The first paragraph is unchanged.',
+        '',
+        construct,
+        '',
+        '![raster dot](dot.png)',
+        '',
+        'The last paragraph mentions cherries.',
+        ''
+      ].join('\n'),
+      'text',
+      target
+    );
+    await openPreview(page, target);
+
+    const image = page.locator(
+      '.jp-RenderedMarkdown:visible img[alt="wrapped dot"]'
+    );
+    await expect
+      .poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth))
+      .toBe(40);
+    const box = (await image.boundingBox())!;
+    await openMenu(page, {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2
+    });
+    await choose(page, 'Add Comment');
+    await writeNote(page, 'Crop the dot.');
+
+    // The markers stand around the whole tag, both of its lines between
+    // them, each marker on a line of its own.
+    await expect.poll(() => fileText(target)).toContain('Crop the dot.');
+    const text = fileText(target);
+    const closed = new RegExp(
+      `\\n${construct.replace(/[[\]().]/g, '\\$&')}\\n<!-- /mark:([0-9a-f-]+) -->\\n`
+    ).exec(text);
+    const id = closed?.[1] ?? '';
+    expect(id).toMatch(UUID);
+    expect(text.slice(0, text.indexOf(construct))).toMatch(
+      new RegExp(
+        `\\n<!-- mark:${id} note colour=yellow[^>]*Crop the dot\\.[^>]*-->\\n$`
+      )
+    );
+    await expect(image).toHaveClass(/jp-AdvancedMd-markImage/);
+    await expect(image).toHaveAttribute('data-mark', id);
+    const row = rows(page).first();
+    await expect(row.locator('.jp-AdvancedMd-notesPassage')).toHaveText(
+      'wrapped dot'
+    );
+    await expect(row).not.toContainText('unanchored');
   });
 });
 

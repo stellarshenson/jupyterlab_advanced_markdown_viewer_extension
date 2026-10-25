@@ -5,46 +5,45 @@ import {
   INITIAL,
   PLUGIN_ID,
   REWRITTEN,
-  highlightAlphas,
+  SUITE_FADE_DURATION,
+  SUITE_POLL_INTERVAL,
+  closeMenus,
+  entry,
   labFixtures,
+  openMenu,
   openPreview,
+  select,
   settings,
-  shippedSettings,
   typeInEditor
 } from './helpers';
 
 /**
- * Integration tests of the settings declaration as the reader meets it.
+ * Integration tests of the settings as the reader meets them.
  *
- * The schema is what makes the settings editor refuse a value, so the proof
- * that the fallback interval carries a minimum is the editor itself: a value
- * below the minimum is reported as an error under the field and never reaches
- * the settings JupyterLab stores. The second test is the control for the
- * first - it enters an accepted value through the same field and reads it
- * back from the stored settings, so a refused value staying out means the
- * declaration refused it and not that this page saves nothing.
+ * The settings editor lists the four settings this extension declares. A
+ * user settings file written before the other seven became server options
+ * still holds their keys; it loads, the four in it apply and the removed keys
+ * change nothing. The seven reach the page from the server configuration,
+ * where the suite sets them in jupyter_server_test_config.py.
  */
 
 test.use(labFixtures);
 
-/**
- * The number input the settings editor draws for the fallback interval. The
- * editor builds the id out of the plugin id, whose colon has to be escaped to
- * read as part of the id in a selector.
- */
-const FIELD = `#jp-SettingsEditor-${PLUGIN_ID.replace(':', '\\:')}_pollInterval`;
+/** The id prefix the settings editor gives the fields of this plugin. */
+const FIELD_PREFIX = `jp-SettingsEditor-${PLUGIN_ID}_`;
 
-/**
- * The list of errors the editor shows under that input. It is empty while the
- * value is accepted.
- */
-const FIELD_ERROR = `${FIELD}__error`;
+/** The checkbox the settings editor draws for the live-updates switch. */
+const SWITCH = `#${FIELD_PREFIX.replace(':', '\\:')}enabled`;
 
-/**
- * How long the editor is given to store a value the reader entered. The
- * control test stores one inside this window, so a stored value still holding
- * its old number after the window means nothing was sent.
- */
+/** The four settings the editor lists, by key and title, in their order. */
+const LISTED = [
+  { key: 'enabled', title: 'Enabled' },
+  { key: 'animation', title: 'Animate changes' },
+  { key: 'highlight', title: 'Highlight changes' },
+  { key: 'author', title: 'Note handle' }
+];
+
+/** How long the editor is given to store a value the reader entered. */
 const SAVE_WINDOW = 2000;
 
 /**
@@ -56,7 +55,27 @@ async function openSettingsEditor(page: any): Promise<void> {
       query: 'Advanced Markdown Viewer'
     });
   });
-  await expect(page.locator(FIELD)).toBeVisible();
+  await expect(page.locator(SWITCH)).toBeVisible();
+}
+
+/**
+ * The fields the settings editor draws for this plugin, in their order: the
+ * key each input is drawn for and the text of the group around it, which
+ * holds its title.
+ */
+function listedFields(
+  page: any
+): Promise<Array<{ key: string; text: string }>> {
+  return page.evaluate(
+    (prefix: string) =>
+      Array.from(document.querySelectorAll('input, select, textarea'))
+        .filter(element => element.id.startsWith(prefix))
+        .map(element => ({
+          key: element.id.slice(prefix.length),
+          text: element.closest('.form-group')?.textContent ?? ''
+        })),
+    FIELD_PREFIX
+  );
 }
 
 /**
@@ -74,39 +93,111 @@ function storedSettings(page: any): Promise<Record<string, unknown>> {
 test.describe('the settings editor', () => {
   test.use({ mockSettings: settings() });
 
-  test('refuses a fallback interval below the declared minimum', async ({
-    page
-  }) => {
+  test('ACC-CONFIG-211-EDITOR lists four settings', async ({ page }) => {
     await openSettingsEditor(page);
-    const field = page.locator(FIELD);
-    await expect(field).toHaveValue('1');
-
-    await field.fill('0');
-    await field.blur();
-
-    await expect(page.locator(FIELD_ERROR)).toContainText('>= 1');
-    await page.waitForTimeout(SAVE_WINDOW);
-    expect((await storedSettings(page)).pollInterval).toBe(1);
-  });
-
-  test('stores a fallback interval the declaration accepts', async ({
-    page
-  }) => {
-    await openSettingsEditor(page);
-    const field = page.locator(FIELD);
-    await expect(field).toHaveValue('1');
-
-    await field.fill('5');
-    await field.blur();
-
-    await expect(page.locator(FIELD_ERROR)).toHaveCount(0);
-    await page.waitForTimeout(SAVE_WINDOW);
-    expect((await storedSettings(page)).pollInterval).toBe(5);
+    const fields = await listedFields(page);
+    expect(fields.map(field => field.key)).toEqual(
+      LISTED.map(listed => listed.key)
+    );
+    LISTED.forEach((listed, index) => {
+      expect(fields[index].text).toContain(listed.title);
+    });
   });
 });
 
-/** The checkbox the settings editor draws for the live-updates switch. */
-const SWITCH = `#jp-SettingsEditor-${PLUGIN_ID.replace(':', '\\:')}_enabled`;
+/**
+ * A user settings file from before the seven server options left the
+ * settings: every removed key at a value other than the suite's, beside a
+ * handle of its own.
+ */
+const WITH_REMOVED_KEYS = {
+  pollInterval: 1,
+  fadeDuration: 500,
+  animationSpeed: 80,
+  animationJitter: 0.5,
+  highlightVisibility: 'high',
+  tabCue: false,
+  notes: false,
+  author: 'galata'
+};
+
+/** The command that asks for the note handle, with the one in force. */
+const SET_HANDLE = 'advanced-markdown-viewer:set-note-handle';
+
+test.describe('a user settings file holding a removed key', () => {
+  test.use({ mockSettings: settings(WITH_REMOVED_KEYS) });
+
+  test('ACC-CONFIG-214-REMOVED-KEYS still loads, the four settings in it apply and the removed keys change nothing', async ({
+    page,
+    tmpPath
+  }) => {
+    // The command is offered only once the settings have loaded, and its box
+    // holds the handle the file names. A file the registry refused would
+    // leave it greyed.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (id: string) => (window as any).jupyterapp.commands.isEnabled(id),
+          SET_HANDLE
+        )
+      )
+      .toBe(true);
+    await page.evaluate((id: string) => {
+      void (window as any).jupyterapp.commands.execute(id);
+    }, SET_HANDLE);
+    const dialog = page.locator('.jp-Dialog');
+    await expect(dialog.locator('input')).toHaveValue('galata');
+    await dialog.locator('button.jp-mod-reject').click();
+    await expect(dialog).toHaveCount(0);
+
+    // The editor draws no field for a removed key.
+    await openSettingsEditor(page);
+    expect((await listedFields(page)).map(field => field.key)).toEqual(
+      LISTED.map(listed => listed.key)
+    );
+
+    // The settings were applied before the preview opened, so it shows what
+    // the removed keys would change: the suite's medium strength, not high;
+    // the marking entries, not notes off; a marked tab, not the cue off.
+    const path = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(INITIAL, 'text', path);
+    await openPreview(page, path);
+    await expect(
+      page.locator('[data-jp-advancedmd-visibility]')
+    ).toHaveAttribute('data-jp-advancedmd-visibility', 'medium');
+    await openMenu(page, await select(page, 'first paragraph'));
+    await expect(entry(page, 'Add Comment')).toHaveCount(1);
+    await expect(entry(page, 'Add Comment')).not.toHaveClass(/lm-mod-hidden/);
+    await closeMenus(page);
+    await page.contents.uploadContent(REWRITTEN, 'text', path);
+    await expect(
+      page.locator('.lm-TabBar-tab.jp-AdvancedMd-tabUpdated')
+    ).toHaveCount(1, { timeout: 20000 });
+  });
+});
+
+test.describe('a server option', () => {
+  test('ACC-CONFIG-212-SERVER-OPTIONS reaches the page', async ({ page }) => {
+    // The server puts the options jupyter_server_test_config.py sets into the
+    // page configuration under one key, which the frontend reads at start.
+    const options = await page.evaluate(
+      () =>
+        JSON.parse(
+          (document.getElementById('jupyter-config-data') as HTMLElement)
+            .textContent as string
+        ).advancedMarkdownViewer
+    );
+    expect(options).toEqual({
+      pollInterval: SUITE_POLL_INTERVAL,
+      fadeDuration: SUITE_FADE_DURATION,
+      animationSpeed: 20,
+      animationJitter: 0,
+      highlightVisibility: 'medium',
+      tabCue: true,
+      notes: true
+    });
+  });
+});
 
 /**
  * Turn live updates on or off the way the reader does, and wait until the
@@ -151,126 +242,5 @@ test.describe('the live-updates switch while a change is held back', () => {
     // which is what this half of the marker proves.
     await setLiveUpdates(page, true);
     await expect(blocked).toHaveCount(1, { timeout: 20000 });
-  });
-});
-
-/** The dropdown the settings editor draws for the highlight strength. */
-const VISIBILITY_FIELD = `#jp-SettingsEditor-${PLUGIN_ID.replace(
-  ':',
-  '\\:'
-)}_highlightVisibility`;
-
-/**
- * How opaque the added and the removed highlight are at each strength, in each
- * theme. Medium is the pair the extension ships with, Low ten percentage
- * points under it and High ten over.
- */
-const STRENGTHS = [
-  { label: 'Low', light: [0.25, 0.21], dark: [0.21, 0.19] },
-  { label: 'Medium', light: [0.35, 0.31], dark: [0.31, 0.29] },
-  { label: 'High', light: [0.45, 0.41], dark: [0.41, 0.39] }
-];
-
-test.describe('the highlight visibility setting', () => {
-  // A fade of five minutes, so one pair of highlights stands on screen for the
-  // whole test and every strength is read off those same elements.
-  test.use({ mockSettings: settings({ fadeDuration: 300000 }) });
-
-  test('ACC-HILITE-140 offers three strengths and recolours what is on screen', async ({
-    page,
-    tmpPath
-  }) => {
-    const path = `${tmpPath}/${FILE}`;
-    await page.contents.uploadContent(INITIAL, 'text', path);
-    await openPreview(page, path);
-    await page.contents.uploadContent(REWRITTEN, 'text', path);
-    await expect(page.locator('.jp-AdvancedMd-removed').first()).toBeVisible({
-      timeout: 20000
-    });
-
-    await openSettingsEditor(page);
-    const field = page.locator(VISIBILITY_FIELD);
-    await expect(field).toBeVisible();
-
-    // A closed list is how the editor refuses a strength the declaration does
-    // not name: there is no way to enter a fourth value through the field.
-    expect(
-      (await field.locator('option').allTextContents()).map(text => text.trim())
-    ).toEqual(['Low', 'Medium', 'High']);
-
-    // The strength is chosen by the word the reader sees. The editor draws a
-    // declaration written as oneOf with a title per entry as a list whose
-    // option values are its own, so the label is what names a choice here,
-    // and the colours asserted below are what prove the right one was stored.
-    for (const strength of STRENGTHS) {
-      await field.selectOption({ label: strength.label });
-      // The highlights that were already on screen take the new strength:
-      // nothing is rewritten and nothing is reopened.
-      await expect
-        .poll(async () => (await highlightAlphas(page)).added, {
-          timeout: SAVE_WINDOW * 5
-        })
-        .toBeCloseTo(strength.light[0], 2);
-      expect((await highlightAlphas(page)).removed).toBeCloseTo(
-        strength.light[1],
-        2
-      );
-    }
-
-    await page.theme.setDarkTheme();
-    for (const strength of STRENGTHS) {
-      await field.selectOption({ label: strength.label });
-      await expect
-        .poll(async () => (await highlightAlphas(page)).added, {
-          timeout: SAVE_WINDOW * 5
-        })
-        .toBeCloseTo(strength.dark[0], 2);
-      expect((await highlightAlphas(page)).removed).toBeCloseTo(
-        strength.dark[1],
-        2
-      );
-    }
-  });
-});
-
-const SPEED_FIELD = `#jp-SettingsEditor-${PLUGIN_ID.replace(
-  ':',
-  '\\:'
-)}_animationSpeed`;
-const JITTER_FIELD = `#jp-SettingsEditor-${PLUGIN_ID.replace(
-  ':',
-  '\\:'
-)}_animationJitter`;
-
-test.describe('the animation jitter setting', () => {
-  test.use({ mockSettings: shippedSettings() });
-
-  test('ACC-ANIM-158 sits after the speed, a quarter by default beside 75 characters a second', async ({
-    page
-  }) => {
-    await openSettingsEditor(page);
-    const speed = page.locator(SPEED_FIELD);
-    const jitter = page.locator(JITTER_FIELD);
-    await expect(speed).toBeVisible();
-    await expect(jitter).toBeVisible();
-    await expect(speed).toHaveValue('75');
-    await expect(jitter).toHaveValue('0.25');
-    // The editor draws the declarations in their order, so the jitter field
-    // follows the speed it varies.
-    expect(
-      await page.evaluate(
-        ([a, b]: [string, string]) => {
-          const first = document.querySelector(a);
-          const second = document.querySelector(b);
-          return first && second
-            ? Boolean(
-                first.compareDocumentPosition(second) &
-                Node.DOCUMENT_POSITION_FOLLOWING
-              )
-            : null;
-        },
-        [SPEED_FIELD, JITTER_FIELD]
-      )
-    ).toBe(true);
   });
 });

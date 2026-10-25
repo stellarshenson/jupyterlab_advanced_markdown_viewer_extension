@@ -42,7 +42,10 @@ export interface ISourceToken {
   start: number;
   /** Offset in the source just past the word's last kept character. */
   end: number;
-  /** Index of the top-level block, blocks being separated by blank lines. */
+  /**
+   * Index of the top-level block, blocks being separated by blank lines and
+   * ended by a heading, a thematic break, a setext underline or a fence.
+   */
   block: number;
 }
 
@@ -69,6 +72,8 @@ export interface IProtectedSpan {
   start: number;
   /** Offset just past the span's last character. */
   end: number;
+  /** An image's alternative text, its words one space apart. */
+  alt?: string;
 }
 
 /**
@@ -229,14 +234,29 @@ const QUOTE = /^(?:[ \t]{0,3}>[ \t]?)+/;
 const HEADING = /^[ \t]{0,3}#{1,6}(?:[ \t]+|$)/;
 const CLOSING_HASHES = /[ \t]+#+[ \t]*$/;
 const BULLET = /^[ \t]{0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/;
+// marked.esm.js paragraph rule, outside a list: ' {0,3}(?:[*+-]|1[.)])[ \t]'
+const FIRST_ITEM = /^ {0,3}(?:[-+*]|1[.)])[ \t]/;
 const ALERT = /^\[![A-Za-z]+\][ \t]*$/;
 // A link reference definition on one line: the label, the destination, and
 // an optional title, with nothing after them.
 const DEFINITION =
-  /^[ \t]{0,3}\[(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|[^\s<>]+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t]*$/;
+  /^[ \t]{0,3}\[((?:[^\]\\]|\\.)+)\]:[ \t]*(?:<[^<>\n]*>|[^\s<>]+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t]*$/;
 const SEPARATOR = /^[\s|:-]+$/;
 const AUTOLINK = /^<([A-Za-z][A-Za-z0-9+.-]*:[^<>\s]*|[^<>\s@]+@[^<>\s]+)>/;
 const TAG = /^<\/?[A-Za-z][^<>]*>/;
+// An open tag whose attributes run on to later lines, read by the grammar
+// the renderer reads it by (CommonMark 6.6), its '>' on a line of its own
+// included. The scan says which later lines it may run on to.
+// shortcut: a tag wrapped inside a blockquote is not read, its later lines
+// opening with the quote's '>'; read them past their quote markers if one
+// is met.
+const WRAPPED_TAG =
+  /^<[A-Za-z][\w-]*(?:\s+[A-Za-z:_][\w.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>/;
+// The tags that open an HTML block whatever follows them on their line
+// (CommonMark 4.6, type 6).
+const BLOCK_TAG =
+  /^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t]|\/?>|$)/i;
+const SETEXT = /^[ \t]{0,3}(?:=+|-+)[ \t]*$/;
 const PUNCTUATION = /[!-/:-@[-`{-~]/;
 const DELIMITER = /[*_~]/;
 const WORD = /[A-Za-z0-9]/;
@@ -303,6 +323,60 @@ function lineRanges(source: string): Array<{ start: number; end: number }> {
     }
   }
   return lines;
+}
+
+/**
+ * A reference label in the form two labels are matched in: case and runs
+ * of white space do not tell them apart (CommonMark 4.7).
+ */
+function label(text: string): string {
+  return spaced(text).toLowerCase();
+}
+
+/**
+ * The labels the definitions of a source give a reference for.
+ */
+function definedLabels(source: string): Set<string> {
+  const labels = new Set<string>();
+  for (const line of lineRanges(source)) {
+    const found = DEFINITION.exec(source.slice(line.start, line.end));
+    if (found) {
+      labels.add(label(found[1]));
+    }
+  }
+  return labels;
+}
+
+/**
+ * The end of the paragraph a line ends: the end of the last line before the
+ * next blank line, or of the source.
+ *
+ * @param at - the end of a line
+ */
+function paragraphEnd(source: string, at: number): number {
+  const blank = /\n[ \t]*(?:\r?\n|$)/g;
+  blank.lastIndex = at;
+  return blank.exec(source)?.index ?? source.length;
+}
+
+/**
+ * Whether a line ends the paragraph above it, so a tag open in that
+ * paragraph cannot run on to it: a blockquote, a heading, a fence, a
+ * thematic break, a list item or a setext underline. Outside a list item
+ * only a bullet, or a number starting a list at 1, followed by a space or a
+ * tab ends one, with or without text after it, as marked's paragraph rule
+ * reads it; inside one marked reads each line on its own, so any list item
+ * does.
+ *
+ * @param column - the column the text of the list item the paragraph is in
+ * starts at, which the line's indentation counts from
+ */
+function interrupts(line: string, column: number): boolean {
+  const inside = line.slice(charsForColumns(/^[ \t]*/.exec(line)![0], column));
+  const item = column > 0 ? BULLET : FIRST_ITEM;
+  return [QUOTE, HEADING, FENCE, THEMATIC, item, SETEXT].some(rule =>
+    rule.test(inside)
+  );
 }
 
 /**
@@ -381,14 +455,16 @@ interface IOpenList {
  * The stripper is deliberately light: it removes fences, heading hashes, list
  * bullets, blockquote markers, table pipes and separator rows, emphasis and
  * strong delimiters, inline code backticks, link and image syntax (keeping
- * the text and the alt), autolink brackets, HTML tags, HTML comments and the
- * alert line of a GitHub alert, and it reads a character reference as the
- * character it stands for. What remains is what the reader sees, so its
- * words match the words of the render.
+ * a link's text, and an image's alt on its span rather than among the words,
+ * since the render writes it in no text node), autolink brackets, HTML
+ * tags, HTML comments and the alert line of a GitHub alert, and it reads a
+ * character reference as the character it stands for. What remains is what
+ * the reader sees, so its words match the words of the render.
  *
  * @param source - the Markdown source
  */
 export function tokeniseSource(source: string): ISourceScan {
+  const labels = definedLabels(source);
   const tokens: ISourceToken[] = [];
   const spans: IProtectedSpan[] = [];
 
@@ -433,10 +509,10 @@ export function tokeniseSource(source: string): ISourceScan {
 
   // Every scanner below returns the offset past what it read, or -1 when the
   // character it started on is ordinary text after all. A return past `to`
-  // means the construct ran on to a later line, which only an HTML comment
-  // does.
+  // means the construct ran on to a later line, which only an HTML comment,
+  // an image whose text wraps and a tag whose attributes wrap do.
 
-  const angle = (i: number, to: number): number => {
+  const angle = (i: number, to: number, wrap: boolean): number => {
     if (source.startsWith('<!--', i)) {
       const close = source.indexOf('-->', i + 4);
       const stop = close < 0 ? source.length : close + 3;
@@ -452,7 +528,23 @@ export function tokeniseSource(source: string): ISourceScan {
       }
       return i + auto[0].length;
     }
-    const tag = TAG.exec(rest);
+    // With `wrap` a tag whose '>' is not on its line may close on a later
+    // line, as a writer who puts its attributes on lines of their own leaves
+    // it (DEF-NOTES-140): on any line of an HTML block, which the render
+    // passes through as written, and in a paragraph on a line that goes on
+    // with it.
+    let tag = TAG.exec(rest);
+    if (!tag && wrap && !rest.includes('>')) {
+      tag = WRAPPED_TAG.exec(source.slice(i, paragraphEnd(source, to)));
+      const later = source
+        .slice(to, i + (tag?.[0].length ?? 0))
+        .split(/\r?\n/)
+        .slice(1);
+      const column = innermost()?.column ?? 0;
+      if (!html && later.some(line => interrupts(line, column))) {
+        tag = null;
+      }
+    }
     if (tag) {
       // A br is a line break in the render, where the words either side of
       // it are two words, so it ends the word here too; any other tag sits
@@ -553,11 +645,20 @@ export function tokeniseSource(source: string): ISourceScan {
     return -1;
   };
 
-  const link = (i: number, to: number, image: boolean): number => {
+  // With `wrap` the text of an image may run on past `to`, the end of its
+  // line, to the blank line that ends its paragraph, as a writer who wraps
+  // their lines leaves it (ACC-NOTES-215).
+  const link = (
+    i: number,
+    to: number,
+    image: boolean,
+    wrap: boolean
+  ): number => {
     const from = i + (image ? 2 : 1);
+    const end = image && wrap ? paragraphEnd(source, to) : to;
     let depth = 1;
     let j = from;
-    while (j < to && depth > 0) {
+    while (j < end && depth > 0) {
       const char = source[j];
       if (char === '\\') {
         j += 2;
@@ -575,39 +676,98 @@ export function tokeniseSource(source: string): ISourceScan {
     }
     const textEnd = j - 1;
     const after = source[j];
-    // A shortcut reference renders with its brackets, so it is ordinary text.
+    // A shortcut reference renders with its brackets, so it is ordinary text,
+    // except an image whose label the source defines, which the render draws
+    // as a picture (ACC-NOTES-215).
     if (after !== '(' && after !== '[') {
+      if (!image || !labels.has(label(source.slice(from, textEnd)))) {
+        return -1;
+      }
+      spans.push({ kind: 'image', start: i, end: j, alt: alt(from, textEnd) });
+      return j;
+    }
+    // What follows the text ends on the line the text ends on.
+    const newline = source.indexOf('\n', j);
+    const stop = Math.min(end, newline < 0 ? source.length : newline);
+    let close = source.indexOf(']', j);
+    if (after === '(') {
+      // A destination may hold parentheses in balanced pairs, as a file
+      // named for its version does: dot_(v2).png (CommonMark 6.3).
+      close = -1;
+      for (let k = j, depth = 0; k < stop; k++) {
+        if (source[k] === '\\') {
+          k++;
+        } else if (source[k] === '(') {
+          depth++;
+        } else if (source[k] === ')' && --depth === 0) {
+          close = k;
+          break;
+        }
+      }
+    }
+    if (close < 0 || close >= stop) {
       return -1;
     }
-    const close = source.indexOf(after === '(' ? ')' : ']', j);
-    if (close < 0 || close >= to) {
-      return -1;
+    if (image) {
+      spans.push({
+        kind: 'image',
+        start: i,
+        end: close + 1,
+        alt: alt(from, textEnd)
+      });
+    } else {
+      spans.push({ kind: 'link', start: i, end: close + 1 });
+      inline(from, textEnd, false);
     }
-    spans.push({ kind: image ? 'image' : 'link', start: i, end: close + 1 });
-    inline(from, textEnd, false);
     return close + 1;
   };
 
-  const inline = (from: number, to: number, pipes: boolean): number => {
+  // The render writes an image's text on the picture and in no text node,
+  // so it is read apart, onto the image's span, and the word the image
+  // interrupts runs on past it as it runs on in the render (DEF-NOTES-138).
+  const alt = (from: number, to: number): string => {
+    const held = { word, wordStart, wordEnd, count: tokens.length };
+    word = '';
+    inline(from, to, false);
+    flush();
+    const words = tokens.splice(held.count).map(token => token.text);
+    ({ word, wordStart, wordEnd } = held);
+    return words.join(' ');
+  };
+
+  const inline = (
+    from: number,
+    to: number,
+    pipes: boolean,
+    wrap = false
+  ): number => {
     let i = from;
     while (i < to) {
       const char = source[i];
-      if (char === '\\' && i + 1 < to && PUNCTUATION.test(source[i + 1])) {
+      // An HTML block is raw HTML: only its tags and references are read.
+      if (
+        !html &&
+        char === '\\' &&
+        i + 1 < to &&
+        PUNCTUATION.test(source[i + 1])
+      ) {
         keep(i + 1, source[i + 1]);
         i += 2;
         continue;
       }
       let next = -1;
       if (char === '<') {
-        next = angle(i, to);
+        next = angle(i, to, wrap);
       } else if (char === '&') {
         next = reference(i, to);
+      } else if (html) {
+        next = -1;
       } else if (char === '`') {
         next = codeSpan(i, to);
       } else if (char === '!' && source[i + 1] === '[') {
-        next = link(i, to, true);
+        next = link(i, to, true, wrap);
       } else if (char === '[') {
-        next = link(i, to, false);
+        next = link(i, to, false, wrap);
       } else if (DELIMITER.test(char)) {
         next = emphasis(i, to);
       }
@@ -646,9 +806,14 @@ export function tokeniseSource(source: string): ISourceScan {
   // Whether the line skipTo was set on opens an HTML block with a comment,
   // which ends on the line the comment closes on.
   let htmlBlock = false;
+  // Whether the block being read is an HTML block a tag opened.
+  let html = false;
   const lines = new Map<number, ISourceLine>();
   // The line before, which a fence a lost quote cuts short ends on.
   let previous = { start: -1, end: 0 };
+  // Whether the line before was a link reference definition, which another
+  // definition may follow.
+  let definition = false;
 
   // What a line carries to stay inside the quote it was written in and the
   // list items open on it.
@@ -660,7 +825,10 @@ export function tokeniseSource(source: string): ISourceScan {
   for (const line of lineRanges(source)) {
     const before = previous;
     previous = line;
-    // A comment that began on an earlier line runs through this one.
+    const priorDefinition = definition;
+    definition = false;
+    // A comment or an image that began on an earlier line runs through this
+    // one.
     if (skipTo > line.start) {
       if (skipTo > line.end) {
         continue;
@@ -671,7 +839,7 @@ export function tokeniseSource(source: string): ISourceScan {
         item: -1,
         tail: htmlBlock ? -1 : lineTail(source, line.start, line.end)
       });
-      skipTo = inline(skipTo, line.end, false);
+      skipTo = inline(skipTo, line.end, false, true);
       if (htmlBlock && skipTo <= line.end) {
         open = false;
       }
@@ -722,6 +890,8 @@ export function tokeniseSource(source: string): ISourceScan {
             end: line.end
           });
           fence = null;
+          // The fenced block ends here, so the next line starts a block.
+          open = false;
         } else {
           plain(inside, line.end);
         }
@@ -816,18 +986,44 @@ export function tokeniseSource(source: string): ISourceScan {
     // not paragraph text and ends on the line the comment closes on. On a
     // line that goes on a paragraph, marked opens one only from the first
     // column, except inside a list item, whose lines it reads one at a time.
+    // A line that goes on an HTML block a tag opened is read the same way.
     const previousLine = lines.get(before.start);
     const continued =
       !started &&
       !bullet &&
       lists.length === listed &&
       innermost()?.depth !== depth &&
-      (previousLine?.tail ?? -1) >= 0;
+      ((previousLine?.tail ?? -1) >= 0 || html);
     htmlBlock = (continued ? /^<!--/ : /^ {0,3}<!--/).test(said);
+    // So does a block-level tag opening a block, or a line of one whole tag,
+    // and that block runs on to its blank line (CommonMark 4.6, types 6 and
+    // 7), or to the end of the list item it is in. A block-level tag also
+    // ends a paragraph and opens one, from the first column as a comment
+    // does; a line of one whole tag does not. One inside a blockquote is left
+    // to the shortcut at WRAPPED_TAG.
+    const content = said.replace(/^ {0,3}/, '');
+    // A line of one whole tag opens its HTML block only while it holds the
+    // tag alone, so no marker is appended to it (DEF-NOTES-146-TAG-MARKER).
+    let wholeTag = false;
+    if (
+      started ||
+      bullet ||
+      lists.length !== listed ||
+      (!html && BLOCK_TAG.test(continued ? said : content))
+    ) {
+      const lone = WRAPPED_TAG.exec(content);
+      const block = BLOCK_TAG.test(content);
+      wholeTag =
+        !block && lone !== null && BLANK.test(content.slice(lone[0].length));
+      html = depth === 0 && (block || wholeTag);
+    }
     record.below = prefix(quoteText);
     lines.set(line.start, record);
 
-    const fenced = FENCE.exec(said);
+    // In an HTML block a fence, a thematic break, a heading or a setext
+    // underline is raw HTML, which ends nothing. Outside one each is, or
+    // ends, a block of its own, and the next line starts a block.
+    const fenced = html ? null : FENCE.exec(said);
     if (fenced) {
       fence = {
         char: fenced[1][0],
@@ -854,7 +1050,9 @@ export function tokeniseSource(source: string): ISourceScan {
       indented = null;
     }
 
-    if (THEMATIC.test(said) || isSeparator(said)) {
+    // A table's separator row goes on with its table.
+    if ((!html && THEMATIC.test(said)) || isSeparator(said)) {
+      open = isSeparator(said);
       flush();
       continue;
     }
@@ -864,26 +1062,47 @@ export function tokeniseSource(source: string): ISourceScan {
       continue;
     }
 
-    const heading = HEADING.exec(said);
+    const heading = html ? null : HEADING.exec(said);
     if (heading) {
       spans.push({ kind: 'heading', start: line.start, end: line.end });
       at += heading[0].length;
       const closing = CLOSING_HASHES.exec(source.slice(at, line.end));
       skipTo = inline(at, closing ? at + closing.index : line.end, false);
+      open = false;
       flush();
       continue;
     }
 
-    // A link reference definition takes nothing after its destination. It
-    // can stand only where a block can start, not where a paragraph goes on
-    // (DEF-NOTES-120).
+    // A setext underline shows no text and makes a heading of the paragraph
+    // line above it.
+    if (
+      !html &&
+      !bullet &&
+      SETEXT.test(said) &&
+      (previousLine?.tail ?? -1) >= 0
+    ) {
+      open = false;
+      flush();
+      continue;
+    }
+
+    // A link reference definition takes nothing after its destination and
+    // writes no words. It can stand only where a block can start, not where a
+    // paragraph goes on (DEF-NOTES-120); the terms below also exclude an HTML
+    // block, whose lines are text as written.
+    const defined =
+      DEFINITION.test(said) && (started || !previousLine || priorDefinition);
     record.tail =
-      htmlBlock ||
-      (DEFINITION.test(said) &&
-        (started || !previousLine || previousLine.tail < 0))
+      htmlBlock || wholeTag || defined
         ? -1
         : lineTail(source, line.start, line.end);
-    skipTo = inline(at, line.end, /^[ \t]*\|/.test(said));
+    if (defined) {
+      definition = true;
+      flush();
+      continue;
+    }
+    const row = !html && /^[ \t]*\|/.test(said);
+    skipTo = inline(at, line.end, row, !row);
     // The HTML block a comment opened ends on the line the comment closes on.
     if (htmlBlock && skipTo <= line.end) {
       open = false;
@@ -1358,9 +1577,168 @@ export function renderedToSource(
   const startToken = scan.tokens[at];
   const endToken =
     scan.tokens[Math.min(at + needle.length - 1, scan.tokens.length - 1)];
+  return around(source, scan, startToken.start, endToken.end);
+}
 
-  const opening = widen(scan.protectedSpans, startToken.start, 'start');
-  const closing = widen(scan.protectedSpans, endToken.end, 'end');
+/**
+ * An image of the source: a Markdown image or an HTML img tag, with the
+ * alternative text the render keeps on the picture rather than in its text.
+ */
+export interface ISourceImage {
+  start: number;
+  end: number;
+  /** The alternative text, its words one space apart. */
+  alt: string;
+}
+
+/** An HTML img tag. */
+const IMG_TAG = /^<img\b/i;
+
+/**
+ * Where an img tag is read into the element the browser makes of it.
+ *
+ * A template's content is inert, so the picture is never fetched. The
+ * render's sanitizer leaves a character reference written out unless a ';'
+ * ends it right after its name or number, so every other '&' is escaped
+ * before the parse, and reading the attribute back gives the alternative
+ * text the render shows. Built on the first tag met and kept, as the
+ * reference decoder is.
+ */
+let tagReader: HTMLTemplateElement | null = null;
+
+/**
+ * A text with its words one space apart, the form two alternative texts are
+ * compared in.
+ */
+function spaced(text: string): string {
+  return text
+    .split(/\s+/)
+    .filter(word => word !== '')
+    .join(' ');
+}
+
+/**
+ * The images of a source in document order, which is the order the render
+ * draws their pictures in (ACC-NOTES-215). A Markdown image's alternative
+ * text is the words of its brackets, which the scan keeps on its span; an
+ * img tag's is its attribute, which the scan reads no words from.
+ *
+ * @param scan - {@link tokeniseSource} of the source
+ * @param source - the Markdown source
+ */
+export function sourceImages(
+  scan: ISourceScan,
+  source: string
+): ISourceImage[] {
+  return scan.protectedSpans
+    .filter(
+      span =>
+        span.kind === 'image' ||
+        (span.kind === 'html' &&
+          IMG_TAG.test(source.slice(span.start, span.end)))
+    )
+    .sort((a, b) => a.start - b.start)
+    .map(span => {
+      if (span.kind === 'image') {
+        return { start: span.start, end: span.end, alt: span.alt ?? '' };
+      }
+      tagReader = tagReader ?? document.createElement('template');
+      tagReader.innerHTML = source
+        .slice(span.start, span.end)
+        .replace(
+          /&(?!(?:#\d+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);)/g,
+          '&amp;'
+        );
+      const alt =
+        tagReader.content.querySelector('img')?.getAttribute('alt') ?? '';
+      return { start: span.start, end: span.end, alt: spaced(alt) };
+    });
+}
+
+/**
+ * Whether the pictures of a render are the images of its source, one for
+ * one: as many, each carrying the alternative text of the image at its place
+ * (ACC-NOTES-215). A render that draws an image the source does not hold, or
+ * leaves one out, shifts every place after it, and two images can carry the
+ * same text, so no single place is trusted unless every place agrees.
+ * JupyterLab's renderer writes "Image" on a picture whose image gives no
+ * text.
+ *
+ * @param alts - the alternative text of each picture, as the render holds it
+ * @param images - {@link sourceImages} of the source behind that render
+ */
+export function sameImages(alts: string[], images: ISourceImage[]): boolean {
+  return (
+    alts.length === images.length &&
+    alts.every(
+      (alt, i) =>
+        spaced(alt) === images[i].alt ||
+        (alt === 'Image' && images[i].alt === '')
+    )
+  );
+}
+
+/**
+ * Where the markers of a mark on one picture go: around the whole construct
+ * it was drawn from, and out of any link or emphasis around it, as a text
+ * passage's markers go out of them (ACC-NOTES-215).
+ *
+ * A picture adds no text to the capture, so it is found by its place among
+ * the pictures of the render, which is the place its construct holds among
+ * the images of the source while the two are the same ({@link sameImages}).
+ *
+ * @param index - the picture's place among the pictures of the render
+ * @param alts - the alternative text of every picture of the render, as the
+ * render holds it
+ * @param source - the Markdown source behind that render
+ * @returns where the two markers go, or null when the pictures of the render
+ * are not the images of the source
+ */
+export function imageToSource(
+  index: number,
+  alts: string[],
+  source: string
+): ISourceRange | null {
+  const scan = tokeniseSource(source);
+  const images = sourceImages(scan, source);
+  const image = images[index];
+  if (!image || !sameImages(alts, images)) {
+    return null;
+  }
+  const range = around(source, scan, image.start, image.end);
+  // An img tag alone on a line that opens a block is an HTML block, which a
+  // marker after the tag on that line would make a paragraph of (CommonMark
+  // 4.6, type 7): the closing marker takes the next line, inside the block.
+  const newline = source.indexOf('\n', image.end);
+  const rest = source.slice(image.end, newline < 0 ? source.length : newline);
+  if (
+    range?.startOwnLine &&
+    IMG_TAG.test(source.slice(image.start, image.end)) &&
+    BLANK.test(rest.replace(/\r$/, ''))
+  ) {
+    return {
+      ...range,
+      endOwnLine: true,
+      endPrefix:
+        scan.lines.get(source.lastIndexOf('\n', image.end - 1) + 1)?.below ?? ''
+    };
+  }
+  return range;
+}
+
+/**
+ * Where the two markers go around a range of the source: each end widened
+ * out of every span a marker may not sit inside, and the opening one placed
+ * so it never starts a line.
+ */
+function around(
+  source: string,
+  scan: ISourceScan,
+  start: number,
+  end: number
+): ISourceRange | null {
+  const opening = widen(scan.protectedSpans, start, 'start');
+  const closing = widen(scan.protectedSpans, end, 'end');
   const placed = placeOpening(source, scan.lines, opening.at, opening.ownLine);
   if (closing.at <= placed.at) {
     return null;

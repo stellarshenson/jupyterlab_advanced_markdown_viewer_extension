@@ -28,7 +28,7 @@ import { EXTERNAL_ORIGIN } from './watcher';
 const NAMESPACE = 'jupyterlab-advanced-markdown-viewer-extension';
 
 /**
- * Fallback interval before the settings say otherwise, in milliseconds.
+ * Fallback interval before the plugin sets it, in milliseconds.
  */
 const DEFAULT_INTERVAL_MS = 10_000;
 
