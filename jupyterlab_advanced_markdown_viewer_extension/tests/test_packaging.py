@@ -8,11 +8,12 @@ import tomllib
 
 import pytest
 from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 PYPROJECT = pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
 
 # The Markdown family, as the COMPAT criteria name it.
-SUITE = {
+SUITE = set(map(canonicalize_name, {
     "jupyterlab_colourful_tab_extension",
     "jupyterlab_edit_markdown_at_content_extension",
     "jupyterlab_export_markdown_extension",
@@ -20,24 +21,24 @@ SUITE = {
     "jupyterlab_markdown_insert_content_extension",
     "jupyterlab_paste_content_as_markdown_extension",
     "jupyterlab_refresh_view_extension",
-}
+}))
 
 # Extensions this one is proved compatible with but does not install. The SVG export
 # extension puts Copy as PNG and Save as PNG on the same rendered root, which
 # ACC-COMPAT-162 holds this extension to leaving alone; that is a neighbour to not
 # break, not a member of the family.
-NEIGHBOURS = {"jupyterlab_export_svg_as_png_extension"}
+NEIGHBOURS = {canonicalize_name("jupyterlab_export_svg_as_png_extension")}
 
 # The discrete fix packages and the metapackage that installs them. They register the same
 # plugin ids as the core patches, and JupyterLab does not start when both are present.
-DISCRETE_FIXES = {
+DISCRETE_FIXES = set(map(canonicalize_name, {
     "jupyterlab_markdown_switch_tab_scrolling_fix",
     "jupyterlab_markdown_syntax_rendering_fix",
     "jupyterlab_markdown_viewer_toc_fix",
     "stellars_jupyterlab_fixes",
-}
+}))
 
-CORE_PATCHES = "jupyterlab_core_patches_extension"
+CORE_PATCHES = canonicalize_name("jupyterlab_core_patches_extension")
 
 
 @pytest.fixture(scope="module")
@@ -47,13 +48,16 @@ def project():
 
 @pytest.fixture(scope="module")
 def required(project):
-    return {Requirement(item).name: Requirement(item) for item in project["dependencies"]}
+    return {
+        canonicalize_name(Requirement(item).name): Requirement(item)
+        for item in project["dependencies"]
+    }
 
 
 @pytest.fixture(scope="module")
 def declared(project, required):
     return set(required) | {
-        Requirement(item).name
+        canonicalize_name(Requirement(item).name)
         for group in project.get("optional-dependencies", {}).values()
         for item in group
     }
@@ -84,5 +88,5 @@ def test_the_core_patches_come_only_through_their_extra(project, required):
     """ACC-COMPAT-161: the core-patches extra holds the core patches alone, with a floor."""
     assert CORE_PATCHES not in required
     extra = [Requirement(item) for item in project["optional-dependencies"]["core-patches"]]
-    assert [item.name for item in extra] == [CORE_PATCHES]
+    assert [canonicalize_name(item.name) for item in extra] == [CORE_PATCHES]
     assert extra[0].specifier, f"{CORE_PATCHES} has no version floor"

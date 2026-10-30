@@ -22,7 +22,8 @@ jobs:
       uses: jupyterlab/maintainer-tools/.github/actions/base-setup@v1
 
     - name: Install dependencies
-      run: python -m pip install -U "jupyterlab>=4.0.0,<5"
+      # JupyterLab 4.6.5 bundles fast-uri 3.1.8, which rejects plugin ids with an underscore before the colon.
+      run: python -m pip install -U "jupyterlab>=4.0.0,<4.6.5"
 
     - name: Lint the extension
       run: |
@@ -88,7 +89,7 @@ jobs:
         sudo rm -rf $(which node)
         sudo rm -rf $(which node)
 
-        pip install "jupyterlab>=4.0.0,<5" jupyterlab_advanced_markdown_viewer_extension*.whl
+        pip install "jupyterlab>=4.0.0,<4.6.5" jupyterlab_advanced_markdown_viewer_extension*.whl
 
 
         jupyter server extension list
@@ -121,7 +122,7 @@ jobs:
     - name: Install the extension
       run: |
         set -eux
-        python -m pip install "jupyterlab>=4.0.0,<5" jupyterlab_advanced_markdown_viewer_extension*.whl
+        python -m pip install "jupyterlab>=4.0.0,<4.6.5" "$(ls jupyterlab_advanced_markdown_viewer_extension*.whl)[core-patches]"
 
     - name: Install dependencies
       working-directory: ui-tests
@@ -166,4 +167,6 @@ jobs:
       - uses: jupyterlab/maintainer-tools/.github/actions/base-setup@v1
       - uses: jupyterlab/maintainer-tools/.github/actions/check-links@v1
         with:
+          # The two trackers quote sample markup such as <img src=dot.png>, which the checker reads as links of the file.
+          ignore_glob: "docs/defects.md docs/acc-crit-*.md"
           ignore_links: "https://www.npmjs.com/package/.* https://pepy.tech/.* https://static.pepy.tech/.*"

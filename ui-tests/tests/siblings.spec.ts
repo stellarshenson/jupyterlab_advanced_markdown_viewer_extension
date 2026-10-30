@@ -26,12 +26,13 @@ import {
 test.use(labFixtures);
 
 /**
- * The continuous-integration runner installs this extension alone, so a case
- * that needs a sibling is skipped there. GitHub Actions sets CI and this lab
- * does not, so every case runs here.
+ * The continuous-integration runner installs the wheel with its core-patches
+ * extra, which brings the seven sibling extensions and the core patches, and
+ * still skips the cases marked below. GitHub Actions sets CI and this lab does
+ * not, so every case runs here.
  */
 const SIBLINGS_ABSENT =
-  'the sibling extensions are not installed on the continuous-integration runner';
+  'each case needs a sibling extension or the core patches, and none has run on the continuous-integration runner with them installed';
 
 /**
  * A document whose middle block is a GitHub alert, long enough to scroll.

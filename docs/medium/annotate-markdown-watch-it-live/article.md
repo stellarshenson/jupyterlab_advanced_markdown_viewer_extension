@@ -89,7 +89,7 @@ pip install jupyterlab-advanced-markdown-viewer-extension
 
 Right-click a `.md` file in the JupyterLab file browser, choose Open With, then Markdown Preview. That is the whole setup.
 
-That one command also brings ten more small JupyterLab extensions, each fixing one thing in Markdown handling: GitHub alert blocks that render, a table of contents that navigates, syntax colours in fenced code, export to PDF and DOCX, paste as Markdown. You get the whole family without asking for it.
+That one command also brings seven more small JupyterLab extensions, each fixing one thing in Markdown handling: GitHub alert blocks that render, export to PDF and DOCX, paste as Markdown. You get the whole family without asking for it.
 
 Source, issues and screenshots: [github.com/stellarshenson/jupyterlab_advanced_markdown_viewer_extension](https://github.com/stellarshenson/jupyterlab_advanced_markdown_viewer_extension). BSD 3-Clause, free, no telemetry.
 

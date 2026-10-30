@@ -8,7 +8,7 @@ Installing this extension no longer pulls the discrete fix packages, and a plain
 
 ### Added
 
-- The optional extra `core-patches` installs `jupyterlab_core_patches_extension`, which carries the fixes for Table of Contents navigation, scrolling when switching tabs and syntax colours: `pip install "jupyterlab_advanced_markdown_viewer_extension[core-patches]"`
+- The optional extra `core-patches` installs `jupyterlab_core_patches_extension`, which carries the fixes for Table of Contents navigation, scrolling when switching tabs and syntax colours: `pip install -U "jupyterlab_advanced_markdown_viewer_extension[core-patches]"`
 
 ### Changed
 
@@ -16,7 +16,7 @@ Installing this extension no longer pulls the discrete fix packages, and a plain
 
 ### Fixed
 
-- JupyterLab starts when this extension is installed beside `jupyterlab_core_patches_extension`. The three packages above register the same plugins, and the install used to bring them back
+- JupyterLab starts when this extension is installed beside `jupyterlab_core_patches_extension`. The three packages above register the same plugins, and the install used to bring them back. An upgrade from 1.0.38 leaves them installed, so remove them first: `pip uninstall jupyterlab_markdown_viewer_toc_fix jupyterlab_markdown_switch_tab_scrolling_fix jupyterlab_markdown_syntax_rendering_fix`
 - A plain left click on an image, an SVG or a mermaid diagram no longer turns it blue. A right click, or ctrl and left click on macOS, still selects it and opens the menu with Mark and Add Comment
 
 ## [1.0.38] - 2026-10-25

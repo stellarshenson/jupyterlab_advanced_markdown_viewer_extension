@@ -113,7 +113,7 @@ A value in any `jupyter_server_config.json` or `jupyter_server_config.py` takes 
 
 ## Requirements
 
-- JupyterLab >= 4.0.0
+- JupyterLab >= 4.0.0 and below 4.6.5, see [JupyterLab 4.6.5](#jupyterlab-465)
 
 ## Install
 
@@ -121,6 +121,17 @@ To install the extension, execute:
 
 ```bash
 pip install jupyterlab_advanced_markdown_viewer_extension
+```
+
+### JupyterLab 4.6.5
+
+On JupyterLab 4.6.5 the settings of this extension do not load, because that release rejects the
+extension's plugin id. Stored settings are ignored, the extension is missing from the Settings Editor
+and its keyboard shortcut is not registered. The stored settings file is kept. Install a version
+below 4.6.5:
+
+```bash
+pip install "jupyterlab<4.6.5"
 ```
 
 ## The Markdown suite
@@ -143,15 +154,24 @@ when the family was surveyed; none of them is imported, required or linked by th
 code, so an older one degrades rather than breaks.
 
 The optional extra `core-patches` adds `jupyterlab_core_patches_extension`, which carries the fixes
-for Table of Contents navigation, scrolling when switching tabs and syntax colours:
+for Table of Contents navigation, scrolling when switching tabs and syntax colours.
+
+If you hold `jupyterlab_markdown_viewer_toc_fix`, `jupyterlab_markdown_switch_tab_scrolling_fix` or
+`jupyterlab_markdown_syntax_rendering_fix`, remove them first, because they register the same plugins
+as the core patches and JupyterLab does not start. An upgrade from 1.0.38 leaves them installed.
+If you hold another package that the section
+[Replace the bundle and the discrete packages](https://github.com/stellarshenson/jupyterlab_core_patches_extension#replace-the-bundle-and-the-discrete-packages)
+of the project page lists, remove it too, for the same reason.
 
 ```bash
-pip install "jupyterlab_advanced_markdown_viewer_extension[core-patches]"
+pip uninstall jupyterlab_markdown_viewer_toc_fix jupyterlab_markdown_switch_tab_scrolling_fix jupyterlab_markdown_syntax_rendering_fix
 ```
 
-Do not install `jupyterlab_markdown_viewer_toc_fix`, `jupyterlab_markdown_switch_tab_scrolling_fix`
-or `jupyterlab_markdown_syntax_rendering_fix` beside it, because they register the same plugins and
-JupyterLab does not start.
+Then install the extra:
+
+```bash
+pip install -U "jupyterlab_advanced_markdown_viewer_extension[core-patches]"
+```
 
 ## Uninstall
 

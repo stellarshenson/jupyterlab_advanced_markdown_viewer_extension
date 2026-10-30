@@ -142,6 +142,14 @@ Defects in how settings are applied
   - root-cause: 2026-10-25T01:07:50Z @kj config.get returns the stored value unchanged; a scalar or a list is not a mapping, so iterating it raises
   - log: 2026-10-25T01:07:50Z @kj added
   - log: 2026-10-25T01:07:53Z @kj closed: fixed: a config section that is a scalar or a list warns once naming its type and is read as empty
+- [ ] `DEF-CONFIG-156-LAB465` **JupyterLab 4.6.5 does not load this extension's settings** - MAJOR; On JupyterLab 4.6.5 the setting registry rejects this extension's plugin id. Stored settings are ignored, the extension is missing from the Settings Editor and its keyboard shortcut is not registered. The stored settings file is kept, and JupyterLab 4.6.4 reads it.
+  - test-tags: MANUAL
+  - repro: In a clean venv install jupyterlab==4.6.5 and this extension, then run python -m jupyterlab.browser_check: it exits 1 and the log reads 'Failed to load settings for jupyterlab_advanced_markdown_viewer_extension:plugin, using defaults.'
+  - root-cause: 2026-10-30T14:33:02Z @kj fast-uri 3.1.6 and later, bundled by JupyterLab 4.6.5 as 3.1.8, throws 'URI scheme is malformed.' on the plugin id: Ajv getSchema passes jupyterlab_advanced_markdown_viewer_extension:plugin to it, and the text before the colon is read as a URI scheme that holds underscores.
+  - log: 2026-10-30T14:33:02Z @kj added
+  - log: 2026-10-30T14:33:45Z @kj The pin to jupyterlab<4.6.5 in .github/workflows covers CI only. A reader on JupyterLab 4.6.5 stays affected, and the README section under Install says so. The owner decides how this defect ends.
+  - log: 2026-10-30T14:42:38Z @kj edited test-tags added "MANUAL"
+  - log: 2026-10-30T14:43:17Z @kj edited repro "In a clean venv install jupyterlab==4.6.5 and this extension, then run python -m jupyterlab.browser_check: it exits 1 with 'i.forEach is not a function' from this plugin." -> "In a clean venv install jupyterlab==4.6.5 and this extension, then run python -m jupyterlab.browser_check: it exits 1 and the log reads 'Failed to load settings for jupyterlab_advanced_markdown_viewer_extension:plugin, using defaults.'"
 
 ## Applying external content `APPLY`
 
@@ -1321,6 +1329,15 @@ Defects in how the viewer coexists with the sibling Markdown extensions
   - root-cause: 2026-10-30T13:46:23Z @kj pyproject.toml [project] dependencies names jupyterlab_markdown_switch_tab_scrolling_fix, jupyterlab_markdown_syntax_rendering_fix and jupyterlab_markdown_viewer_toc_fix, so pip installs them with this extension, and they register the same plugin ids as jupyterlab_core_patches_extension
   - log: 2026-10-30T13:46:23Z @kj added; reason: The owner asked on 2026-10-30 to remove these dependencies and offer only the core patches as an optional dependency, because the lab does not boot with both present
   - log: 2026-10-30T13:54:23Z @kj closed
+- [x] `DEF-COMPAT-158-UPGRADE-LEFTOVERS` **An upgrade from 1.0.38 leaves the three fix packages beside the core patches** - MAJOR; pip does not remove a package an older version required, so an upgrade from 1.0.38 with the core-patches extra keeps the three discrete fix packages. JupyterLab does not start, and the README and the changelog had no step to remove them.
+  - test-tags: MANUAL
+  - evidence: tmp/ci-venv-upgrade, core patches 1.0.12 and 1.0.13: 3-browser-check-leftovers.log and 13-browser-check-leftovers.log exit 1, 7-probe.json and 12-probe.json hold 'is already registered', 5-browser-check-removed.log and 15-browser-check-removed.log exit 0 after pip uninstall of the three
+  - repro: In a fresh venv pip install 'jupyterlab<4.6.5' jupyterlab_advanced_markdown_viewer_extension==1.0.38, then pip install -U '<1.0.39 wheel>[core-patches]', then python -m jupyterlab.browser_check: it exits 1 on the #main selector, and the page error reads 'is already registered'.
+  - root-cause: 2026-10-30T14:38:07Z @kj 1.0.38 required the three fix packages and 1.0.39 does not, and pip leaves them installed. Each registers a plugin id that jupyterlab_core_patches_extension also registers, so the second registration throws during start-up.
+  - log: 2026-10-30T14:38:07Z @kj added
+  - log: 2026-10-30T14:38:09Z @kj closed: README and changelog now give the removal step
+  - log: 2026-10-30T14:42:41Z @kj edited test-tags added "MANUAL"
+  - log: 2026-10-30T15:12:33Z @kj the printed README procedure now removes the three packages first and installs with -U; proof from 1.0.38 with the core patches in tmp/ci-venv-printed: 2-printed-uninstall.log, 3-printed-install.log, 3-freeze.txt, 4-browser-check.log, steps.txt (browser_check exit 0)
 
 ## Copying rendered content `COPY`
 
@@ -1440,4 +1457,11 @@ Defects of the Galata suite itself
   - root-cause: 2026-10-30T13:21:50Z @kj withoutSibling refuses the bundle of jupyterlab_markdown_switch_tab_scrolling_fix, a bundle that is no longer installed, so its route matches nothing; the same plugin id now ships in @stellarshenson/jupyterlab-core-patches-extension with its switch on by default, and the guard stays
   - log: 2026-10-30T13:21:50Z @kj added
   - log: 2026-10-30T13:29:54Z @kj closed
+- [ ] `DEF-TEST-157-RUNNER-FIXES` **The integration tests on the runner lack the fix two cases assert** - MAJOR; Since 1.0.39 the wheel no longer brings the discrete fix packages, and the integration-tests job of the Build workflow installed the wheel with no extra. ACC-COMPAT-37 and ACC-APPLY-196 need the table-of-contents fix and neither is skipped on the runner, so the job fails on every push from 792d139.
+  - test-tags: E2E
+  - repro: In a venv with jupyterlab>=4.0.0,<4.6.5 and the 1.0.39 wheel with no extra, run jlpm playwright test -g ACC-COMPAT-37 from ui-tests: it fails at live-view.spec.ts:738 with 1500, expected below 50.
+  - root-cause: 2026-10-30T14:36:16Z @kj The table-of-contents fix is the only code that moves the viewer to a heading. It now ships only in jupyterlab_core_patches_extension through the core-patches extra, and the install line of the integration-tests job did not name that extra.
+  - log: 2026-10-30T14:36:16Z @kj added
+  - log: 2026-10-30T14:36:23Z @kj The integration-tests job now installs the core-patches extra. In a venv matching the runner, with no extra ACC-COMPAT-37 fails at live-view.spec.ts:738 and ACC-APPLY-196 at image-reload.spec.ts:539; with the extra both pass and browser_check exits 0. Only a green run on the runner closes this defect, after the owner approves a push.
+  - log: 2026-10-30T14:42:39Z @kj edited test-tags added "E2E"
 

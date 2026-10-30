@@ -22,13 +22,14 @@ jobs:
         uses: jupyterlab/maintainer-tools/.github/actions/base-setup@v1
 
       - name: Install dependencies
-        run: python -m pip install -U "jupyterlab>=4.0.0,<5"
+        # JupyterLab 4.6.5 bundles fast-uri 3.1.8, which rejects plugin ids with an underscore before the colon.
+        run: python -m pip install -U "jupyterlab>=4.0.0,<4.6.5"
 
       - name: Install extension
         run: |
           set -eux
           jlpm
-          python -m pip install .
+          python -m pip install ".[core-patches]"
 
       - uses: jupyterlab/maintainer-tools/.github/actions/update-snapshots@v1
         with:
