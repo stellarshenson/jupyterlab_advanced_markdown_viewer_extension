@@ -14,8 +14,9 @@ import {
  * Integration tests against the sibling Markdown extensions of this lab.
  *
  * The lab these tests run in has the whole family installed - the GitHub
- * alerts renderer, the colourful tabs, the table-of-contents fix, the
- * switch-tab scrolling fix, edit at content - so these are the siblings
+ * alerts renderer, the colourful tabs, edit at content and the core patches
+ * extension, which now ships the table-of-contents fix and the switch-tab
+ * scrolling fix - so these are the siblings
  * themselves rather than a stand-in for them. Only the motion of the
  * table-of-contents fix is stood in for, and for the reason the live-view
  * suite already gives: its trigger is the URL hash, which this lab rewrites
@@ -806,67 +807,69 @@ test.describe('the switch-tab scrolling fix sibling', () => {
   }
 
   /**
-   * Take the switch-tab scrolling fix out of the lab: its bundle is refused,
-   * so JupyterLab starts without that plugin and nothing marks a widget.
+   * The settings of a lab without the switch-tab scrolling fix. The core patches
+   * extension carries that fix and reads this switch when it activates, so with
+   * the switch off it installs no guard and nothing marks a widget. Its other
+   * nine patches stay on.
    */
-  async function withoutSibling(page: any): Promise<void> {
-    await page.route(
-      /jupyterlab_markdown_switch_tab_scrolling_fix\/static\/.*\.js/,
-      (route: any) => route.abort()
-    );
-    await page.reload();
-    await page.locator('#jupyterlab-splash').waitFor({ state: 'detached' });
-    await page.locator('#main').waitFor();
-  }
+  const withoutSibling = {
+    ...settings(),
+    '@stellarshenson/jupyterlab-core-patches-extension:plugin': {
+      jupyterlab_markdown_switch_tab_scrolling_fix: false
+    }
+  };
 
-  test('DEF-COMPAT-43 keeps the place in an unguarded image document however recently its tab came to the front', async ({
-    page,
-    tmpPath
-  }) => {
-    await withoutSibling(page);
-    const path = `${tmpPath}/${FILE}`;
-    await page.contents.uploadContent(
-      PICTURE,
-      'base64',
-      `${tmpPath}/picture.png`
-    );
-    await page.contents.uploadContent(IMAGED, 'text', path);
-    await page.contents.uploadContent(INITIAL, 'text', `${tmpPath}/other.md`);
-    await openPreview(page, path, 'Paragraph 1 of the report');
-    await openPreview(page, `${tmpPath}/other.md`);
-    await activateTab(page, FILE);
-    await page.locator('.jp-RenderedMarkdown:visible').hover();
-    await page.mouse.wheel(0, 1000);
-    await expect
-      .poll(async () => (await currentWidgetState(page)).scrollTop)
-      .toBeGreaterThan(500);
-    await page.waitForTimeout(3500);
-    const parked = (await currentWidgetState(page)).scrollTop;
+  test.describe('turned off', () => {
+    test.use({ mockSettings: withoutSibling });
 
-    // Back to the tab and a change straight after it. Nobody holds the
-    // position: the render reloads the picture and the text collapses under
-    // the reader for a moment, and the viewer must put them back rather
-    // than stand aside on a timer because the tab just came to the front.
-    await activateTab(page, 'other.md');
-    await activateTab(page, FILE);
-    expect((await currentWidgetState(page)).guarded).toBe(false);
-    await page.contents.uploadContent(
-      `${IMAGED}\n${FIRST_MARKER}\n`,
-      'text',
-      path
-    );
-    await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
-      FIRST_MARKER,
-      { timeout: 20000 }
-    );
-    await expect
-      .poll(async () => (await currentWidgetState(page)).scrollTop, {
-        timeout: 3000
-      })
-      .toBe(parked);
-    // And it stays there once the viewer's own render has run as well.
-    await page.waitForTimeout(2500);
-    expect((await currentWidgetState(page)).scrollTop).toBe(parked);
+    test('DEF-COMPAT-43 keeps the place in an unguarded image document however recently its tab came to the front', async ({
+      page,
+      tmpPath
+    }) => {
+      const path = `${tmpPath}/${FILE}`;
+      await page.contents.uploadContent(
+        PICTURE,
+        'base64',
+        `${tmpPath}/picture.png`
+      );
+      await page.contents.uploadContent(IMAGED, 'text', path);
+      await page.contents.uploadContent(INITIAL, 'text', `${tmpPath}/other.md`);
+      await openPreview(page, path, 'Paragraph 1 of the report');
+      await openPreview(page, `${tmpPath}/other.md`);
+      await activateTab(page, FILE);
+      await page.locator('.jp-RenderedMarkdown:visible').hover();
+      await page.mouse.wheel(0, 1000);
+      await expect
+        .poll(async () => (await currentWidgetState(page)).scrollTop)
+        .toBeGreaterThan(500);
+      await page.waitForTimeout(3500);
+      const parked = (await currentWidgetState(page)).scrollTop;
+
+      // Back to the tab and a change straight after it. Nobody holds the
+      // position: the render reloads the picture and the text collapses under
+      // the reader for a moment, and the viewer must put them back rather
+      // than stand aside on a timer because the tab just came to the front.
+      await activateTab(page, 'other.md');
+      await activateTab(page, FILE);
+      expect((await currentWidgetState(page)).guarded).toBe(false);
+      await page.contents.uploadContent(
+        `${IMAGED}\n${FIRST_MARKER}\n`,
+        'text',
+        path
+      );
+      await expect(page.locator('.jp-RenderedMarkdown:visible')).toContainText(
+        FIRST_MARKER,
+        { timeout: 20000 }
+      );
+      await expect
+        .poll(async () => (await currentWidgetState(page)).scrollTop, {
+          timeout: 3000
+        })
+        .toBe(parked);
+      // And it stays there once the viewer's own render has run as well.
+      await page.waitForTimeout(2500);
+      expect((await currentWidgetState(page)).scrollTop).toBe(parked);
+    });
   });
 
   test('stands aside exactly as long as the sibling guard holds', async ({

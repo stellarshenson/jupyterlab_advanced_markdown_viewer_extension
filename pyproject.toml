@@ -34,15 +34,17 @@ dependencies = [
     "jupyterlab_export_markdown_extension>=1.6.28",
     "jupyterlab_github_markdown_alerts_extension>=1.0.25",
     "jupyterlab_markdown_insert_content_extension>=1.1.28",
-    "jupyterlab_markdown_switch_tab_scrolling_fix>=1.0.18",
-    "jupyterlab_markdown_syntax_rendering_fix>=1.0.2",
-    "jupyterlab_markdown_viewer_toc_fix>=1.0.15",
     "jupyterlab_paste_content_as_markdown_extension>=1.0.8",
     "jupyterlab_refresh_view_extension>=1.2.33"
 ]
 dynamic = ["version", "description", "authors", "urls", "keywords"]
 
 [project.optional-dependencies]
+# Carries the Markdown viewer fixes. Never install the discrete fix packages beside
+# it: they register the same plugin ids and JupyterLab does not start.
+core-patches = [
+    "jupyterlab_core_patches_extension>=1.0.12",
+]
 dev = [
     "jupyterlab>=4",
     "jupyter-builder>=1.2.0",

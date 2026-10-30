@@ -4982,7 +4982,7 @@ test.describe('the first note of a long document', () => {
         .querySelector('.jp-MarkdownViewer .jp-RenderedMarkdown')!
         .getBoundingClientRect();
       const passage = document
-        .querySelector('[data-mark]')!
+        .querySelector('.jp-MarkdownViewer .jp-RenderedMarkdown [data-mark]')!
         .getBoundingClientRect();
       return {
         view: [view.top, view.bottom],
@@ -5242,14 +5242,20 @@ test.describe('a note on a drawn diagram (ACC-NOTES-182)', () => {
     ).toHaveCount(0);
   });
 
-  test('leaves the keyboard shortcut working after a press on the picture', async ({
+  test('marks the selected diagram by the keyboard shortcut after the right press menu closes', async ({
     page,
     tmpPath
   }) => {
-    // The press takes none of the browser's own answer to it, which is what
-    // puts the focus in the viewer the shortcut is bound to.
+    // The right press is the one that selects the picture; closing its menu
+    // leaves that selection in place, and the focus is put back on the
+    // viewer the shortcut is bound to.
     const box = (await picture(page).boundingBox())!;
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await openMenu(page, {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2
+    });
+    await closeMenus(page);
+    await page.locator('.jp-MarkdownViewer:visible').focus();
     await expect(page.locator('.jp-AdvancedMd-selecting')).toHaveCount(1);
 
     await page.keyboard.press('Control+Shift+M');
@@ -5266,7 +5272,12 @@ test.describe('a note on a drawn diagram (ACC-NOTES-182)', () => {
     page
   }) => {
     const box = (await picture(page).boundingBox())!;
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await openMenu(page, {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2
+    });
+    await closeMenus(page);
+    await page.locator('.jp-MarkdownViewer:visible').focus();
     await expect(page.locator('.jp-AdvancedMd-selecting')).toHaveCount(1);
     await page.keyboard.press('Control+Shift+M');
     await mark(page, 'cherries');
@@ -5529,6 +5540,64 @@ test.describe('a note on an image (ACC-NOTES-215-IMAGE-NOTE)', () => {
     for (const ratio of ratios) {
       expect(ratio).toBeGreaterThanOrEqual(3);
     }
+  });
+
+  test('DEF-NOTES-153-PRESS-PAINT leaves the selection collapsed after a plain left click on an image and a diagram', async ({
+    page,
+    tmpPath
+  }) => {
+    await page.contents.uploadContent(PNG, 'base64', `${tmpPath}/dot.png`);
+    const target = `${tmpPath}/${FILE}`;
+    await page.contents.uploadContent(
+      [
+        '# Report',
+        '',
+        'The first paragraph is unchanged.',
+        '',
+        '![raster dot](dot.png)',
+        '',
+        '```mermaid',
+        'graph TD',
+        '  Alpha[Start here] --> Beta[End here]',
+        '```',
+        '',
+        'The last paragraph mentions cherries and figs.',
+        ''
+      ].join('\n'),
+      'text',
+      target
+    );
+    await openPreview(page, target);
+
+    const image = page.locator(
+      '.jp-RenderedMarkdown:visible img[alt="raster dot"]'
+    );
+    await expect
+      .poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth))
+      .toBe(40);
+    const diagram = page.locator(
+      '.jp-RenderedMarkdown:visible .jp-RenderedMermaid'
+    );
+    await expect(diagram.locator('img')).toHaveCount(1);
+
+    // A plain left click writes no selection of its own, over a picture or
+    // over a diagram.
+    for (const pressed of [image, diagram]) {
+      await pressed.click();
+      expect(
+        await page.evaluate(() => window.getSelection()!.isCollapsed)
+      ).toBe(true);
+      await expect(page.locator('.jp-AdvancedMd-selecting')).toHaveCount(0);
+    }
+
+    // The right click that opens the menu still selects the picture, and the
+    // menu still offers the note.
+    const box = (await image.boundingBox())!;
+    await openMenu(page, {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2
+    });
+    await expect(entry(page, 'Add Comment')).toBeVisible();
   });
 
   test('ACC-NOTES-215-IMAGE-NOTE writes a note on an image with no alternative text and on one whose file name holds brackets, after an alert', async ({

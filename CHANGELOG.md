@@ -2,6 +2,23 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.39] - 2026-10-30
+
+Installing this extension no longer pulls the discrete fix packages, and a plain click on a picture or a diagram paints no selection.
+
+### Added
+
+- The optional extra `core-patches` installs `jupyterlab_core_patches_extension`, which carries the fixes for Table of Contents navigation, scrolling when switching tabs and syntax colours: `pip install "jupyterlab_advanced_markdown_viewer_extension[core-patches]"`
+
+### Changed
+
+- The install brings seven more extensions instead of ten: `jupyterlab_markdown_switch_tab_scrolling_fix`, `jupyterlab_markdown_syntax_rendering_fix` and `jupyterlab_markdown_viewer_toc_fix` are no longer dependencies
+
+### Fixed
+
+- JupyterLab starts when this extension is installed beside `jupyterlab_core_patches_extension`. The three packages above register the same plugins, and the install used to bring them back
+- A plain left click on an image, an SVG or a mermaid diagram no longer turns it blue. A right click, or ctrl and left click on macOS, still selects it and opens the menu with Mark and Add Comment
+
 ## [1.0.38] - 2026-10-25
 
 The settings editor keeps four settings, the tuning values move to the Jupyter server configuration, and a reader can put a note on an image.

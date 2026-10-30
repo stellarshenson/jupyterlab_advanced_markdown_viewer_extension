@@ -1707,18 +1707,27 @@ export class NotesController implements IDisposable {
   }
 
   /**
+   * Whether a press can open the context menu: the right button, or the left
+   * one with ctrl, which macOS turns into a context menu.
+   */
+  private _opensMenu(event: MouseEvent): boolean {
+    return event.button === 2 || (event.button === 0 && event.ctrlKey);
+  }
+
+  /**
    * Select a drawn diagram or a picture the reader presses on.
    *
    * A picture holds no words, so a drag across one selects nothing: the
-   * browser starts to drag the picture instead. A press puts the selection
-   * over the whole block, which is the unit a note goes on, and it is the
-   * press rather than the click so the context menu a right button opens is
-   * offered the selection its Mark entry needs (ACC-NOTES-182). Any other
-   * picture is selected as the one node it is, which the record reads as
-   * that picture, and it replaces a text selection the right button would
-   * leave standing elsewhere (ACC-NOTES-215). The press selects whether or
-   * not the diagram or the picture is already marked, as a press on a
-   * painted passage does; the note on it is read from its row in the panel.
+   * browser starts to drag the picture instead. A press that opens the
+   * context menu puts the selection over the whole block, which is the unit
+   * a note goes on, and it is the press rather than the click so the context
+   * menu a right button opens is offered the selection its Mark entry needs
+   * (ACC-NOTES-182). Any other picture is selected as the one node it is,
+   * which the record reads as that picture, and it replaces a text selection
+   * the right button would leave standing elsewhere (ACC-NOTES-215). The
+   * press selects whether or not the diagram or the picture is already
+   * marked, as a press on a painted passage does; the note on it is read
+   * from its row in the panel.
    *
    * The browser's own answer to the press is left alone. It focuses the
    * viewer, which the marking shortcut's selector needs, and it lets the
@@ -1732,6 +1741,10 @@ export class NotesController implements IDisposable {
    */
   private _onMouseDown = (event: MouseEvent): void => {
     if (!this._settings.notes) {
+      return;
+    }
+    // A plain left press paints nothing: only the menu reads this selection.
+    if (!this._opensMenu(event)) {
       return;
     }
     const root = this._root;

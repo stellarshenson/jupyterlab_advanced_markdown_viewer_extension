@@ -1224,6 +1224,15 @@ Marks, note lines and the notes panel
   - root-cause: 2026-10-25T03:41:30Z @kj the angle-bracket arm /\(<([^<>\n]*)>\)\s*$/ demands ")" right after ">", so the pattern falls through every arm and names no file
   - log: 2026-10-25T03:41:30Z @kj added
   - log: 2026-10-25T03:41:41Z @kj closed: fixed: the angle-bracket arm passes over an optional quoted title, so the row keeps the whole file name
+- [x] `DEF-NOTES-153-PRESS-PAINT` **a left click on a picture or a diagram paints the selection** - MINOR; a left click on a picture, an .svg image or a mermaid diagram paints the browser selection over it; right click still offers Add Comment and Mark; cause: _onMouseDown writes the selection on every mouse button; fix: gate it on the press that opens the menu; `src/notes.ts`
+  - evidence: jest left-press cases notes.spec:813 'leaves a left press on the picture alone' and :1054 'selects the one picture from the right press the menu needs, and leaves a left press alone' PASS, 1130/1130, logs/test-selection-paint-fix.log; Galata DEF-NOTES-153-PRESS-PAINT left-click image and diagram case PASS, notes 137/137, logs/galata-selection-paint-notes-final.log, logs/galata-selection-paint-153-correct.log
+  - repro: left click a picture, an .svg image, an img tag or a mermaid diagram in the rendered preview; the selection paints blue over it; right click still opens Add Comment and Mark
+  - test-tags: E2E
+  - root-cause: 2026-10-30T09:35:42Z @kj _onMouseDown writes the picture range, or selectAllChildren over the diagram, on every press whatever the button; only the right press that opens the context menu needs it
+  - log: 2026-10-30T09:35:42Z @kj added
+  - log: 2026-10-30T09:41:38Z @kj gated _onMouseDown to the press that opens the context menu: right or ctrl-left selects the picture or diagram, plain left writes none; jest 1130 and pytest 75 green; new left-press Galata case failed on 1.0.38, unit case is the pin
+  - log: 2026-10-30T10:25:35Z @kj closed: fixed: a plain left press writes no picture selection and no diagram selectAllChildren; only the press that opens the context menu, the right button or ctrl-left, writes one
+  - log: 2026-10-30T10:25:41Z @kj test locator: the DEF-NOTES-51 passage-in-view case failed on its unscoped document.querySelector('[data-mark]'), because jupyterlab_bookmarks_manager_extension's hidden side panel (data-mark='brand', display:none) matches first; scoped the locator to '.jp-MarkdownViewer .jp-RenderedMarkdown [data-mark]'; notes suite 137 passed, 0 failed
 
 ## Change detection `DETECT`
 
@@ -1289,6 +1298,7 @@ Defects in how the viewer coexists with the sibling Markdown extensions
   - log: 2026-09-08T09:49:29Z @kj edited test-tags (added)
   - log: 2026-09-08T10:13:11Z @kj edited text and repro (replaced)
   - log: 2026-09-08T11:38:21Z @kj closed
+  - log: 2026-10-30T13:26:00Z @kj Galata case changed by DEF-TEST-154-UNGUARDED-HELPER: withoutSibling is now settings that set jupyterlab_markdown_switch_tab_scrolling_fix to false for this case alone, and the route that refused the bundle is retired; the case passes 3 of 3 and the siblings suite 9 of 9
 - [-] `DEF-COMPAT-98` **Copy as PNG and Save as PNG are not usable on a graphic in the Markdown Preview** - CRITICAL; reported by the Star Colonel on 2026-09-13: the SVG export extension's Copy as PNG and Save as PNG entries no longer work on a graphic shown in the Markdown Preview, a mermaid diagram included. That extension registers both entries on the .jp-RenderedSVG, .jp-RenderedHTMLCommon and .jp-ImageViewer selectors at ranks 10 and 11, and the rendered Markdown root carries .jp-RenderedHTMLCommon, so the entries are expected on every preview. This extension adds its own entries on .jp-MarkdownViewer .jp-RenderedMarkdown at ranks 20 and 25, repaints marks inside the rendered root and re-renders the preview whenever the file changes, so either the entries are absent from the menu or the graphic the sibling resolves on the click is a node this extension replaced. Filed on the report before the cause is known; reject it if the browser shows both entries working
   - repro: Open a Markdown file holding a mermaid diagram or an inline SVG with Open With, Markdown Preview. Right-click the diagram. Expected: Copy as PNG and Save as PNG in the menu, both acting on the diagram. Observed by the reporter: the copy or save does not work
   - test-tags: FUNCTIONAL
@@ -1304,6 +1314,13 @@ Defects in how the viewer coexists with the sibling Markdown extensions
   - log: 2026-09-15T08:35:13Z @kj edited test-tags (added)
   - log: 2026-09-20T14:41:25Z @kj seen again on the 2026-09-20 build carrying ACC-NOTES-180, the same 1672 px jump; run alone with --repeat-each=3 it failed once and passed twice, so it stands intermittent as recorded and is not a regression of that work, which paints only unanchored marks and this case has none (logs/galata-180d-full.log, logs/galata-180e-probe.log)
   - log: 2026-09-23T22:07:19Z @kj closed
+- [x] `DEF-COMPAT-155-FIX-DEPENDENCY` **Installing this extension pulls discrete fix packages that stop the lab booting beside core patches** - MAJOR; pip install of this extension pulls three discrete fix packages. jupyterlab_core_patches_extension ships the same fixes and registers the same plugin ids, so the lab stops booting when both are present, with TypeError: Plugin 'jupyterlab_markdown_switch_tab_scrolling_fix:plugin' is already registered
+  - evidence: 1.0.39 wheel METADATA (zipfile): none of the four fix packages, core patches only under extra == 'core-patches'; pip --dry-run with [core-patches]: exit 0, would-install empty; installed 1.0.39 Galata: logs/galata-release-1.0.39-compat-menu.log 3 passed, -settings.log 4 passed, -siblings.log 9 passed, 0 failed
+  - repro: with jupyterlab_core_patches_extension installed, pip install this extension and start JupyterLab: the lab stops booting with TypeError: Plugin 'jupyterlab_markdown_switch_tab_scrolling_fix:plugin' is already registered
+  - test-tags: UNIT
+  - root-cause: 2026-10-30T13:46:23Z @kj pyproject.toml [project] dependencies names jupyterlab_markdown_switch_tab_scrolling_fix, jupyterlab_markdown_syntax_rendering_fix and jupyterlab_markdown_viewer_toc_fix, so pip installs them with this extension, and they register the same plugin ids as jupyterlab_core_patches_extension
+  - log: 2026-10-30T13:46:23Z @kj added; reason: The owner asked on 2026-10-30 to remove these dependencies and offer only the core patches as an optional dependency, because the lab does not boot with both present
+  - log: 2026-10-30T13:54:23Z @kj closed
 
 ## Copying rendered content `COPY`
 
@@ -1416,4 +1433,11 @@ Defects of the Galata suite itself
   - log: 2026-10-24T00:51:58Z @kj added; reason: the root cause names the server call, the predicate and the second read
   - log: 2026-10-24T01:04:33Z @kj fix (review r4, change 3): fileWhen returns the read its predicate held on, not a second read; the 9 predicates an empty read satisfied (8 negations and one count of 0) now also require text the file keeps, so an empty read satisfies none of the 91 (r4/empty-read.out); r4/fix-3.patch; reason: names the helper change, the nine predicates, the check and the patch
   - log: 2026-10-24T01:04:35Z @kj closed: closed
+- [x] `DEF-TEST-154-UNGUARDED-HELPER` **DEF-COMPAT-43 case keeps the scroll guard after the discrete fix extensions were removed** - MINOR; The Galata case for DEF-COMPAT-43 in ui-tests/tests/siblings.spec.ts needs a lab without the scroll guard; since the discrete fix extensions were uninstalled on 2026-10-30 the guard stays on, so the precondition at line 852 fails before the viewer behaviour runs
+  - evidence: Case DEF-COMPAT-43 at ui-tests/tests/siblings.spec.ts:824 passes alone (logs/galata-selection-paint-def-compat-43-restored.log) and in the suite, 9 of 9 (logs/galata-selection-paint-siblings.log); with the original helper restored it fails at line 852, received true (logs/galata-selection-paint-def-compat-43-mutation.log)
+  - repro: From ui-tests run JUPYTER_TEST_PORT=8972 jlpm playwright test -c ../tmp/galata/local.config.js tests/siblings.spec.ts -g DEF-COMPAT-43: line 852 expects guarded false and receives true, 3 of 3 runs
+  - test-tags: E2E
+  - root-cause: 2026-10-30T13:21:50Z @kj withoutSibling refuses the bundle of jupyterlab_markdown_switch_tab_scrolling_fix, a bundle that is no longer installed, so its route matches nothing; the same plugin id now ships in @stellarshenson/jupyterlab-core-patches-extension with its switch on by default, and the guard stays
+  - log: 2026-10-30T13:21:50Z @kj added
+  - log: 2026-10-30T13:29:54Z @kj closed
 

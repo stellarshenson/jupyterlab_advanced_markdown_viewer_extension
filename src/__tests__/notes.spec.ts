@@ -522,11 +522,12 @@ function trackingSelection(): () => Node | null {
 }
 
 /** Press a mouse button on a node, as the reader does on a picture. */
-function press(node: Node, button = 0): MouseEvent {
+function press(node: Node, button = 0, ctrlKey = false): MouseEvent {
   const event = new MouseEvent('mousedown', {
     bubbles: true,
     cancelable: true,
-    button
+    button,
+    ctrlKey
   });
   node.dispatchEvent(event);
   return event;
@@ -810,23 +811,22 @@ describe('NotesController', () => {
   });
 
   describe('a drawn diagram (ACC-NOTES-182)', () => {
-    it('selects the whole diagram when the reader presses on the picture', async () => {
+    it('leaves a left press on the picture alone, as it selects nothing', async () => {
       const h = open(DIAGRAM);
       await ready();
       h.render(DIAGRAM_HTML);
       const selected = trackingSelection();
-      const block = h.root.querySelector('.jp-RenderedMermaid');
 
-      // A picture holds no words, so a drag across one selects nothing: the
-      // browser drags the picture instead. The press answers that.
+      // A picture holds no words, so a drag across one selects nothing, and
+      // a plain left press is left alone with it.
       const event = press(h.root.querySelector('img')!);
 
-      expect(selected()).toBe(block);
+      expect(selected()).toBeNull();
+      expect(window.getSelection()!.isCollapsed).toBe(true);
+      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(false);
       // The browser's own answer to the press is left alone: it focuses the
       // viewer, which the marking shortcut's selector needs.
       expect(event.defaultPrevented).toBe(false);
-      document.dispatchEvent(new Event('selectionchange'));
-      expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
     });
 
     it('selects from a right press too, which is what opens the menu', async () => {
@@ -836,6 +836,18 @@ describe('NotesController', () => {
       const selected = trackingSelection();
 
       const event = press(h.root.querySelector('img')!, 2);
+
+      expect(selected()).toBe(h.root.querySelector('.jp-RenderedMermaid'));
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it('selects from a left press with ctrl too, which opens the menu', async () => {
+      const h = open(DIAGRAM);
+      await ready();
+      h.render(DIAGRAM_HTML);
+      const selected = trackingSelection();
+
+      const event = press(h.root.querySelector('img')!, 0, true);
 
       expect(selected()).toBe(h.root.querySelector('.jp-RenderedMermaid'));
       expect(event.defaultPrevented).toBe(false);
@@ -858,7 +870,7 @@ describe('NotesController', () => {
       await ready();
       h.render(DIAGRAM_HTML);
       trackingSelection();
-      press(h.root.querySelector('img')!);
+      press(h.root.querySelector('img')!, 2);
       document.dispatchEvent(new Event('selectionchange'));
 
       const id = await h.controller.mark('yellow');
@@ -1046,33 +1058,68 @@ describe('NotesController', () => {
       root.querySelector(`img[alt="${alt}"]`)!;
 
     /** Press on a picture and let the browser report the selection. */
-    const pressOn = (image: HTMLImageElement, button = 2): MouseEvent => {
-      const event = press(image, button);
+    const pressOn = (
+      image: HTMLImageElement,
+      button = 2,
+      ctrlKey = false
+    ): MouseEvent => {
+      const event = press(image, button, ctrlKey);
       document.dispatchEvent(new Event('selectionchange'));
       return event;
     };
 
-    it('selects the one picture from a left or a right press, as the menu needs', async () => {
-      for (const button of [0, 2]) {
+    it('selects the one picture from the right press the menu needs, and leaves a left press alone', async () => {
+      for (const [alt] of FORMS) {
         const h = open(PICTURES);
         await ready();
         h.render(drawn(PICTURES));
         trackingSelection();
-        for (const [alt] of FORMS) {
-          const image = picture(h.root, alt);
-          const event = pressOn(image, button);
+        const image = picture(h.root, alt);
+        const event = pressOn(image, 2);
 
-          // The press leaves the browser's own answer alone, as the press on
-          // a diagram does, and the range holds the picture and nothing else.
-          expect(event.defaultPrevented).toBe(false);
-          const range = window.getSelection()!.getRangeAt(0);
-          expect(range.startContainer.childNodes[range.startOffset]).toBe(
-            image
-          );
-          expect(range.endOffset).toBe(range.startOffset + 1);
-          expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
-          expect(h.controller.selection).not.toBeNull();
-        }
+        // The press leaves the browser's own answer alone, as the press on
+        // a diagram does, and the range holds the picture and nothing else.
+        expect(event.defaultPrevented).toBe(false);
+        const range = window.getSelection()!.getRangeAt(0);
+        expect(range.startContainer.childNodes[range.startOffset]).toBe(image);
+        expect(range.endOffset).toBe(range.startOffset + 1);
+        expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
+        expect(h.controller.selection).not.toBeNull();
+      }
+
+      for (const [alt] of FORMS) {
+        const h = open(PICTURES);
+        await ready();
+        h.render(drawn(PICTURES));
+        trackingSelection();
+        const event = pressOn(picture(h.root, alt), 0);
+
+        // A plain left press writes no selection, so nothing is painted and
+        // the controller has nothing to mark.
+        expect(event.defaultPrevented).toBe(false);
+        expect(window.getSelection()!.isCollapsed).toBe(true);
+        expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(false);
+        expect(h.controller.selection).toBeNull();
+      }
+    });
+
+    it('selects the one picture from a left press with ctrl too', async () => {
+      for (const [alt] of FORMS) {
+        const h = open(PICTURES);
+        await ready();
+        h.render(drawn(PICTURES));
+        trackingSelection();
+        const image = picture(h.root, alt);
+        const event = pressOn(image, 0, true);
+
+        // Ctrl+left opens the menu on macOS, so the press carries the one
+        // picture the menu's Mark entry reads.
+        expect(event.defaultPrevented).toBe(false);
+        const range = window.getSelection()!.getRangeAt(0);
+        expect(range.startContainer.childNodes[range.startOffset]).toBe(image);
+        expect(range.endOffset).toBe(range.startOffset + 1);
+        expect(h.widget.node.classList.contains(SELECTING_CLASS)).toBe(true);
+        expect(h.controller.selection).not.toBeNull();
       }
     });
 
