@@ -757,10 +757,12 @@ The live update keeps the other Stellars Markdown extensions working; survey of 
   - log: 2026-09-13T10:58:43Z @kj closed
   - log: 2026-09-13T19:18:14Z @kj edited test (replaced) and evidence (replaced)
   - log: 2026-09-13T23:05:37Z @kj edited text and evidence (replaced)
-- [ ] `ACC-COMPAT-216-NEWEST-LAB` **The extension works on the newest JupyterLab 4.x with no version cap** - HIGH; CI installs jupyterlab>=4.0.0,<5 with no cap below the newest release. On JupyterLab 4.6.5 this extension's settings load from the server, a saved value survives a page reload and takes effect, and the Settings Editor lists the extension. The console has no URI scheme or forEach failure naming this plugin.
+- [x] `ACC-COMPAT-216-NEWEST-LAB` **The extension works on the newest JupyterLab 4.x with no version cap** - HIGH; CI installs jupyterlab>=4.0.0,<5 with no cap below the newest release. On JupyterLab 4.6.5 this extension's settings load from the server, a saved value survives a page reload and takes effect, and the Settings Editor lists the extension. The console has no URI scheme or forEach failure naming this plugin.
+  - evidence: Build run 41206387362 on 59592cf green with jupyterlab 4.6.5: browser_check passed on the plain install, labextension listed under the scoped name, Integration tests 223 passed, 10 skipped
   - test: Galata settings.spec, the case with mockSettings false, on JupyterLab 4.6.5 through the bubblewrap sandbox; grep of .github/workflows finds no jupyterlab cap below 5
   - test-tags: E2E
   - log: 2026-10-30T16:26:19Z @kj added
+  - log: 2026-10-31T13:59:21Z @kj closed
 - [x] `ACC-COMPAT-217-SETTINGS-CARRY` **Saved settings carry over once from the old settings folder** - HIGH; At server extension load, plugin.jupyterlab-settings in the folder of the old plugin id under LabApp.user_settings_dir is copied to the folder of the scoped name when the new file is absent and the old one exists. The old file stays. A failure logs a warning and the server starts.
   - evidence: logs/test-lab465.log: the 5 cases of test_saved_settings.py passed, one on a real lab server. logs/upg-lab465-labext.log and logs/upg-lab465-server.log: upgrade on 4.6.5; new file byte-identical to the old, stamped at extension load, old sha256 1264b4f50a37 unchanged. Code read: writes the new path only when absent, catches OSError
   - test: pytest test_saved_settings.py: copied once, an existing new file not overwritten, no old file does nothing, a failure logs a warning, a real lab server copies in the folder it is configured with

@@ -2,7 +2,7 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
-## [Unreleased]
+## [1.0.40] - 2026-10-31
 
 The extension works on JupyterLab 4.6.5, the npm package has a new name, and six sibling extensions move to an optional extra.
 
