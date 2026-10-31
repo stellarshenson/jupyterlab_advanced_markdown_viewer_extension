@@ -776,6 +776,22 @@ The live update keeps the other Stellars Markdown extensions working; survey of 
   - test-tags: UNIT
   - log: 2026-10-30T21:50:57Z @kj added
   - log: 2026-10-30T22:43:15Z @kj closed
+- [x] `ACC-COMPAT-219-SIBLING-FLOORS` **The floors of the markdown-suite extra take a scoped release of each sibling** - MEDIUM; Each of the six floors in the markdown-suite extra of pyproject.toml is a release of that sibling whose labextension name is scoped, so that pip install -U of this extension with the extra moves a holder of an older sibling to a scoped release
+  - evidence: On JupyterLab 4.6.5 with each sibling at its last underscored release, pip install -U of the new wheel with [core-patches,markdown-suite] moved colourful tab 1.1.25 to 1.1.29, edit at content 1.0.24 to 1.0.27, export 1.6.31 to 1.6.33, alerts 1.0.27 to 1.0.30, insert content 1.1.31 to 1.1.33 and refresh view 1.2.33 to 1.2.35, and all six labextension names are scoped, logs/venv-sibling-floors-upgrade.log. With each sibling pinned exactly at its floor, logs/venv-sibling-floors-exact.log, python -m jupyterlab.browser_check exits 0 with no failure line, logs/ci-check-sibling-floors.log. The floors are measured from the wheels, tmp/workflows/sibling-floors/measured.json. make test exit 0, jest 1132 of 1132, pytest 86 passed, logs/test-sibling-floors.log
+  - test: Fresh venv on JupyterLab 4.6.5 with each sibling at its last underscored release: pip install -U the wheel with [core-patches,markdown-suite], then all six labextension names are scoped. Second fresh venv on JupyterLab 4.6.5 with each sibling pinned exactly at its floor: python -m jupyterlab.browser_check exits 0
+  - test-tags: FUNCTIONAL
+  - log: 2026-10-31T15:47:50Z @kj added
+  - log: 2026-10-31T15:53:22Z @kj closed; reason: The evidence names the six measured moves and the logs that hold them
+  - log: 2026-10-31T16:10:49Z @kj settings measured on JupyterLab 4.6.5: at the floors 0 settings failures in the console and all six siblings in the Settings Editor, 43 entries; in a venv holding only edit at content 1.0.24 and colourful tab 1.1.25, both underscored, 6 forEach warnings, neither in the Settings Editor, 35 entries; browser_check exit 0 separates only 4 of the 6; probe, output and rerun note in tmp/workflows/sibling-floors/settings-probe/; reason: browser_check exit 0 in the closure does not prove the settings of edit at content and colourful tab
+  - log: 2026-10-31T16:24:49Z @kj the floor releases load settings; a file saved under the old name is not read, 6 of 6, unless stellars_jupyterlab_extensions copies it at server start, proofs in tmp/workflows/sibling-floors/settings-probe/saved-settings/
+  - log: 2026-10-31T16:46:29Z @kj on Python 3.10 the extra at these floors keeps the viewer on 1.0.40 with pip exit 0, measured in a Python 3.10.20 venv, logs in tmp/workflows/sibling-floors/python310/; README and CHANGELOG state it
+  - log: 2026-10-31T18:52:21Z @kj the Python 3.10 limit logged earlier is superseded, this extension requires Python 3.11 or newer
+- [x] `ACC-COMPAT-220-PYTHON-FLOOR` **This extension requires Python 3.11 or newer** - MEDIUM; This extension requires Python 3.11 or newer; pip on Python 3.10 refuses a release that holds it
+  - evidence: Python 3.10.20: pip install of the wheel exits 1, requires a different Python, logs/venv-py310.log. Python 3.11.14, JupyterLab 4.6.5: pip install -U with both extras exits 0, all six names scoped, logs/venv-py311.log; browser_check exits 0, logs/ci-check-py311.log; pytest 86 passed, logs/pytest-py311.log
+  - test: Fresh Python 3.10 venv: pip install of the wheel exits 1 naming the Python requirement. Fresh Python 3.11 venv on JupyterLab 4.6.5, siblings at their last underscored releases: pip install -U of the wheel with both extras exits 0, all six names scoped, browser_check exits 0, pytest passes
+  - test-tags: FUNCTIONAL
+  - log: 2026-10-31T18:51:59Z @kj added
+  - log: 2026-10-31T18:52:09Z @kj closed
 
 ## Comments `NOTES`
 

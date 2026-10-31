@@ -4,10 +4,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Requires Python 3.11 or newer, because the export sibling at its floor cannot install on Python 3.10
+
 ### Fixed
 
 - A file removed while the viewer reads it no longer leaves a traceback in the server log, and its tab is marked missing without a second read
 - The tab tooltip says the file is gone from disk or cannot be read. It said gone from disk for a file that is on disk and is not UTF-8
+- Upgrading with the `markdown-suite` extra also moves older sibling extensions to the releases that load settings on JupyterLab 4.6.5. Settings saved under the old name stay on disk unread, unless `stellars_jupyterlab_extensions` 1.1.16 or newer is installed
 
 ## [1.0.40] - 2026-10-31
 

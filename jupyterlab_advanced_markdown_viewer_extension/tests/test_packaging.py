@@ -86,7 +86,7 @@ def test_the_suite_comes_only_through_its_extra(project, required):
 
 
 def test_every_sibling_carries_a_version_floor(project, required):
-    """Each floor records the version that sibling was published at on the survey date."""
+    """Every sibling has a floor; pyproject.toml says what each floor records."""
     extra = map(Requirement, project["optional-dependencies"]["markdown-suite"])
     for item in [required[PASTE_CONTENT], *extra]:
         assert item.specifier, f"{item.name} has no version floor"

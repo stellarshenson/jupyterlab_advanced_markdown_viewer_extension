@@ -7,7 +7,7 @@ name = "jupyterlab_advanced_markdown_viewer_extension"
 readme = "README.md"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
     "Framework :: Jupyter",
     "Framework :: Jupyter :: JupyterLab",
@@ -16,7 +16,6 @@ classifiers = [
     "Framework :: Jupyter :: JupyterLab :: Extensions :: Prebuilt",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -26,9 +25,10 @@ dependencies = [
     "jupyter_server>=2.13.0,<3",
     "watchdog>=4,<7",
     # The one member of the Markdown family the plain install brings; the other six
-    # come only through the markdown-suite extra. Each floor, here and in that extra,
-    # is the version that sibling was published at when the family was surveyed
-    # on 2026-09-13, not a minimum any behaviour here was proved against.
+    # come only through the markdown-suite extra. This floor is the version that sibling
+    # was published at when the family was surveyed on 2026-09-13, not a minimum any
+    # behaviour here was proved against. Each floor in that extra is the first scoped
+    # release of that sibling on PyPI.
     "jupyterlab_paste_content_as_markdown_extension>=1.0.8"
 ]
 dynamic = ["version", "description", "authors", "urls", "keywords"]
@@ -41,12 +41,12 @@ core-patches = [
 ]
 # Optional: a sibling with a settings schema and an underscored plugin id does not load its settings on JupyterLab 4.6.5.
 markdown-suite = [
-    "jupyterlab_colourful_tab_extension>=1.1.21",
-    "jupyterlab_edit_markdown_at_content_extension>=1.0.24",
-    "jupyterlab_export_markdown_extension>=1.6.28",
-    "jupyterlab_github_markdown_alerts_extension>=1.0.25",
-    "jupyterlab_markdown_insert_content_extension>=1.1.28",
-    "jupyterlab_refresh_view_extension>=1.2.33",
+    "jupyterlab_colourful_tab_extension>=1.1.28",
+    "jupyterlab_edit_markdown_at_content_extension>=1.0.27",
+    "jupyterlab_export_markdown_extension>=1.6.33",
+    "jupyterlab_github_markdown_alerts_extension>=1.0.30",
+    "jupyterlab_markdown_insert_content_extension>=1.1.33",
+    "jupyterlab_refresh_view_extension>=1.2.35",
 ]
 dev = [
     "jupyterlab>=4",

@@ -114,6 +114,7 @@ A value in any `jupyter_server_config.json` or `jupyter_server_config.py` takes 
 ## Requirements
 
 - JupyterLab >= 4.0.0
+- Python >= 3.11
 
 ## Install
 
@@ -157,9 +158,12 @@ all of them:
 | `jupyterlab_refresh_view_extension`             | A Refresh View command reloads a file from disk, keeping the scroll position |
 | `jupyterlab_colourful_tab_extension`            | Pastel tab colours, so many open documents stay tellable apart               |
 
-Each one also works on its own. The version floors are simply what each sibling was published at
-when the family was surveyed; none of them is imported, required or linked by this extension's
-code, so an older one degrades rather than breaks.
+Each one also works on its own. Each version floor is the first PyPI release of that sibling with a
+scoped npm name, so `pip install -U` with the extra moves an older sibling to a release that loads
+settings on JupyterLab 4.6.5. Settings saved under the old name stay on disk unread, unless
+`stellars_jupyterlab_extensions` 1.1.16 or newer is installed, which copies them at server start.
+None of the six is imported, required or linked by this extension's code, so an older one degrades
+rather than breaks.
 
 ## The core patches
 

@@ -38,9 +38,10 @@ pip install -e ".[dev,test,core-patches,markdown-suite]"
 jupyter-builder develop . --overwrite
 ```
 
-`make install` also installs both extras, so on JupyterLab 4.6.5 `python -m jupyterlab.browser_check`
-then exits 1 while an installed extension of the `markdown-suite` extra has an underscore in its
-name in `jupyter labextension list`.
+`make install` also installs both extras. On JupyterLab 4.6.5 a sibling of the `markdown-suite`
+extra with an underscore in its name in `jupyter labextension list` does not load its settings, and
+`python -m jupyterlab.browser_check` exits 1 with some of them installed. The floors of that extra
+take a scoped release of each sibling, so `make install` leaves no such name.
 
 2. Install test dependencies (needed only once):
 
