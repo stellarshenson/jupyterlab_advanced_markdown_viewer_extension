@@ -81,7 +81,8 @@ import {
 /**
  * The plugin identifier, which is also the settings identifier.
  */
-const PLUGIN_ID = 'jupyterlab_advanced_markdown_viewer_extension:plugin';
+const PLUGIN_ID =
+  '@stellarshenson/jupyterlab-advanced-markdown-viewer-extension:plugin';
 
 /**
  * The commands the context menu and the palette call.

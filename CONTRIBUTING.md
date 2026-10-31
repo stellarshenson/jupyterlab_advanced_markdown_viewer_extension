@@ -57,7 +57,7 @@ pip uninstall jupyterlab_advanced_markdown_viewer_extension
 
 In development mode, you will also need to remove the symlink created by `jupyter-builder develop`
 command. To find its location, you can run `jupyter labextension list` to figure out where the `labextensions`
-folder is located. Then you can remove the symlink named `jupyterlab_advanced_markdown_viewer_extension` within that folder.
+folder is located. Then you can remove the symlink named `@stellarshenson/jupyterlab-advanced-markdown-viewer-extension` within that folder.
 
 ## Endpoint authentication
 
@@ -105,6 +105,16 @@ jlpm test
 
 This extension uses [Playwright](https://playwright.dev/docs/intro) for the integration tests (aka user level tests).
 More precisely, the JupyterLab helper [Galata](https://github.com/jupyterlab/jupyterlab/tree/master/galata) is used to handle testing the extension in JupyterLab.
+
+Galata runs on an install made with `pip install -e ".[dev,test,core-patches,markdown-suite]"`, because 11 cases read the behaviour of a sibling extension or of the core patches.
+
+```sh
+pip install -e ".[dev,test,core-patches,markdown-suite]"
+# Each time you install the Python package, you need to restore the front-end extension link
+jupyter-builder develop . --overwrite
+```
+
+`make install` also installs both extras, so on JupyterLab 4.6.5 `python -m jupyterlab.browser_check` then exits 1 while an installed extension of the `markdown-suite` extra has an underscore in its name in `jupyter labextension list`.
 
 More information is provided within the [ui-tests](./ui-tests/README.md) README.
 

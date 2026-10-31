@@ -1,7 +1,8 @@
 """Tests of the packaging metadata this extension ships with.
 
-A sibling dropped from the dependency list or renamed is invisible until someone runs
-the install, so these tests read pyproject.toml itself, which is the file pip resolves.
+A sibling dropped from the dependency list or the markdown-suite extra, or renamed, is
+invisible until someone runs the install, so these tests read pyproject.toml itself,
+which is the file pip resolves.
 """
 import pathlib
 import tomllib
@@ -12,16 +13,18 @@ from packaging.utils import canonicalize_name
 
 PYPROJECT = pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
 
-# The Markdown family, as the COMPAT criteria name it.
+# The six members of the Markdown family that come through the markdown-suite extra.
 SUITE = set(map(canonicalize_name, {
     "jupyterlab_colourful_tab_extension",
     "jupyterlab_edit_markdown_at_content_extension",
     "jupyterlab_export_markdown_extension",
     "jupyterlab_github_markdown_alerts_extension",
     "jupyterlab_markdown_insert_content_extension",
-    "jupyterlab_paste_content_as_markdown_extension",
     "jupyterlab_refresh_view_extension",
 }))
+
+# The one member of the family the plain install brings.
+PASTE_CONTENT = canonicalize_name("jupyterlab_paste_content_as_markdown_extension")
 
 # Extensions this one is proved compatible with but does not install. The SVG export
 # extension puts Copy as PNG and Save as PNG on the same rendered root, which
@@ -63,15 +66,30 @@ def declared(project, required):
     }
 
 
-def test_the_install_brings_the_whole_markdown_family(required):
-    """ACC-COMPAT-161: one install command puts every sibling on the machine."""
-    assert SUITE <= set(required)
+def test_the_install_brings_paste_content(required):
+    """ACC-COMPAT-218-SUITE-EXTRA: paste content stays required."""
+    assert PASTE_CONTENT in required
 
 
-def test_every_sibling_carries_a_version_floor(required):
+def test_the_suite_comes_only_through_its_extra(project, required):
+    """ACC-COMPAT-218-SUITE-EXTRA: the plain install pulls none of the six, markdown-suite holds exactly the six."""
+    assert SUITE.isdisjoint(required)
+    groups = project["optional-dependencies"]
+    extra = [canonicalize_name(Requirement(item).name) for item in groups["markdown-suite"]]
+    assert sorted(extra) == sorted(SUITE)
+    assert SUITE.isdisjoint(
+        canonicalize_name(Requirement(item).name)
+        for name, group in groups.items()
+        if name != "markdown-suite"
+        for item in group
+    )
+
+
+def test_every_sibling_carries_a_version_floor(project, required):
     """Each floor records the version that sibling was published at on the survey date."""
-    for name in SUITE:
-        assert required[name].specifier, f"{name} has no version floor"
+    extra = map(Requirement, project["optional-dependencies"]["markdown-suite"])
+    for item in [required[PASTE_CONTENT], *extra]:
+        assert item.specifier, f"{item.name} has no version floor"
 
 
 def test_a_neighbour_is_never_installed_as_a_dependency(declared):

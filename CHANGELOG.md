@@ -2,6 +2,20 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [Unreleased]
+
+The extension works on JupyterLab 4.6.5, the npm package has a new name, and six sibling extensions move to an optional extra.
+
+### Changed
+
+- The npm package is now `@stellarshenson/jupyterlab-advanced-markdown-viewer-extension`. The Python package keeps its name, so the name in the `pip install` command does not change
+- Settings saved under the old name are copied once to the new settings folder when the server starts, and the old file stays. Restart the server after the upgrade, before you change a setting or write the first note, so that saved settings carry over. A `disabledExtensions` entry or an `overrides.json` key under the old name no longer applies: write the new name, and in an `overrides.json` key keep the `:plugin` ending
+- The plain install brings one more extension instead of seven: `jupyterlab_paste_content_as_markdown_extension`. `jupyterlab_colourful_tab_extension`, `jupyterlab_edit_markdown_at_content_extension`, `jupyterlab_export_markdown_extension`, `jupyterlab_github_markdown_alerts_extension`, `jupyterlab_markdown_insert_content_extension` and `jupyterlab_refresh_view_extension` move to the optional extra `markdown-suite`: `pip install -U "jupyterlab_advanced_markdown_viewer_extension[markdown-suite]"`. On JupyterLab 4.6.5 an extension of those six whose name in `jupyter labextension list` holds an underscore does not load its settings: its saved file stays on disk unread, it runs on its defaults and it is missing from the Settings Editor. `pip install -U` from an earlier version leaves the six installed
+
+### Fixed
+
+- The settings of this extension load on JupyterLab 4.6.5, which rejected the old plugin id
+
 ## [1.0.39] - 2026-10-30
 
 Installing this extension no longer pulls the discrete fix packages, and a plain click on a picture or a diagram paints no selection.

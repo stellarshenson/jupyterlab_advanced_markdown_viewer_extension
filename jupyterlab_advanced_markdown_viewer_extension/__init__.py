@@ -8,6 +8,9 @@ except ImportError:
     warnings.warn("Importing 'jupyterlab_advanced_markdown_viewer_extension' outside a proper installation.")
     __version__ = "dev"
 import math
+import os
+import shutil
+from pathlib import Path
 
 from jupyter_server.services.config import ConfigManager
 from traitlets import Bool, Float, Integer, TraitError, Unicode
@@ -16,6 +19,12 @@ from traitlets.config import Config, Configurable
 from .routes import setup_route_handlers
 
 PAGE_CONFIG_KEY = "advancedMarkdownViewer"
+
+# JupyterLab names the settings folder after the plugin id, which followed the npm package.
+OLD_SETTINGS = Path("jupyterlab_advanced_markdown_viewer_extension", "plugin.jupyterlab-settings")
+NEW_SETTINGS = Path(
+    "@stellarshenson", "jupyterlab-advanced-markdown-viewer-extension", "plugin.jupyterlab-settings"
+)
 
 
 class AdvancedMarkdownViewer(Configurable):
@@ -73,7 +82,7 @@ FIELDS = {
 def _jupyter_labextension_paths():
     return [{
         "src": "labextension",
-        "dest": "jupyterlab_advanced_markdown_viewer_extension"
+        "dest": "@stellarshenson/jupyterlab-advanced-markdown-viewer-extension"
     }]
 
 
@@ -81,6 +90,26 @@ def _jupyter_server_extension_points():
     return [{
         "module": "jupyterlab_advanced_markdown_viewer_extension"
     }]
+
+
+def _carry_saved_settings(server_app):
+    """Copy the saved settings of the old folder to the new one, once; the old file stays."""
+    # The server loads extensions in sorted order, so "jupyterlab" has registered "lab" by now. A
+    # server without it has no settings folder, and its next start with JupyterLab copies the file.
+    settings_dir = getattr(server_app.web_app.settings.get("lab"), "user_settings_dir", None)
+    if not settings_dir:
+        return
+    old = Path(settings_dir, OLD_SETTINGS)
+    new = Path(settings_dir, NEW_SETTINGS)
+    try:
+        if old.is_file() and not new.exists():
+            new.parent.mkdir(parents=True, exist_ok=True)
+            # Through a second name, so a copy that stops part way never reads as the settings.
+            partial = new.with_suffix(".partial")
+            shutil.copyfile(old, partial)
+            os.replace(partial, new)
+    except OSError as error:
+        server_app.log.warning(f"The saved settings in {old} were not copied to {new}: {error}")
 
 
 def _load_jupyter_server_extension(server_app):
@@ -92,6 +121,7 @@ def _load_jupyter_server_extension(server_app):
         JupyterLab application instance
     """
     setup_route_handlers(server_app.web_app)
+    _carry_saved_settings(server_app)
     # traitlets reads no jupyter_server_config.d/ file, so it is read here, as jupyter-lsp does;
     # the server's own config takes precedence over it.
     config = Config(

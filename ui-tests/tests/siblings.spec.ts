@@ -13,10 +13,11 @@ import {
 /**
  * Integration tests against the sibling Markdown extensions of this lab.
  *
- * The lab these tests run in has the whole family installed - the GitHub
- * alerts renderer, the colourful tabs, edit at content and the core patches
- * extension, which now ships the table-of-contents fix and the switch-tab
- * scrolling fix - so these are the siblings
+ * The lab these tests run in needs this extension installed with its
+ * core-patches and markdown-suite extras, which brings the whole family - the
+ * GitHub alerts renderer, the colourful tabs, edit at content and the core
+ * patches extension, which now ships the table-of-contents fix and the
+ * switch-tab scrolling fix - so these are the siblings
  * themselves rather than a stand-in for them. Only the motion of the
  * table-of-contents fix is stood in for, and for the reason the live-view
  * suite already gives: its trigger is the URL hash, which this lab rewrites
@@ -27,9 +28,9 @@ test.use(labFixtures);
 
 /**
  * The continuous-integration runner installs the wheel with its core-patches
- * extra, which brings the seven sibling extensions and the core patches, and
- * still skips the cases marked below. GitHub Actions sets CI and this lab does
- * not, so every case runs here.
+ * and markdown-suite extras, so it holds the seven sibling extensions and the
+ * core patches, and still skips the cases marked below. GitHub Actions sets CI
+ * and this lab does not, so every case runs here.
  */
 const SIBLINGS_ABSENT =
   'each case needs a sibling extension or the core patches, and none has run on the continuous-integration runner with them installed';
@@ -655,7 +656,8 @@ test.describe('the switch-tab scrolling fix sibling', () => {
    * The bundle path every script of this extension is served from, which is
    * what a stack trace names when one of its functions made the call.
    */
-  const VIEWER_BUNDLE = 'jupyterlab_advanced_markdown_viewer_extension';
+  const VIEWER_BUNDLE =
+    '@stellarshenson/jupyterlab-advanced-markdown-viewer-extension';
 
   interface IScrollWrite {
     t: number;

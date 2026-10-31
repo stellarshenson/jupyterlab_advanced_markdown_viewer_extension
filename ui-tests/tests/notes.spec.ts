@@ -3606,7 +3606,7 @@ test.describe('a change waiting on disk while the reader marks', () => {
     // path, as it does for a path the server cannot serve, so no reading is
     // ever taken.
     await page.route(
-      /jupyterlab-advanced-markdown-viewer-extension\/stat/,
+      /jupyterlab-advanced-markdown-viewer-extension\/stat(\?|$)/,
       (route: any) =>
         route.fulfill({
           status: 200,

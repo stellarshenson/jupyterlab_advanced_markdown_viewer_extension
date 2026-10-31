@@ -8,7 +8,7 @@ has_ai_rules: false
 has_binder: false
 has_settings: true
 kind: frontend-and-server
-labextension_name: jupyterlab_advanced_markdown_viewer_extension
+labextension_name: '@stellarshenson/jupyterlab-advanced-markdown-viewer-extension'
 project_short_description: Jupyterlab extension that finally allows Markdown files
     to receive live updates when underlying ai agentic tool is changing them. When
     change was performed - the title of the markdown file will give visual cue and

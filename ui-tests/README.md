@@ -29,6 +29,19 @@ jlpm build:prod
 
 > Check the extension is installed in JupyterLab.
 
+Galata runs on an install made with `pip install -e ".[dev,test,core-patches,markdown-suite]"`,
+because 11 cases read the behaviour of a sibling extension or of the core patches.
+
+```sh
+pip install -e ".[dev,test,core-patches,markdown-suite]"
+# Each time you install the Python package, you need to restore the front-end extension link
+jupyter-builder develop . --overwrite
+```
+
+`make install` also installs both extras, so on JupyterLab 4.6.5 `python -m jupyterlab.browser_check`
+then exits 1 while an installed extension of the `markdown-suite` extra has an underscore in its
+name in `jupyter labextension list`.
+
 2. Install test dependencies (needed only once):
 
 ```sh

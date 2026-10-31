@@ -11,7 +11,8 @@ import { expect, galata } from '@jupyterlab/galata';
 import * as fs from 'fs';
 import * as path from 'path';
 
-export const PLUGIN_ID = 'jupyterlab_advanced_markdown_viewer_extension:plugin';
+export const PLUGIN_ID =
+  '@stellarshenson/jupyterlab-advanced-markdown-viewer-extension:plugin';
 export const FILE = 'live.md';
 
 /**

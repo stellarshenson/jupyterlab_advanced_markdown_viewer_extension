@@ -1,7 +1,7 @@
 # jupyterlab_advanced_markdown_viewer_extension
 
 [![GitHub Actions](https://github.com/stellarshenson/jupyterlab_advanced_markdown_viewer_extension/actions/workflows/build.yml/badge.svg)](https://github.com/stellarshenson/jupyterlab_advanced_markdown_viewer_extension/actions/workflows/build.yml)
-[![npm version](https://img.shields.io/npm/v/jupyterlab_advanced_markdown_viewer_extension.svg)](https://www.npmjs.com/package/jupyterlab_advanced_markdown_viewer_extension)
+[![npm version](https://img.shields.io/npm/v/@stellarshenson/jupyterlab-advanced-markdown-viewer-extension.svg)](https://www.npmjs.com/package/@stellarshenson/jupyterlab-advanced-markdown-viewer-extension)
 [![PyPI version](https://img.shields.io/pypi/v/jupyterlab-advanced-markdown-viewer-extension.svg)](https://pypi.org/project/jupyterlab-advanced-markdown-viewer-extension/)
 [![Total PyPI downloads](https://static.pepy.tech/badge/jupyterlab-advanced-markdown-viewer-extension)](https://pepy.tech/project/jupyterlab-advanced-markdown-viewer-extension)
 [![JupyterLab 4](https://img.shields.io/badge/JupyterLab-4-orange.svg)](https://jupyterlab.readthedocs.io/en/stable/)
@@ -113,7 +113,7 @@ A value in any `jupyter_server_config.json` or `jupyter_server_config.py` takes 
 
 ## Requirements
 
-- JupyterLab >= 4.0.0 and below 4.6.5, see [JupyterLab 4.6.5](#jupyterlab-465)
+- JupyterLab >= 4.0.0
 
 ## Install
 
@@ -123,35 +123,45 @@ To install the extension, execute:
 pip install jupyterlab_advanced_markdown_viewer_extension
 ```
 
-### JupyterLab 4.6.5
-
-On JupyterLab 4.6.5 the settings of this extension do not load, because that release rejects the
-extension's plugin id. Stored settings are ignored, the extension is missing from the Settings Editor
-and its keyboard shortcut is not registered. The stored settings file is kept. Install a version
-below 4.6.5:
-
-```bash
-pip install "jupyterlab<4.6.5"
-```
+To upgrade from an earlier version, execute
+`pip install -U jupyterlab_advanced_markdown_viewer_extension`, then restart the server before you
+change a setting or write a note, so that settings saved under the old name carry over. A
+`disabledExtensions` entry or an `overrides.json` key under the old name no longer applies: write
+the new name, `@stellarshenson/jupyterlab-advanced-markdown-viewer-extension`, and in an
+`overrides.json` key keep the `:plugin` ending. The six extensions of the `markdown-suite` extra
+stay installed.
 
 ## The Markdown suite
 
-The install above brings seven more extensions with it. Each adds one thing in JupyterLab's Markdown
-handling, and this extension is built to work beside all of them:
+The install above brings only one more extension with it:
+`jupyterlab_paste_content_as_markdown_extension`, which pastes formatted clipboard content as
+Markdown. The optional extra `markdown-suite` adds the six extensions in the table below.
 
-| Extension                                        | What it adds                                                                 |
-| ------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `jupyterlab_github_markdown_alerts_extension`    | GitHub alert blocks render, such as `> [!NOTE]` and `> [!WARNING]`           |
-| `jupyterlab_edit_markdown_at_content_extension`  | Opens the editor at the line you were reading in the preview                 |
-| `jupyterlab_markdown_insert_content_extension`   | Inserts reusable content blocks, starting with a generated table of contents |
-| `jupyterlab_paste_content_as_markdown_extension` | Pastes formatted clipboard content as Markdown                               |
-| `jupyterlab_export_markdown_extension`           | Exports a Markdown file to PDF, DOCX and HTML                                |
-| `jupyterlab_refresh_view_extension`              | A Refresh View command reloads a file from disk, keeping the scroll position |
-| `jupyterlab_colourful_tab_extension`             | Pastel tab colours, so many open documents stay tellable apart               |
+On JupyterLab 4.6.5 an extension of that table whose name in `jupyter labextension list` holds an
+underscore does not load its settings: its saved file stays on disk unread, it runs on its defaults
+and it is missing from the Settings Editor.
+
+```bash
+pip install -U "jupyterlab_advanced_markdown_viewer_extension[markdown-suite]"
+```
+
+Each adds one thing in JupyterLab's Markdown handling, and this extension is built to work beside
+all of them:
+
+| Extension                                       | What it adds                                                                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------------- |
+| `jupyterlab_github_markdown_alerts_extension`   | GitHub alert blocks render, such as `> [!NOTE]` and `> [!WARNING]`           |
+| `jupyterlab_edit_markdown_at_content_extension` | Opens the editor at the line you were reading in the preview                 |
+| `jupyterlab_markdown_insert_content_extension`  | Inserts reusable content blocks, starting with a generated table of contents |
+| `jupyterlab_export_markdown_extension`          | Exports a Markdown file to PDF, DOCX and HTML                                |
+| `jupyterlab_refresh_view_extension`             | A Refresh View command reloads a file from disk, keeping the scroll position |
+| `jupyterlab_colourful_tab_extension`            | Pastel tab colours, so many open documents stay tellable apart               |
 
 Each one also works on its own. The version floors are simply what each sibling was published at
 when the family was surveyed; none of them is imported, required or linked by this extension's
 code, so an older one degrades rather than breaks.
+
+## The core patches
 
 The optional extra `core-patches` adds `jupyterlab_core_patches_extension`, which carries the fixes
 for Table of Contents navigation, scrolling when switching tabs and syntax colours.
@@ -171,6 +181,12 @@ Then install the extra:
 
 ```bash
 pip install -U "jupyterlab_advanced_markdown_viewer_extension[core-patches]"
+```
+
+To install both extras:
+
+```bash
+pip install -U "jupyterlab_advanced_markdown_viewer_extension[core-patches,markdown-suite]"
 ```
 
 ## Uninstall

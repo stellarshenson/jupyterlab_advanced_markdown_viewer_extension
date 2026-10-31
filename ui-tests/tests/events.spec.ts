@@ -52,6 +52,12 @@ const EXTENDED = `${REWRITTEN}\n${FOURTH}\n`;
  */
 const EVENTS_SOCKET = new RegExp(`/${NAMESPACE}/events`);
 
+/**
+ * A request to a route of the server extension. The bundle's URL holds the
+ * namespace too, under /static/, and is not a server request.
+ */
+const SERVER_ROUTE = new RegExp(`/${NAMESPACE}/(?!static/)`);
+
 test.use(labFixtures);
 
 /**
@@ -357,7 +363,7 @@ test.describe('ten quiet previews', () => {
     const watched = new Set(paths.map(apiPath => `/api/contents/${apiPath}`));
     const offending = requests.filter(url => {
       const pathname = decodeURIComponent(new URL(url).pathname);
-      return watched.has(pathname) || pathname.includes(`/${NAMESPACE}/`);
+      return watched.has(pathname) || SERVER_ROUTE.test(pathname);
     });
     expect(offending).toEqual([]);
     expect(
@@ -382,7 +388,7 @@ test.describe('a filesystem that raises no events', () => {
 
     const stats: number[] = [];
     page.on('request', (request: any) => {
-      if (request.url().includes(`/${NAMESPACE}/stat`)) {
+      if (new URL(request.url()).pathname.endsWith(`/${NAMESPACE}/stat`)) {
         stats.push(Date.now());
       }
     });
@@ -516,7 +522,7 @@ test.describe('the server extension absent', () => {
     // Every route of the server extension answers 404, which is what a lab
     // without it answers: the batched stat route belongs to the same
     // extension as the status route, so both are gone together.
-    await page.route(`**/${NAMESPACE}/**`, (route: any) =>
+    await page.route(SERVER_ROUTE, (route: any) =>
       route.fulfill({
         status: 404,
         contentType: 'text/plain',

@@ -33,7 +33,7 @@ test.use(labFixtures);
 const FIELD_PREFIX = `jp-SettingsEditor-${PLUGIN_ID}_`;
 
 /** The checkbox the settings editor draws for the live-updates switch. */
-const SWITCH = `#${FIELD_PREFIX.replace(':', '\\:')}enabled`;
+const SWITCH = `[id="${FIELD_PREFIX}enabled"]`;
 
 /** The four settings the editor lists, by key and title, in their order. */
 const LISTED = [
@@ -242,5 +242,71 @@ test.describe('the live-updates switch while a change is held back', () => {
     // which is what this half of the marker proves.
     await setLiveUpdates(page, true);
     await expect(blocked).toHaveCount(1, { timeout: 20000 });
+  });
+});
+
+test.describe('the settings on the server', () => {
+  // Galata answers settings requests in the browser by default. Three of the
+  // four cases above still fail when the registry refuses this plugin id. This
+  // case turns that answer off, so the settings load from and save to the
+  // server.
+  test.use({ mockSettings: false, autoGoto: false });
+
+  test('ACC-COMPAT-216-NEWEST-LAB load, survive a reload, take effect and list the extension', async ({
+    page
+  }) => {
+    // Siblings of the markdown-suite extra that still have an underscore in
+    // their plugin ids log these failures on JupyterLab 4.6.5, so only a line
+    // naming this plugin counts here.
+    const failures: string[] = [];
+    page.on('console', (message: any) => {
+      const text = message.text();
+      if (
+        text.includes(PLUGIN_ID) &&
+        /URI scheme is malformed|forEach is not a function/.test(text)
+      ) {
+        failures.push(text);
+      }
+    });
+    await page.goto();
+
+    const status = await page.evaluate(
+      async ({ id, raw }: { id: string; raw: string }) => {
+        const server = (window as any).jupyterapp.serviceManager.serverSettings;
+        const reply = await fetch(`${server.baseUrl}lab/api/settings/${id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ raw })
+        });
+        return reply.status;
+      },
+      { id: PLUGIN_ID, raw: JSON.stringify({ author: 'saved-handle' }) }
+    );
+    expect(status).toBe(204);
+    await page.reload();
+
+    // The command is offered only once the settings have loaded, and its box
+    // holds the handle they name.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (id: string) => (window as any).jupyterapp.commands.isEnabled(id),
+          SET_HANDLE
+        )
+      )
+      .toBe(true);
+    await page.evaluate((id: string) => {
+      void (window as any).jupyterapp.commands.execute(id);
+    }, SET_HANDLE);
+    const dialog = page.locator('.jp-Dialog');
+    await expect(dialog.locator('input')).toHaveValue('saved-handle');
+    await dialog.locator('button.jp-mod-reject').click();
+    await expect(dialog).toHaveCount(0);
+
+    await openSettingsEditor(page);
+    expect((await listedFields(page)).map(field => field.key)).toEqual(
+      LISTED.map(listed => listed.key)
+    );
+
+    expect(failures).toEqual([]);
   });
 });
