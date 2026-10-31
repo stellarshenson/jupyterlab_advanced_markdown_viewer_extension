@@ -77,7 +77,9 @@ class ReadHandler(APIHandler):
     file for a document that is being saved (DEF-APPLY-131). This route waits a write of
     the path out and reads again when a write, of any path, started during its read. {} for
     a path the registry does not serve, which the frontend reads through the contents API;
-    the 404 of the contents manager for a file that is not there.
+    the 404 of the contents manager for a file that is not there, and a 404 of this route for
+    a file removed during the read, where the manager raises FileNotFoundError or answers 400
+    (DEF-APPLY-163).
     """
 
     @tornado.web.authenticated
@@ -91,11 +93,21 @@ class ReadHandler(APIHandler):
             return
         while True:
             writes = await registry.settle(path)
-            model = await ensure_async(
-                self.contents_manager.get(
-                    path, type="file", format="text", content=True, require_hash=True
+            try:
+                model = await ensure_async(
+                    self.contents_manager.get(
+                        path, type="file", format="text", content=True, require_hash=True
+                    )
                 )
-            )
+            except FileNotFoundError:
+                raise tornado.web.HTTPError(404, "no such file") from None
+            except tornado.web.HTTPError as error:
+                # The same removal one step later is a 400, as is a path that cannot be read.
+                if error.status_code != 400 or await ensure_async(
+                    self.contents_manager.exists(path)
+                ):
+                    raise
+                raise tornado.web.HTTPError(404, "no such file") from None
             if registry.writes == writes:
                 break
         self.finish(json.dumps({"model": model}, default=json_default))

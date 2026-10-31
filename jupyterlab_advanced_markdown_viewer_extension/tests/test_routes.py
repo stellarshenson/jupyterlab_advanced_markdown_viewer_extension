@@ -500,6 +500,56 @@ async def test_read_tells_a_path_it_cannot_serve_from_a_file_that_is_not_there(
     assert missing.value.code == 404
 
 
+def before(monkeypatch, manager, name, action):
+    """Run `action` each time the read reaches the contents manager's method `name`."""
+    method = getattr(manager, name)
+
+    def wrapped(*args, **kwargs):
+        action()
+        return method(*args, **kwargs)
+
+    monkeypatch.setattr(manager, name, wrapped)
+
+
+@pytest.mark.parametrize("step", ["_base_model", "_read_file"])
+async def test_read_answers_404_for_a_file_removed_during_the_read(
+    step, jp_fetch, jp_serverapp, jp_root_dir, registry, monkeypatch
+):
+    """DEF-APPLY-163: the manager found the file, which then went. At its lstat that is a
+    FileNotFoundError, which answered 500; one step later a 400 "Cannot read non-file"."""
+    doc = jp_root_dir / "doc.md"
+    doc.write_text("# one\n")
+    before(monkeypatch, jp_serverapp.contents_manager, step, doc.unlink)
+    with pytest.raises(HTTPClientError) as missing:
+        await read(jp_fetch, "doc.md")
+    assert missing.value.code == 404
+
+
+async def test_read_keeps_the_400_for_a_path_that_is_still_there(
+    jp_fetch, jp_serverapp, jp_root_dir, registry, monkeypatch
+):
+    """DEF-APPLY-163: the 404 is for a file that is gone. A folder and bytes that are not UTF-8
+    stay a 400, and so does the 400 of the race for a file a folder has replaced."""
+    (jp_root_dir / "folder").mkdir()
+    (jp_root_dir / "binary.md").write_bytes(b"\xff\xfe")
+    doc = jp_root_dir / "doc.md"
+    doc.write_text("# one\n")
+    for path in ("folder", "binary.md"):
+        with pytest.raises(HTTPClientError) as refused:
+            await read(jp_fetch, path)
+        assert refused.value.code == 400
+    before(
+        monkeypatch,
+        jp_serverapp.contents_manager,
+        "_read_file",
+        lambda: (doc.unlink(), doc.mkdir()),
+    )
+    with pytest.raises(HTTPClientError) as refused:
+        await read(jp_fetch, "doc.md")
+    assert refused.value.code == 400
+    assert "Cannot read non-file" in json.loads(refused.value.response.body)["message"]
+
+
 async def test_read_keeps_a_space_at_the_start_of_a_file_name(jp_fetch, jp_root_dir, registry):
     """A file whose name begins with a space is that file, not the one named without it."""
     (jp_root_dir / " lead.md").write_text("# spaced\n")

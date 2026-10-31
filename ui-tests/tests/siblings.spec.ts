@@ -27,15 +27,6 @@ import {
 test.use(labFixtures);
 
 /**
- * The continuous-integration runner installs the wheel with its core-patches
- * and markdown-suite extras, so it holds the seven sibling extensions and the
- * core patches, and still skips the cases marked below. GitHub Actions sets CI
- * and this lab does not, so every case runs here.
- */
-const SIBLINGS_ABSENT =
-  'each case needs a sibling extension or the core patches, and none has run on the continuous-integration runner with them installed';
-
-/**
  * A document whose middle block is a GitHub alert, long enough to scroll.
  */
 const ALERT = [
@@ -93,7 +84,6 @@ const previewScrollTop = (page: any): Promise<number> =>
 
 test.describe('the GitHub alerts sibling', () => {
   test.use({ mockSettings: settings() });
-  test.skip(!!process.env.CI, SIBLINGS_ABSENT);
 
   test('renders a changed alert block through the Markdown parser again', async ({
     page,
@@ -141,7 +131,6 @@ test.describe('the GitHub alerts sibling', () => {
 
 test.describe('the colourful tab sibling', () => {
   test.use({ mockSettings: settings() });
-  test.skip(!!process.env.CI, SIBLINGS_ABSENT);
 
   test('keeps the colour it gave the tab while the marker shows', async ({
     page,
@@ -202,7 +191,6 @@ test.describe('the colourful tab sibling', () => {
 
 test.describe('the forced render', () => {
   test.use({ mockSettings: settings() });
-  test.skip(!!process.env.CI, SIBLINGS_ABSENT);
 
   test('runs every listener twice for one change without a sibling misbehaving', async ({
     page,
@@ -351,7 +339,6 @@ async function offsetOf(page: any, text: string): Promise<number> {
 
 test.describe('the refresh view sibling', () => {
   test.use({ mockSettings: settings() });
-  test.skip(!!process.env.CI, SIBLINGS_ABSENT);
 
   const UNSAVED = 'A sentence nobody saved.';
 
@@ -408,7 +395,6 @@ test.describe('the refresh view sibling', () => {
 
 test.describe('the export sibling', () => {
   test.use({ mockSettings: settings() });
-  test.skip(!!process.env.CI, SIBLINGS_ABSENT);
 
   const UNSAVED = 'A sentence nobody saved.';
 
@@ -444,8 +430,8 @@ test.describe('the export sibling', () => {
     page.evaluate(async (apiPath: string) => {
       const base = (window as any).jupyterapp.serviceManager.serverSettings
         .baseUrl;
-      // type and format are named because jupytext is installed here: asked
-      // for a .md file without them, the contents API returns a notebook.
+      // type and format are named because, where jupytext is installed, a .md
+      // file asked for without them comes back as a notebook.
       const response = await fetch(
         `${base}api/contents/${apiPath}?type=file&format=text&content=1`,
         { credentials: 'same-origin' }
@@ -526,7 +512,11 @@ test.describe('the export sibling', () => {
 
     const exports: string[] = [];
     page.on('request', (request: any) => {
-      if (request.url().includes('jupyterlab-export-markdown-extension/')) {
+      // Its server routes: the bundle's URL holds the namespace too, under
+      // /static/.
+      if (
+        request.url().includes('jupyterlab-export-markdown-extension/export/')
+      ) {
         exports.push(request.url());
       }
     });
@@ -560,6 +550,7 @@ test.describe('the export sibling', () => {
         await page.evaluate(() => (window as any).__export);
       })()
     ]);
+    expect(exports.length).toBeGreaterThan(0);
     expect(fs.readFileSync(await download.path(), 'utf8')).toContain(UNSAVED);
     expect((await currentWidgetState(page)).dirty).toBe(false);
   });
@@ -879,7 +870,6 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     page,
     tmpPath
   }) => {
-    test.skip(!!process.env.CI, SIBLINGS_ABSENT);
     const { path, parked } = await openAndPark(page, tmpPath);
 
     // A change that arrives while the guard is holding the position.
@@ -960,7 +950,6 @@ test.describe('the switch-tab scrolling fix sibling', () => {
     page,
     tmpPath
   }) => {
-    test.skip(!!process.env.CI, SIBLINGS_ABSENT);
     const { path, parked } = await openAndPark(page, tmpPath);
 
     // With the anchor held for as long as the guard holds, the position the

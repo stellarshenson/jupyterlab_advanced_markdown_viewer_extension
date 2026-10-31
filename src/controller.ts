@@ -122,7 +122,7 @@ const TAB_CAPTIONS: { [className: string]: string | undefined } = {
   [TAB_BLOCKED_CLASS]:
     'A change on disk is held back by unsaved edits in this document. To take the change, choose Reload Markdown File from Disk in the File menu; a save keeps your version and drops the change.',
   [TAB_MISSING_CLASS]:
-    'The file is gone from disk. This view keeps the last content that was read.'
+    'The file is gone from disk or cannot be read. This view keeps the last content that was read.'
 };
 
 /**

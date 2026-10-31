@@ -2,6 +2,13 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [Unreleased]
+
+### Fixed
+
+- A file removed while the viewer reads it no longer leaves a traceback in the server log, and its tab is marked missing without a second read
+- The tab tooltip says the file is gone from disk or cannot be read. It said gone from disk for a file that is on disk and is not UTF-8
+
 ## [1.0.40] - 2026-10-31
 
 The extension works on JupyterLab 4.6.5, the npm package has a new name, and six sibling extensions move to an optional extra.
