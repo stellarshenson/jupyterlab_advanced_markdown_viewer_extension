@@ -1527,6 +1527,11 @@ Defects of the Galata suite itself
   - log: 2026-10-31T14:08:12Z @kj seven guards and the constant removed from ui-tests/tests/siblings.spec.ts in the working tree; this defect closes on a green runner Build
   - log: 2026-10-31T16:10:51Z @kj closed; reason: The first failure-free runner Build has run, and it ran the sibling cases
   - log: 2026-10-31T16:24:45Z @kj correction to the closure log, runs 41206387362 and 41208259473 were green with the guards in place; run 41216179705 is the first green Build with them removed
+- [ ] `DEF-TEST-167-MENU-STUB` **A jest menu render throws isToggleable on the wiring Commands stub** - MINOR; make test passes but prints 19 TypeError traces; the stub no longer matches the CommandRegistry surface the renderer calls
+  - repro: run jlpm test: logs/publish-1.0.43.log holds 19 console.error traces of TypeError: this._commands.isToggleable is not a function, in passing suites; logs/publish-1.0.41.log holds 0
+  - test-tags: UNIT
+  - root-cause: 2026-11-01T11:35:49Z @kj @lumino/widgets 2.10.0, taken in the package upgrade of 963e854, calls MenuItem.isToggleable from Renderer.createItemARIA; the Commands stub at src/__tests__/wiring.spec.ts:263 implements isEnabled, isVisible and execute but no isToggleable, so each menu render throws inside lumino's exception handler
+  - log: 2026-11-01T11:35:49Z @kj added
 
 ## Documentation `DOC`
 

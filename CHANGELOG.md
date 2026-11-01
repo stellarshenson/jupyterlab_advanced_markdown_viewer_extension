@@ -2,7 +2,7 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
-## [Unreleased]
+## [1.0.43] - 2026-11-01
 
 ### Changed
 
