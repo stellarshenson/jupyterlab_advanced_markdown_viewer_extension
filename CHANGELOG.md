@@ -2,6 +2,14 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [Unreleased]
+
+### Changed
+
+- Requires Python 3.12 or newer
+- Requires JupyterLab 4.6.0 or newer
+- Requires jupyter_server 2.21 or newer and watchdog 6.0 or newer
+
 ## [1.0.41] - 2026-10-31
 
 ### Changed

@@ -7,7 +7,7 @@ name = "jupyterlab_advanced_markdown_viewer_extension"
 readme = "README.md"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 classifiers = [
     "Framework :: Jupyter",
     "Framework :: Jupyter :: JupyterLab",
@@ -16,14 +16,13 @@ classifiers = [
     "Framework :: Jupyter :: JupyterLab :: Extensions :: Prebuilt",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    "jupyter_server>=2.13.0,<3",
-    "watchdog>=4,<7",
+    "jupyter_server>=2.21,<3",
+    "watchdog>=6.0,<7",
     # The one member of the Markdown family the plain install brings; the other six
     # come only through the markdown-suite extra. This floor is the version that sibling
     # was published at when the family was surveyed on 2026-09-13, not a minimum any
@@ -49,15 +48,15 @@ markdown-suite = [
     "jupyterlab_refresh_view_extension>=1.2.35",
 ]
 dev = [
-    "jupyterlab>=4",
-    "jupyter-builder>=1.2.0",
+    "jupyterlab>=4.6,<5",
+    "jupyter-builder>=1.2,<2",
 ]
 test = [
-    "coverage",
-    "pytest",
-    "pytest-asyncio",
-    "pytest-cov",
-    "pytest-jupyter[server]>=0.6.0",
+    "coverage>=7.17,<8",
+    "pytest>=9.2,<10",
+    "pytest-asyncio>=1.4,<2",
+    "pytest-cov>=7.1,<8",
+    "pytest-jupyter[server]>=0.11,<1",
     # The Galata test server, ui-tests/jupyter_server_test_config.py, imports
     # jupyterlab.galata.
     "jupyterlab>=4.6,<5"

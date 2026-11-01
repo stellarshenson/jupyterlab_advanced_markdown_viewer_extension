@@ -113,8 +113,8 @@ A value in any `jupyter_server_config.json` or `jupyter_server_config.py` takes 
 
 ## Requirements
 
-- JupyterLab >= 4.0.0
-- Python >= 3.11
+- JupyterLab >= 4.6.0
+- Python >= 3.12
 
 ## Install
 
