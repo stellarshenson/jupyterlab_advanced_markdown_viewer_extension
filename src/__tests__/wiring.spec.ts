@@ -143,6 +143,9 @@ class Commands {
   isToggled(id: string, args: any = {}): boolean {
     return this.option(id, 'isToggled', args, false);
   }
+  isToggleable(id: string, args: any = {}): boolean {
+    return this.option(id, 'isToggleable', args, false);
+  }
   caption(id: string, args: any = {}): string {
     return this.option(id, 'caption', args, '');
   }
@@ -624,9 +627,18 @@ describe('the plugin', () => {
       scrolled.push(this);
     };
     selectNothing();
+    // jsdom has no clipboard for pictures; a page in a secure context has one,
+    // and Copy image is offered only there (DEF-COPY-169).
+    (window as any).ClipboardItem = class {};
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { write: async () => undefined }
+    });
   });
 
   afterEach(() => {
+    delete (window as any).ClipboardItem;
+    delete (navigator as any).clipboard;
     for (const activation of live) {
       activation.widget.dispose();
       activation.widget.node.remove();
@@ -1529,6 +1541,18 @@ describe('the plugin', () => {
         delete (window as any).ClipboardItem;
         delete (navigator as any).clipboard;
       }
+    });
+
+    it('offers no Copy image where the page has no clipboard for pictures (DEF-COPY-169)', async () => {
+      const lab = await start(SOURCE);
+      lab.widget.render('<p><img src="/files/photo.png"></p>');
+      const photo = lab.widget.rendered.querySelector('img')!;
+      Object.defineProperty(photo, 'naturalWidth', { value: 40 });
+      lab.openedOver(photo);
+      expect(lab.commands.isVisible(COMMANDS.copyImage)).toBe(true);
+      // A lab served over plain http from another host.
+      delete (navigator as any).clipboard;
+      expect(lab.commands.isVisible(COMMANDS.copyImage)).toBe(false);
     });
 
     it('offers Copy image on raster pictures only, not on an SVG or a drawn diagram (DEF-COPY-126)', async () => {

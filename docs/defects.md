@@ -1259,6 +1259,11 @@ Marks, note lines and the notes panel
   - log: 2026-10-30T09:41:38Z @kj gated _onMouseDown to the press that opens the context menu: right or ctrl-left selects the picture or diagram, plain left writes none; jest 1130 and pytest 75 green; new left-press Galata case failed on 1.0.38, unit case is the pin
   - log: 2026-10-30T10:25:35Z @kj closed: fixed: a plain left press writes no picture selection and no diagram selectAllChildren; only the press that opens the context menu, the right button or ctrl-left, writes one
   - log: 2026-10-30T10:25:41Z @kj test locator: the DEF-NOTES-51 passage-in-view case failed on its unscoped document.querySelector('[data-mark]'), because jupyterlab_bookmarks_manager_extension's hidden side panel (data-mark='brand', display:none) matches first; scoped the locator to '.jp-MarkdownViewer .jp-RenderedMarkdown [data-mark]'; notes suite 137 passed, 0 failed
+- [ ] `DEF-NOTES-168-HIDDEN-WRITE` **Write route reads and writes hidden files** - MEDIUM; with allow_hidden off the contents API answers 404 for a hidden file; the write route checks only the root, so a stale expected answers 409 with the file content and a right one rewrites it
+  - repro: POST write {path: '.secret.md', expected: 'x', content: ''} on a server with ContentsManager.allow_hidden False: 409 carries the content of .secret.md
+  - test-tags: INTEGRATION
+  - root-cause: 2026-11-13T10:32:04Z @kj WriteHandler.post hands the path to registry.swap, whose _os_path tests containment in the root only; the allow_hidden test of the contents handlers is never made
+  - log: 2026-11-13T10:32:04Z @kj added
 
 ## Change detection `DETECT`
 
@@ -1448,6 +1453,11 @@ Defects of the Copy Content command, which puts rendered Markdown on the clipboa
   - log: 2026-09-29T19:23:31Z @kj added
   - log: 2026-09-29T19:28:17Z @kj closed
   - log: 2026-09-29T19:28:24Z @kj edited test-tags added "UNIT, E2E"
+- [ ] `DEF-COPY-169-NO-CLIPBOARD` **Copy image offered where the page has no clipboard API** - MINOR; on a lab served over plain http from another host navigator.clipboard is undefined; Copy image is listed, a click throws TypeError and copies nothing
+  - repro: open the lab at http://<host-ip>:8888, right-click a PNG in a preview, choose Copy image: console shows TypeError reading write of undefined
+  - test-tags: UNIT
+  - root-cause: 2026-11-13T10:32:04Z @kj copyImage isVisible in src/index.ts tests the picture only; execute calls navigator.clipboard.write and ClipboardItem, both absent outside a secure context
+  - log: 2026-11-13T10:32:04Z @kj added
 
 ## Functional tests `TEST`
 

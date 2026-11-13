@@ -604,7 +604,14 @@ const plugin: JupyterFrontEndPlugin<void> = {
       describedBy: { args: { type: 'object', properties: {} } },
       isVisible: () => {
         const image = imageUnderMenu();
-        return !!image && copiesAsImage(image);
+        // A page served over plain http from another host has no clipboard to
+        // write a picture to, and the entry would do nothing (DEF-COPY-169).
+        return (
+          !!image &&
+          copiesAsImage(image) &&
+          !!navigator.clipboard &&
+          typeof ClipboardItem !== 'undefined'
+        );
       },
       execute: async () => {
         const image = imageUnderMenu();

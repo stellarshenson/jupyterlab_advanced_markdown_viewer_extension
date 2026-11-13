@@ -347,6 +347,19 @@ async def test_write_outside_the_root_is_refused(jp_fetch, jp_root_dir, registry
     assert outside.read_text() == "# outside\n"
 
 
+async def test_write_of_a_hidden_file_is_refused(jp_fetch, jp_root_dir, registry):
+    """DEF-NOTES-168: the contents API serves no hidden file while allow_hidden is off, so
+    the write route neither rewrites one nor hands its content over in a 409."""
+    hidden = jp_root_dir / ".secret.md"
+    hidden.write_text("# secret\n")
+    for expected in (sha256(b"# secret\n"), "stale"):
+        with pytest.raises(HTTPClientError) as refused:
+            await write(jp_fetch, ".secret.md", expected, "# replaced\n")
+        assert refused.value.code == 404
+        assert b"secret" not in refused.value.response.body
+    assert hidden.read_text() == "# secret\n"
+
+
 async def read(jp_fetch, path):
     """What the read route answers for `path`."""
     return json.loads((await jp_fetch(NAMESPACE, "read", params={"path": path})).body)

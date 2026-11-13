@@ -125,8 +125,9 @@ class WriteHandler(APIHandler):
     carries the file as it is, so the browser can rebase its edit and send it again; its
     `hash` is of the file's bytes, and bytes that are not valid UTF-8 are replaced in its
     `content`. 400 for a body whose three strings are not strings or whose `length`,
-    which may be left out, is not an integer; 404 for a file that is not there or a path
-    the registry does not serve, the two the stat answer tells apart.
+    which may be left out, is not an integer; 404 for a file that is not there, a path
+    the registry does not serve, the two the stat answer tells apart, or a hidden file while
+    the contents manager's allow_hidden is off.
     """
 
     @tornado.web.authenticated
@@ -140,6 +141,15 @@ class WriteHandler(APIHandler):
         if length is not None and not isinstance(length, int):
             raise tornado.web.HTTPError(400, "length must be an integer")
         registry = self.settings[SETTINGS_KEY]
+        # The contents API serves no hidden file unless allow_hidden is set; neither does this
+        # route, whose 409 would otherwise hand over the content of one (DEF-NOTES-168).
+        manager = self.contents_manager
+        if (
+            registry.serves(fields[0])
+            and not manager.allow_hidden
+            and await ensure_async(manager.is_hidden(fields[0]))
+        ):
+            raise tornado.web.HTTPError(404, "path not served")
         # The swap empties the file before it writes it, so the read route waits until this
         # request has ended.
         registry.begin(fields[0])
