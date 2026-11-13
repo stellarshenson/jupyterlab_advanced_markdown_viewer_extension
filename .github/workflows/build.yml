@@ -168,4 +168,4 @@ jobs:
         with:
           # The two trackers quote sample markup such as <img src=dot.png>, which the checker reads as links of the file.
           ignore_glob: "docs/defects.md docs/acc-crit-*.md"
-          ignore_links: "https://www.npmjs.com/package/.* https://pepy.tech/.* https://static.pepy.tech/.*"
+          ignore_links: "https://www.paypal.com/.* https://www.npmjs.com/package/.* https://pepy.tech/.* https://static.pepy.tech/.*"
