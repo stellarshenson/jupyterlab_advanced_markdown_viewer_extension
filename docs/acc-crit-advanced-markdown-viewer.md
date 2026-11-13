@@ -2160,6 +2160,7 @@ Handing the rendered document to another program in the form that program can us
   - log: 2026-09-29T12:08:01Z @kj added
   - log: 2026-09-29T12:13:48Z @kj closed; reason: names the code, both tests and the logs
   - log: 2026-09-29T19:27:46Z @kj edited text "context menu on a picture in a Markdown preview offers Copy image: the picture goes on the system clipboard as PNG at the size of its file; not offered on words, a picture that did not load, or a picture from another site; offered with notes off too" -> "context menu on a raster picture in a Markdown preview offers Copy image: the picture goes on the system clipboard as PNG at the size of its file; not offered on words, a picture that did not load, a picture from another site, an SVG picture or a drawn Mermaid diagram; offered with notes off too"; test "preview a file holding a local JPEG; Copy image on it: clipboard holds one image/png of the JPEG's pixel size; menu on plain words: no entry" -> "preview a file holding a local JPEG, an SVG picture and a mermaid fence; Copy image on the JPEG: clipboard holds one image/png of its pixel size; menu on the SVG, the diagram or plain words: no Copy image"; reason: DEF-COPY-126: SVG pictures and Mermaid diagrams belong to Copy as PNG of jupyterlab_export_svg_as_png_extension
+  - log: 2026-11-13T18:03:16Z @kj DEF-COPY-169-NO-CLIPBOARD: also not offered where the page has no clipboard for pictures, a lab over plain http from another host; jest case of that name in wiring.spec.ts
 
 ## Review gates `REVIEW`
 

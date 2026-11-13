@@ -1259,11 +1259,13 @@ Marks, note lines and the notes panel
   - log: 2026-10-30T09:41:38Z @kj gated _onMouseDown to the press that opens the context menu: right or ctrl-left selects the picture or diagram, plain left writes none; jest 1130 and pytest 75 green; new left-press Galata case failed on 1.0.38, unit case is the pin
   - log: 2026-10-30T10:25:35Z @kj closed: fixed: a plain left press writes no picture selection and no diagram selectAllChildren; only the press that opens the context menu, the right button or ctrl-left, writes one
   - log: 2026-10-30T10:25:41Z @kj test locator: the DEF-NOTES-51 passage-in-view case failed on its unscoped document.querySelector('[data-mark]'), because jupyterlab_bookmarks_manager_extension's hidden side panel (data-mark='brand', display:none) matches first; scoped the locator to '.jp-MarkdownViewer .jp-RenderedMarkdown [data-mark]'; notes suite 137 passed, 0 failed
-- [ ] `DEF-NOTES-168-HIDDEN-WRITE` **Write route reads and writes hidden files** - MEDIUM; with allow_hidden off the contents API answers 404 for a hidden file; the write route checks only the root, so a stale expected answers 409 with the file content and a right one rewrites it
+- [x] `DEF-NOTES-168-HIDDEN-WRITE` **Write route reads and writes hidden files** - MEDIUM; with allow_hidden off the contents API answers 404 for a hidden file; the write route checks only the root, so a stale expected answers 409 with the file content and a right one rewrites it
+  - evidence: f40d7b9: WriteHandler answers 404 for a hidden path while allow_hidden is off, before the swap; pytest test_write_of_a_hidden_file_is_refused passed, pytest 87 passed (logs/fleet-build-test.log 2026-11-13)
   - repro: POST write {path: '.secret.md', expected: 'x', content: ''} on a server with ContentsManager.allow_hidden False: 409 carries the content of .secret.md
   - test-tags: INTEGRATION
   - root-cause: 2026-11-13T10:32:04Z @kj WriteHandler.post hands the path to registry.swap, whose _os_path tests containment in the root only; the allow_hidden test of the contents handlers is never made
   - log: 2026-11-13T10:32:04Z @kj added
+  - log: 2026-11-13T18:03:15Z @kj closed
 
 ## Change detection `DETECT`
 
@@ -1453,11 +1455,14 @@ Defects of the Copy Content command, which puts rendered Markdown on the clipboa
   - log: 2026-09-29T19:23:31Z @kj added
   - log: 2026-09-29T19:28:17Z @kj closed
   - log: 2026-09-29T19:28:24Z @kj edited test-tags added "UNIT, E2E"
-- [ ] `DEF-COPY-169-NO-CLIPBOARD` **Copy image offered where the page has no clipboard API** - MINOR; on a lab served over plain http from another host navigator.clipboard is undefined; Copy image is listed, a click throws TypeError and copies nothing
+- [x] `DEF-COPY-169-NO-CLIPBOARD` **Copy image offered where the page has no clipboard API** - MINOR; on a lab served over plain http from another host navigator.clipboard is undefined; Copy image is listed, a click throws TypeError and copies nothing
+  - evidence: f40d7b9: copyImage isVisible requires navigator.clipboard and ClipboardItem; jest 'offers no Copy image where the page has no clipboard for pictures' in wiring.spec.ts, Jest 1133 passed (logs/fleet-build-test.log 2026-11-13); README states the limit
   - repro: open the lab at http://<host-ip>:8888, right-click a PNG in a preview, choose Copy image: console shows TypeError reading write of undefined
   - test-tags: UNIT
   - root-cause: 2026-11-13T10:32:04Z @kj copyImage isVisible in src/index.ts tests the picture only; execute calls navigator.clipboard.write and ClipboardItem, both absent outside a secure context
   - log: 2026-11-13T10:32:04Z @kj added
+  - log: 2026-11-13T18:03:15Z @kj closed
+  - log: 2026-11-13T18:03:24Z @kj edited evidence "f40d7b9: copyImage isVisible requires navigator.clipboard and ClipboardItem; jest 'offers no Copy image where the page has no clipboard for pictures (DEF-COPY-169)' in wiring.spec.ts, Jest 1133 passed (logs/fleet-build-test.log 2026-11-13); README states the limit" -> "f40d7b9: copyImage isVisible requires navigator.clipboard and ClipboardItem; jest 'offers no Copy image where the page has no clipboard for pictures' in wiring.spec.ts, Jest 1133 passed (logs/fleet-build-test.log 2026-11-13); README states the limit"
 
 ## Functional tests `TEST`
 
@@ -1537,11 +1542,13 @@ Defects of the Galata suite itself
   - log: 2026-10-31T14:08:12Z @kj seven guards and the constant removed from ui-tests/tests/siblings.spec.ts in the working tree; this defect closes on a green runner Build
   - log: 2026-10-31T16:10:51Z @kj closed; reason: The first failure-free runner Build has run, and it ran the sibling cases
   - log: 2026-10-31T16:24:45Z @kj correction to the closure log, runs 41206387362 and 41208259473 were green with the guards in place; run 41216179705 is the first green Build with them removed
-- [ ] `DEF-TEST-167-MENU-STUB` **A jest menu render throws isToggleable on the wiring Commands stub** - MINOR; make test passes but prints 19 TypeError traces; the stub no longer matches the CommandRegistry surface the renderer calls
+- [x] `DEF-TEST-167-MENU-STUB` **A jest menu render throws isToggleable on the wiring Commands stub** - MINOR; make test passes but prints 19 TypeError traces; the stub no longer matches the CommandRegistry surface the renderer calls
+  - evidence: f40d7b9: Commands stub of wiring.spec.ts gains isToggleable; logs/fleet-build-test.log of 2026-11-13 holds 0 'isToggleable is not a function' traces, Jest 1133 passed
   - repro: run jlpm test: logs/publish-1.0.43.log holds 19 console.error traces of TypeError: this._commands.isToggleable is not a function, in passing suites; logs/publish-1.0.41.log holds 0
   - test-tags: UNIT
   - root-cause: 2026-11-01T11:35:49Z @kj @lumino/widgets 2.10.0, taken in the package upgrade of 963e854, calls MenuItem.isToggleable from Renderer.createItemARIA; the Commands stub at src/__tests__/wiring.spec.ts:263 implements isEnabled, isVisible and execute but no isToggleable, so each menu render throws inside lumino's exception handler
   - log: 2026-11-01T11:35:49Z @kj added
+  - log: 2026-11-13T18:03:15Z @kj closed
 
 ## Documentation `DOC`
 
