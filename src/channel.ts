@@ -337,17 +337,25 @@ export class ChangeChannel implements IDisposable {
     if (!state) {
       return;
     }
+    const deleted = message.event === 'deleted';
     if (state.silent !== null) {
       // The stat found this revision a moment before the event and reported
       // it: the path raises events after all, and nothing waits to be marked.
       clearTimeout(state.silent);
       state.silent = null;
-    } else {
+    } else if (!deleted) {
       state.eventConnection = this._connection;
+    }
+    if (deleted) {
+      // The event carried the revision "missing". Recording it lets the stat
+      // that finds the file again report it: a directory removed and created
+      // again raises no event for the new file.
+      state.stat = null;
+      state.eventConnection = 0;
     }
     this._changed.emit({
       path: message.path,
-      event: message.event === 'deleted' ? 'deleted' : 'changed'
+      event: deleted ? 'deleted' : 'changed'
     });
   }
 

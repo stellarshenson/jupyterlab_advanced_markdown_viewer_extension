@@ -1317,6 +1317,13 @@ Noticing that a file on disk has changed
   - root-cause: 2026-10-13T18:14:50Z @kj FileWatchRegistry._os_path in watch.py tests containment with (abspath + os.sep).startswith(self._abs_root + os.sep). For the root / the right side is //, and for D:\ it is D:\\, which no absolute path begins with, so every path is taken to lie outside the root. A contents manager that is not file-based reports the root / as well and was left unserved only through this failing test
   - log: 2026-10-13T18:14:50Z @kj added; reason: found by the review of 2026-10-13 (architect and bug-hunter, each with a probe on a server rooted at /); the root cause names the expression and the second effect that depends on it
   - log: 2026-10-13T19:42:26Z @kj closed: fixed: FileWatchRegistry keeps the root with its separator through os.path.join(abspath(root), '') and a path is inside when it begins with that; setup_route_handlers gives the registry no root for a contents manager that is not a FileManagerMixin, so a manager that is not file-based stays unserved as before
+- [x] `DEF-DETECT-170-DIR-RECREATE` **File whose directory is removed and created again stays marked gone** - MEDIUM; preview keeps the old content and the missing mark after the file is there again; fix: a 'deleted' event sets the path's stat to null and eventConnection to 0; `src/channel.ts`
+  - evidence: jest 'reports a file whose deletion arrived as an event when it is there again' in channel.spec.ts fails on the old channel.ts and passes on the new; Jest 1134, pytest 87, Galata 231 passed, 2 skipped on 2026-11-16
+  - repro: open a preview of d/a.md, write a.md, then rm -r d, mkdir d and write d/a.md within 10 s: the preview stays marked missing
+  - test-tags: UNIT
+  - root-cause: 2026-11-16T05:43:42Z @kj _onMessage kept the old stat and set eventConnection on a 'deleted' event, so the next stat that found the new file was dropped as already read; a new directory raises no event for the file
+  - log: 2026-11-16T05:43:42Z @kj added
+  - log: 2026-11-16T06:02:10Z @kj closed
 
 ## Sibling extension compatibility `COMPAT`
 

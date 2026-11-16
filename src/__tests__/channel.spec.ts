@@ -582,6 +582,17 @@ describe('ChangeChannel', () => {
     ]);
   });
 
+  it('reports a file whose deletion arrived as an event when it is there again', async () => {
+    await connect('a.md');
+    // A directory removed and created again: the events of the old file
+    // arrive, the new file raises none.
+    socket().message({ type: 'change', path: 'a.md', event: 'changed' });
+    socket().message({ type: 'change', path: 'a.md', event: 'deleted' });
+    server.stats['a.md'] = { mtime: 7, size: 99 };
+    await advance(10_000);
+    expect(changes.slice(-1)).toEqual([{ path: 'a.md', event: 'changed' }]);
+  });
+
   it('reports a file deleted between its registration and the first check', async () => {
     await connect('a.md');
     // A second preview opens while the socket already stands: the
