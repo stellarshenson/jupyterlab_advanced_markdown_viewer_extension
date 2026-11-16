@@ -2,6 +2,18 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [1.0.46] - 2026-11-16
+
+### Changed
+
+- Leave the PayPal donate link out of the link check
+- Close the three audit defects and record the audit in the journal
+
+### Fixed
+
+- Report a file that is there again after its deletion arrived as an event
+- Refuse hidden files on the write route and hide Copy image without a clipboard
+
 ## [1.0.43] - 2026-11-01
 
 ### Changed
